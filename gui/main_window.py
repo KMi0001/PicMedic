@@ -1,61 +1,134 @@
+from pathlib import Path
+
+from PySide6.QtWidgets import *
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import (
-    QFileDialog,
-    QLabel,
-    QLineEdit,
-    QMainWindow,
-    QPushButton,
-    QStatusBar,
-    QVBoxLayout,
-    QWidget,
-    QHBoxLayout,
-)
+from PySide6.QtGui import QPixmap
 
 
 class MainWindow(QMainWindow):
+
     def __init__(self):
         super().__init__()
 
-        self.setWindowTitle("🩺 PicMedic v0.1")
-        self.resize(700, 250)
+        self.current_image = None
 
-        self.folder_edit = QLineEdit()
-        self.folder_edit.setPlaceholderText("사진 폴더를 선택하세요.")
+        self.setWindowTitle("PicMedic")
+        self.resize(1100, 720)
 
-        browse_button = QPushButton("📂 찾아보기")
-        browse_button.clicked.connect(self.select_folder)
+        central = QWidget()
+        self.setCentralWidget(central)
 
-        scan_button = QPushButton("🔍 Scan")
-        scan_button.setEnabled(False)
+        layout = QVBoxLayout(central)
 
-        top_layout = QHBoxLayout()
-        top_layout.addWidget(self.folder_edit)
-        top_layout.addWidget(browse_button)
+        layout.addStretch()
 
-        layout = QVBoxLayout()
-        layout.addWidget(QLabel("사진 폴더"))
-        layout.addLayout(top_layout)
-        layout.addSpacing(20)
-        layout.addWidget(scan_button, alignment=Qt.AlignCenter)
+        # -----------------------
+        # Logo
+        # -----------------------
 
-        container = QWidget()
-        container.setLayout(layout)
+        logo = QLabel("🩺")
+        logo.setAlignment(Qt.AlignCenter)
+        logo.setStyleSheet("font-size:60px;")
 
-        self.setCentralWidget(container)
+        title = QLabel("PicMedic")
+        title.setAlignment(Qt.AlignCenter)
+        title.setStyleSheet("font-size:28pt;font-weight:bold;")
 
-        self.status = QStatusBar()
-        self.status.showMessage("Ready")
-        self.setStatusBar(self.status)
+        subtitle = QLabel("Restore Memories. Naturally.")
+        subtitle.setAlignment(Qt.AlignCenter)
 
-        self.scan_button = scan_button
+        layout.addWidget(logo)
+        layout.addWidget(title)
+        layout.addWidget(subtitle)
 
-    def select_folder(self):
-        folder = QFileDialog.getExistingDirectory(
-            self,
-            "사진 폴더 선택"
+        layout.addSpacing(25)
+
+        # -----------------------
+        # Preview Area
+        # -----------------------
+
+        self.preview = QLabel()
+
+        self.preview.setAlignment(Qt.AlignCenter)
+
+        self.preview.setMinimumHeight(320)
+
+        self.preview.setObjectName("DropArea")
+
+        self.preview.setText(
+            "📷\n\nDrag & Drop your photo\n\nor\n\nClick Open Image"
         )
 
-        if folder:
-            self.folder_edit.setText(folder)
-            self.scan_button.setEnabled(True)
-            self.status.showMessage("폴더 선택 완료")
+        layout.addWidget(self.preview)
+
+        layout.addSpacing(20)
+
+        # -----------------------
+        # Buttons
+        # -----------------------
+
+        buttons = QHBoxLayout()
+
+        self.openBtn = QPushButton("Open Image")
+        self.scanBtn = QPushButton("Scan & Restore")
+
+        buttons.addStretch()
+        buttons.addWidget(self.openBtn)
+        buttons.addWidget(self.scanBtn)
+        buttons.addStretch()
+
+        layout.addLayout(buttons)
+
+        layout.addStretch()
+
+        # -----------------------
+        # StatusBar
+        # -----------------------
+
+        self.statusBar().showMessage("Ready")
+
+        # -----------------------
+        # Signal
+        # -----------------------
+
+        self.openBtn.clicked.connect(self.open_image)
+
+    # =====================================
+    # Open Image
+    # =====================================
+
+    def open_image(self):
+
+        filename, _ = QFileDialog.getOpenFileName(
+            self,
+            "Open Image",
+            "",
+            "Images (*.png *.jpg *.jpeg *.bmp *.tif *.tiff)"
+        )
+
+        if not filename:
+            return
+
+        pixmap = QPixmap(filename)
+
+        if pixmap.isNull():
+            QMessageBox.warning(
+                self,
+                "Error",
+                "이미지를 열 수 없습니다."
+            )
+            return
+
+        self.current_image = filename
+
+        self.preview.setPixmap(
+            pixmap.scaled(
+                self.preview.size(),
+                Qt.KeepAspectRatio,
+                Qt.SmoothTransformation
+            )
+        )
+
+        self.statusBar().showMessage(
+            f"Loaded : {Path(filename).name}"
+        )
