@@ -1,149 +1,116 @@
-from pathlib import Path
-
-from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QMainWindow, QPushButton, QLabel, QFileDialog, QMessageBox, QWidget, QVBoxLayout
 from PySide6.QtGui import QPixmap
-from PySide6.QtWidgets import (
-    QFileDialog,
-    QHBoxLayout,
-    QLabel,
-    QMainWindow,
-    QMessageBox,
-    QPushButton,
-    QVBoxLayout,
-    QWidget,
-)
+from PySide6.QtCore import Qt
 
 
 class MainWindow(QMainWindow):
-
     def __init__(self):
         super().__init__()
 
-        self.current_image = None
+        self.setWindowTitle("PicMedic")
+        self.resize(500, 600)
 
-        self.setWindowTitle("PicMedic v0.2")
-        self.resize(1200, 750)
+        self.image_path = None
 
-        self.setup_ui()
+        # ----------------------------
+        # 1. UI 생성 (먼저 만들어야 함)
+        # ----------------------------
+        self.upload_btn = QPushButton("이미지 업로드")
+        self.scan_btn = QPushButton("검사 (Scan)")
+        self.restore_btn = QPushButton("초기화 (Restore)")
 
-    def setup_ui(self):
-        central = QWidget()
-        self.setCentralWidget(central)
+        self.image_label = QLabel("이미지 없음")
+        self.image_label.setFixedSize(300, 300)
+        self.image_label.setAlignment(Qt.AlignCenter)
+        self.image_label.setStyleSheet("border: 1px solid gray;")
 
-        main_layout = QVBoxLayout(central)
+        self.score_label = QLabel("")
+        self.result_label = QLabel("")
 
-        # ---------- Logo ----------
-        logo = QLabel("🩺")
-        logo.setAlignment(Qt.AlignCenter)
-        logo.setStyleSheet("font-size:60px;")
+        # ----------------------------
+        # 2. 버튼 연결 (그 다음)
+        # ----------------------------
+        self.upload_btn.clicked.connect(self.load_image)
+        self.scan_btn.clicked.connect(self.run_scan)
+        self.restore_btn.clicked.connect(self.restore_image)
 
-        title = QLabel("PicMedic")
-        title.setAlignment(Qt.AlignCenter)
-        title.setStyleSheet("font-size:28pt;font-weight:bold;")
+        # ----------------------------
+        # 3. 레이아웃 구성
+        # ----------------------------
+        layout = QVBoxLayout()
 
-        subtitle = QLabel("Restore Memories. Naturally.")
-        subtitle.setAlignment(Qt.AlignCenter)
+        layout.addWidget(self.upload_btn)
+        layout.addWidget(self.scan_btn)
+        layout.addWidget(self.restore_btn)
 
-        main_layout.addWidget(logo)
-        main_layout.addWidget(title)
-        main_layout.addWidget(subtitle)
-        main_layout.addSpacing(20)
-
-        # ---------- Preview ----------
-        preview_layout = QHBoxLayout()
-
-        self.original_preview = self.create_preview("Original")
-        self.restored_preview = self.create_preview("Restored")
-
-        preview_layout.addWidget(self.original_preview)
-        preview_layout.addWidget(self.restored_preview)
-
-        main_layout.addLayout(preview_layout)
-
-        # ---------- Buttons ----------
-        button_layout = QHBoxLayout()
-
-        self.open_btn = QPushButton("Open Image")
-        self.scan_btn = QPushButton("Scan & Restore")
-
-        button_layout.addStretch()
-        button_layout.addWidget(self.open_btn)
-        button_layout.addWidget(self.scan_btn)
-        button_layout.addStretch()
-
-        main_layout.addSpacing(15)
-        main_layout.addLayout(button_layout)
-
-        self.statusBar().showMessage("Ready")
-
-        self.open_btn.clicked.connect(self.open_image)
-
-    def create_preview(self, title):
+        layout.addWidget(self.image_label)
+        layout.addWidget(self.score_label)
+        layout.addWidget(self.result_label)
 
         container = QWidget()
+        container.setLayout(layout)
+        self.setCentralWidget(container)
 
-        layout = QVBoxLayout(container)
-
-        label = QLabel(title)
-        label.setAlignment(Qt.AlignCenter)
-        label.setStyleSheet("font-weight:bold;font-size:14px;")
-
-        preview = QLabel()
-
-        preview.setAlignment(Qt.AlignCenter)
-        preview.setMinimumSize(450, 400)
-
-        preview.setStyleSheet("""
-            border:2px dashed #BFC7D5;
-            border-radius:12px;
-            background:white;
-        """)
-
-        preview.setText("No Image")
-
-        layout.addWidget(label)
-        layout.addWidget(preview)
-
-        return container
-
-    def open_image(self):
-
-        filename, _ = QFileDialog.getOpenFileName(
+    # ----------------------------
+    # 이미지 업로드
+    # ----------------------------
+    def load_image(self):
+        file_path, _ = QFileDialog.getOpenFileName(
             self,
-            "Open Image",
+            "이미지 선택",
             "",
-            "Images (*.png *.jpg *.jpeg *.bmp *.tif *.tiff)"
+            "Images (*.png *.jpg *.jpeg *.heic)"
         )
 
-        if not filename:
+        if not file_path:
             return
 
-        self.load_image(filename)
+        self.image_path = file_path
 
-    def load_image(self, filename):
+        pixmap = QPixmap(file_path)
+        pixmap = pixmap.scaled(
+            self.image_label.width(),
+            self.image_label.height(),
+            Qt.KeepAspectRatio
+        )
 
-        pixmap = QPixmap(filename)
+        self.image_label.setPixmap(pixmap)
+        self.result_label.setText("이미지 로드 완료")
 
-        if pixmap.isNull():
-            QMessageBox.warning(
-                self,
-                "Error",
-                "이미지를 열 수 없습니다."
-            )
+    # ----------------------------
+    # scan 실행
+    # ----------------------------
+    def run_scan(self):
+        if not self.image_path:
+            QMessageBox.warning(self, "오류", "이미지를 먼저 업로드하세요.")
             return
 
-        self.current_image = filename
+        result = self.analyze_image(self.image_path)
+        self.update_ui(result)
 
-        preview = self.original_preview.findChildren(QLabel)[1]
+    # ----------------------------
+    # 더미 분석 함수
+    # ----------------------------
+    def analyze_image(self, path):
+        return {
+            "score": 85,
+            "status": "OK",
+            "message": "분석 완료"
+        }
 
-        preview.setPixmap(
-            pixmap.scaled(
-                preview.size(),
-                Qt.KeepAspectRatio,
-                Qt.SmoothTransformation,
-            )
-        )
+    # ----------------------------
+    # UI 업데이트
+    # ----------------------------
+    def update_ui(self, result):
+        self.score_label.setText(f"Score: {result['score']}")
+        self.result_label.setText(f"{result['status']} - {result['message']}")
 
-        self.statusBar().showMessage(
-            f"Loaded : {Path(filename).name}"
-        )
+    # ----------------------------
+    # 초기화
+    # ----------------------------
+    def restore_image(self):
+        self.image_path = None
+        self.image_label.clear()
+        self.image_label.setText("이미지 없음")
+        self.score_label.setText("")
+        self.result_label.setText("")
