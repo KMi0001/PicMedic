@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.pyc
+
+# Build artifacts (PicMedic.spec is kept — documents the exact build flags)
+build/
+dist/
+
+# Runtime data
+logs/
+
+# Sample/test data generated locally
+test_samples/
+
+# OS
+Thumbs.db
