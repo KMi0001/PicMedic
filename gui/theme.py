@@ -18,6 +18,7 @@ COLORS = {
     "danger": "#DA5A5A",
     "muted": "#8FAFA0",
     "selection": "#DCF3E9",
+    "dashed": "#B6DED4",
 }
 
 STATUS_COLORS = {
@@ -65,6 +66,12 @@ QFrame#Card {{
     background-color: {COLORS['surface']};
     border: 1px solid {COLORS['border']};
     border-radius: 12px;
+}}
+
+QFrame#SelectionCard {{
+    background-color: {COLORS['surface']};
+    border: 2px dashed {COLORS['dashed']};
+    border-radius: 16px;
 }}
 
 QPushButton {{

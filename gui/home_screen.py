@@ -11,6 +11,7 @@ from datetime import datetime
 from pathlib import Path
 
 from PySide6.QtCore import Qt, Signal, QSettings, QStandardPaths
+from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QWidget,
     QVBoxLayout,
@@ -19,51 +20,80 @@ from PySide6.QtWidgets import (
     QPushButton,
     QFrame,
     QFileDialog,
-    QListWidget,
-    QListWidgetItem,
-    QSizePolicy,
     QDialog,
 )
 
 from core.scanner import SCANNABLE_EXTENSIONS
 from gui.theme import COLORS
+from utils.assets import asset_path
 
 MAX_RECENT = 5
 RECENT_SCANS_KEY = "recent_scans_v2"  # 이전 버전(단순 경로 문자열 목록)과 형식이 달라 키를 분리함
+CONTENT_WIDTH = 520
 
 _IMAGE_FILTER_PATTERN = " ".join(f"*{ext}" for ext in sorted(SCANNABLE_EXTENSIONS))
 IMAGE_FILE_FILTER = f"이미지 파일 ({_IMAGE_FILTER_PATTERN});;모든 파일 (*)"
 
 
-class DropArea(QFrame):
-    """파일/폴더를 끌어놓을 수 있는 영역 (PRD '파일을 여기에 끌어놓으세요')"""
+class SelectionCard(QFrame):
+    """파일/폴더 선택 버튼과 드래그 앤 드롭 영역을 하나로 묶은 카드."""
 
     paths_dropped = Signal(list)
+    file_requested = Signal()
+    folder_requested = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setObjectName("Card")
+        self.setObjectName("SelectionCard")
         self.setAcceptDrops(True)
-        self.setMinimumHeight(140)
 
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(28, 32, 28, 32)
+        layout.setSpacing(8)
         layout.setAlignment(Qt.AlignCenter)
 
         icon = QLabel("\U0001F4C1")  # 📁
-        icon.setStyleSheet("font-size: 32px;")
+        icon.setFixedSize(64, 64)
         icon.setAlignment(Qt.AlignCenter)
+        icon.setStyleSheet(
+            f"font-size: 26px; background-color: {COLORS['selection']}; border-radius: 32px;"
+        )
+        layout.addWidget(icon, alignment=Qt.AlignCenter)
 
-        self.label = QLabel("파일을 여기에 끌어놓으세요")
-        self.label.setAlignment(Qt.AlignCenter)
-        self.label.setStyleSheet(f"color: {COLORS['text_secondary']};")
+        heading = QLabel("파일이나 폴더를 선택하세요")
+        heading.setAlignment(Qt.AlignCenter)
+        heading.setStyleSheet("font-size: 15px; font-weight: 600; background: transparent;")
+        layout.addWidget(heading)
 
-        layout.addWidget(icon)
-        layout.addWidget(self.label)
+        hint = QLabel("이 영역에 끌어놓아도 됩니다")
+        hint.setAlignment(Qt.AlignCenter)
+        hint.setStyleSheet(
+            f"color: {COLORS['text_secondary']}; font-size: 12px; background: transparent;"
+        )
+        layout.addWidget(hint)
+
+        layout.addSpacing(6)
+
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(10)
+        btn_row.addStretch(1)
+
+        file_btn = QPushButton("파일 선택")
+        file_btn.clicked.connect(self.file_requested.emit)
+        btn_row.addWidget(file_btn)
+
+        folder_btn = QPushButton("폴더 선택")
+        folder_btn.setObjectName("Primary")
+        folder_btn.clicked.connect(self.folder_requested.emit)
+        btn_row.addWidget(folder_btn)
+
+        btn_row.addStretch(1)
+        layout.addLayout(btn_row)
 
     def dragEnterEvent(self, event):
         if event.mimeData().hasUrls():
             event.acceptProposedAction()
-            self.setStyleSheet(f"border: 2px dashed {COLORS['primary']}; border-radius: 12px;")
+            self.setStyleSheet(f"border: 2px dashed {COLORS['primary']}; border-radius: 16px;")
 
     def dragLeaveEvent(self, event):
         self.setStyleSheet("")
@@ -74,6 +104,94 @@ class DropArea(QFrame):
         paths = [url.toLocalFile() for url in urls if url.toLocalFile()]
         if paths:
             self.paths_dropped.emit(paths)
+
+
+class _RecentRow(QFrame):
+    """최근 검사 카드 안의 클릭 가능한 한 행."""
+
+    clicked = Signal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setCursor(Qt.PointingHandCursor)
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.clicked.emit()
+        super().mouseReleaseEvent(event)
+
+
+class RecentCard(QFrame):
+    """최근 검사 목록을 상태 아이콘 + 화살표가 있는 카드형 행으로 보여준다."""
+
+    entry_activated = Signal(dict)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("Card")
+        self._layout = QVBoxLayout(self)
+        self._layout.setContentsMargins(0, 0, 0, 0)
+        self._layout.setSpacing(0)
+
+    def set_entries(self, entries: list[dict]) -> None:
+        while self._layout.count():
+            item = self._layout.takeAt(0)
+            widget = item.widget()
+            if widget:
+                widget.deleteLater()
+
+        if not entries:
+            placeholder = QLabel("최근 검사 기록이 없습니다.")
+            placeholder.setStyleSheet(f"color: {COLORS['muted']}; padding: 16px;")
+            self._layout.addWidget(placeholder)
+            return
+
+        for idx, entry in enumerate(entries):
+            row = self._build_row(entry, is_last=(idx == len(entries) - 1))
+            self._layout.addWidget(row)
+
+    def _build_row(self, entry: dict, is_last: bool) -> QFrame:
+        ok = entry.get("status") == "completed"
+        accent = COLORS["success"] if ok else COLORS["warning"]
+
+        row = _RecentRow()
+        border = "none" if is_last else f"1px solid {COLORS['border']}"
+        row.setStyleSheet(
+            f"QFrame {{ border: none; border-bottom: {border}; }}"
+            f"QFrame:hover {{ background-color: {COLORS['bg']}; }}"
+        )
+        row.clicked.connect(lambda entry=entry: self.entry_activated.emit(entry))
+
+        row_layout = QHBoxLayout(row)
+        row_layout.setContentsMargins(16, 12, 16, 12)
+        row_layout.setSpacing(12)
+
+        dot = QLabel("✓" if ok else "⚠")  # ✓ / ⚠
+        dot.setFixedSize(24, 24)
+        dot.setAlignment(Qt.AlignCenter)
+        dot.setStyleSheet(
+            f"background-color: {accent}; color: white; border-radius: 12px; "
+            f"font-weight: 700; font-size: 11px;"
+        )
+        row_layout.addWidget(dot)
+
+        text_col = QVBoxLayout()
+        text_col.setSpacing(1)
+        name = QLabel(entry.get("label", ""))
+        name.setStyleSheet("font-weight: 500; background: transparent;")
+        status_label = QLabel(_status_line(entry))
+        status_label.setStyleSheet(f"color: {accent}; font-size: 11px; background: transparent;")
+        text_col.addWidget(name)
+        text_col.addWidget(status_label)
+        row_layout.addLayout(text_col, 1)
+
+        chevron = QLabel("›")  # ›
+        chevron.setStyleSheet(
+            f"color: {COLORS['muted']}; font-size: 16px; font-weight: 700; background: transparent;"
+        )
+        row_layout.addWidget(chevron)
+
+        return row
 
 
 class HomeScreen(QWidget):
@@ -87,48 +205,54 @@ class HomeScreen(QWidget):
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(48, 48, 48, 48)
-        outer.setSpacing(20)
         outer.setAlignment(Qt.AlignTop)
 
+        content = QWidget()
+        content.setFixedWidth(CONTENT_WIDTH)
+        content_layout = QVBoxLayout(content)
+        content_layout.setContentsMargins(0, 0, 0, 0)
+        content_layout.setSpacing(20)
+
+        header_row = QHBoxLayout()
+        header_row.setSpacing(12)
+
+        brand_icon = QLabel()
+        brand_icon.setFixedSize(44, 44)
+        brand_icon.setPixmap(
+            QPixmap(asset_path("icon.png")).scaled(
+                44, 44, Qt.KeepAspectRatio, Qt.SmoothTransformation
+            )
+        )
+        header_row.addWidget(brand_icon)
+
+        brand_text = QVBoxLayout()
+        brand_text.setSpacing(2)
         title = QLabel("PicMedic")
-        title.setObjectName("Title")
-        subtitle = QLabel("사진을 검사하고 복구하세요")
-        subtitle.setObjectName("Subtitle")
+        title.setStyleSheet("font-size: 20px; font-weight: 700; margin-top: 8px;")
+        subtitle = QLabel("사진을 치료해줄게요")
+        subtitle.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 12.5px;")
+        brand_text.addWidget(title)
+        brand_text.addWidget(subtitle)
+        header_row.addLayout(brand_text)
+        header_row.addStretch(1)
 
-        outer.addWidget(title)
-        outer.addWidget(subtitle)
-        outer.addSpacing(12)
+        content_layout.addLayout(header_row)
 
-        select_row = QHBoxLayout()
-        select_row.setSpacing(10)
-
-        file_btn = QPushButton("파일 선택")
-        file_btn.setFixedWidth(140)
-        file_btn.clicked.connect(self._choose_file)
-        select_row.addWidget(file_btn)
-
-        folder_btn = QPushButton("폴더 선택")
-        folder_btn.setObjectName("Primary")
-        folder_btn.setFixedWidth(140)
-        folder_btn.clicked.connect(self._choose_folder)
-        select_row.addWidget(folder_btn)
-
-        select_row.addStretch(1)
-        outer.addLayout(select_row)
-
-        self.drop_area = DropArea()
-        self.drop_area.paths_dropped.connect(self._on_paths_chosen)
-        outer.addWidget(self.drop_area)
+        self.selection_card = SelectionCard()
+        self.selection_card.paths_dropped.connect(self._on_paths_chosen)
+        self.selection_card.file_requested.connect(self._choose_file)
+        self.selection_card.folder_requested.connect(self._choose_folder)
+        content_layout.addWidget(self.selection_card)
 
         recent_label = QLabel("최근 검사")
-        recent_label.setStyleSheet("font-weight: 600; margin-top: 8px;")
-        outer.addWidget(recent_label)
+        recent_label.setStyleSheet("font-weight: 600;")
+        content_layout.addWidget(recent_label)
 
-        self.recent_list = QListWidget()
-        self.recent_list.setMaximumHeight(140)
-        self.recent_list.itemDoubleClicked.connect(self._on_recent_double_clicked)
-        outer.addWidget(self.recent_list)
+        self.recent_card = RecentCard()
+        self.recent_card.entry_activated.connect(self._show_recent_summary)
+        content_layout.addWidget(self.recent_card)
 
+        outer.addWidget(content, alignment=Qt.AlignHCenter)
         outer.addStretch(1)
 
         self._refresh_recent_list()
@@ -167,12 +291,6 @@ class HomeScreen(QWidget):
         valid = [p for p in paths if Path(p).exists()]
         if valid:
             self.paths_chosen.emit(valid)
-
-    def _on_recent_double_clicked(self, item: QListWidgetItem):
-        entry = item.data(Qt.UserRole)
-        if not entry:
-            return
-        self._show_recent_summary(entry)
 
     def _show_recent_summary(self, entry: dict):
         """스캔을 다시 하지 않고, 그때 결과 요약을 팝업으로 보여준다."""
@@ -274,16 +392,7 @@ class HomeScreen(QWidget):
         self.settings.setValue(RECENT_SCANS_KEY, json.dumps(entries, ensure_ascii=False))
 
     def _refresh_recent_list(self):
-        self.recent_list.clear()
-        entries = self._load_recent_entries()
-        for entry in entries:
-            item = QListWidgetItem(f"\u2022 {_format_recent_entry(entry)}")
-            item.setData(Qt.UserRole, entry)
-            self.recent_list.addItem(item)
-        if not entries:
-            placeholder = QListWidgetItem("최근 검사 기록이 없습니다.")
-            placeholder.setFlags(Qt.NoItemFlags)
-            self.recent_list.addItem(placeholder)
+        self.recent_card.set_entries(self._load_recent_entries())
 
 
 def _status_line(entry: dict) -> str:
@@ -292,13 +401,7 @@ def _status_line(entry: dict) -> str:
     planned = entry.get("planned", scanned)
 
     if status == "completed":
-        return f"✓ 완료 ({scanned:,}장)"
+        return f"완료 · {scanned:,}장"
     elif status == "cancelled":
-        return f"⚠ 중단됨 ({scanned:,}/{planned:,})"
+        return f"중단됨 · {scanned:,}/{planned:,}"
     return ""
-
-
-def _format_recent_entry(entry: dict) -> str:
-    label = entry.get("label", "")
-    status_text = _status_line(entry)
-    return f"{label}   —   {status_text}" if status_text else label
