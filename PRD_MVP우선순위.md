@@ -176,7 +176,15 @@ AI 이미지 복원, 얼굴 인식, 이미지 내용 분석, 자동 사진 분�
 1. `_set_all_checked`가 체크박스를 다 갱신한 뒤 `selectAll()`/`clearSelection()`을 부르면 Qt의 `selectionChanged`가 다시 발생해 `_on_selection_changed`가 방금 한 것과 같은 O(행 수) 루프를 또 한 번 돌림 (재진입 가드 `_syncing`이 이 경로에만 빠져 있었음).
 2. **더 큰 원인**: 테이블 정렬(`setSortingEnabled(True)`)이 켜진 채로 수만 번 `setCheckState`/`selectAll`/`clearSelection`을 부르면 Qt가 매번 재정렬 여부를 검토해 기하급수적으로 느려짐 — 실측 결과 정렬을 잠깐 꺼두는 것만으로 6.7초 → 0.19초로 단축됨.
 
-`_set_all_checked`/`_on_selection_changed`에 `setSortingEnabled(False)`+`setUpdatesEnabled(False)`+`_syncing` 가드를 모두 적용. `tests/test_result_screen.py`에 5,000행 규모 회귀 테스트 추가(3초 제한, 실측 0.1~0.2초).
+`_set_all_checked`/`_on_selection_changed`에 `setSortingEnabled(False)`+`setUpdatesEnabled(False)`+`_syncing` 가드를 모두 적용. `tests/test_result_screen.py`에 5,000행 규모 회귀 테스트 추가(3초 제한, 실측 0.1~0.2초). 실사용(16,965장)에서도 재확인 완료 — 전체선택/해제 정상 동작.
+
+### 8. (신규, 미확인) 같은 폴더인데 스캔 시간이 전보다 늘어난 느낌 (30분 내외 → 50분)
+16,965장 스캔 기준 사용자 체감상 오늘 변경 이후 스캔이 더 오래 걸린 것 같다는 보고. 코드로 원인을 찾아봤지만 확정하지 못함:
+- 심볼릭 링크 순환 방지로 바뀐 폴더 순회 방식(`os.walk`+`resolve()`)이 이론상 조금 더 느리지만, 17,000파일/500폴더 기준 실측 0.2~0.4초 수준이라 체감될 정도는 아님
+- GIF/TIFF/BMP를 정식 지원 형식으로 승격하면서 이제 완전 디코딩을 시도하는데, 개별 파일 기준 JPEG와 속도 차이가 거의 없음을 확인(둘 다 ~0.03초/장, 4000x3000 기준)
+- 두 원인 다 20분 단위의 체감 차이를 설명하기엔 부족함 — 디스크 상태, 백그라운드 프로그램 등 그날그날의 변수였을 가능성도 있음
+
+다음에 같은 폴더로 다시 스캔했을 때도 계속 오래 걸리면 재조사 필요. (같은 폴더 기준 스캔 시간을 한 번 더 재보면 확정에 도움 됨.)
 
 ---
 

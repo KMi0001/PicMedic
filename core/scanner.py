@@ -77,6 +77,10 @@ def iter_candidate_files(
             return
 
         # 순환 심볼릭 링크 차단: 실제 경로가 이미 방문한 디렉터리면 더 내려가지 않는다.
+        # (참고: Path.is_symlink()로 먼저 걸러서 resolve() 호출을 줄여보려 했으나,
+        # 윈도우의 디렉터리 정션(mklink /J — iCloud/OneDrive가 흔히 만드는 바로 그
+        # 형태)은 is_symlink()가 False를 반환해 감지를 놓친다. 그래서 모든 하위
+        # 폴더에 대해 resolve()를 그대로 수행한다.)
         keep = []
         for name in dirnames:
             try:
