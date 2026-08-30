@@ -22,6 +22,16 @@ def sanitize_filename_part(text: str, fallback: str = DEFAULT_SUFFIX) -> str:
     return cleaned or fallback
 
 
+def format_file_size(num_bytes: int) -> str:
+    """사람이 읽기 쉬운 파일 크기 문자열로 바꾼다 (예: 1536 -> '1.5 KB')."""
+    size = float(num_bytes)
+    for unit in ("B", "KB", "MB", "GB"):
+        if size < 1024:
+            return f"{size:.1f} {unit}" if unit != "B" else f"{int(size)} {unit}"
+        size /= 1024
+    return f"{size:.1f} TB"
+
+
 def unique_recovered_path(
     output_dir: Path, base_filename: str, new_extension: str, suffix: str = DEFAULT_SUFFIX
 ) -> Path:

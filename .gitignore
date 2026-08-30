@@ -12,6 +12,9 @@ logs/
 # Sample/test data generated locally
 test_samples/
 
+# Local scratch/debug files
+_scratch/
+
 # OS
 Thumbs.db
 .DS_Store

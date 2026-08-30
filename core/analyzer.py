@@ -192,12 +192,13 @@ def analyze_file(path: str | Path) -> FileInfo:
         return info
 
     # --- 케이스 B: 시그니처로 형식이 확인된 경우 ---
-    # WEBP는 입력으로 스캔될 때뿐 아니라 복구 시 변환 대상 형식으로도 쓰이므로 지원 형식에 포함한다.
-    is_supported_format = detected_format in {"JPEG", "PNG", "HEIC", "HEIF", "WEBP"}
+    # WEBP/GIF/TIFF/BMP는 입력으로 스캔될 때뿐 아니라 복구 시 변환 대상 형식으로도 쓰이므로
+    # 지원 형식에 포함한다 (PRD 37.6 "추가 포맷 지원").
+    is_supported_format = detected_format in {"JPEG", "PNG", "HEIC", "HEIF", "WEBP", "GIF", "TIFF", "BMP"}
     info.is_mismatched = not detector.extension_matches_format(extension, detected_format)
 
     if not is_supported_format:
-        # AVIF/GIF/BMP/TIFF 등 향후 지원 예정 형식 (PRD 6장)
+        # AVIF 등 아직 지원하지 않는 형식
         info.status = FileStatus.UNSUPPORTED
         info.recoverable = RecoveryPossibility.NOT_APPLICABLE
         info.error_message = f"'{detected_format}' 형식은 현재 지원되지 않습니다."

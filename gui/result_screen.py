@@ -6,6 +6,9 @@ PRD 18장 "Screen 03 — Scan Result" 구현.
 
 from __future__ import annotations
 
+from datetime import datetime
+from pathlib import Path
+
 from PySide6.QtCore import Qt, Signal, QRect, QItemSelectionModel
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
@@ -24,8 +27,9 @@ from PySide6.QtWidgets import (
 )
 
 from gui.theme import COLORS, STATUS_COLORS, STATUS_DOT
-from models.file_info import FileStatus
+from models.file_info import FileStatus, RecoveryPossibility
 from models.scan_result import ScanResult
+from utils.file_utils import format_file_size
 
 FILTER_OPTIONS = [
     "전체",
@@ -94,6 +98,20 @@ class CheckAllHeaderView(QHeaderView):
             self.toggled.emit(self._checked)
             return
         super().mousePressEvent(event)
+
+
+class _NumericSortItem(QTableWidgetItem):
+    """표시 텍스트(예: '1.5 MB')가 아니라 Qt.UserRole에 저장해둔 실제 값(바이트 수,
+    타임스탬프 등) 기준으로 정렬한다. 문자열로 정렬하면 '10 KB'가 '2 KB'보다
+    앞에 오는 식으로 잘못 정렬되는 문제를 피한다."""
+
+    def __lt__(self, other):
+        if isinstance(other, QTableWidgetItem):
+            self_key = self.data(Qt.UserRole)
+            other_key = other.data(Qt.UserRole)
+            if self_key is not None and other_key is not None:
+                return self_key < other_key
+        return super().__lt__(other)
 
 
 class SummaryChip(QFrame):
@@ -184,7 +202,7 @@ class ResultScreen(QWidget):
         action_row.addStretch(1)
 
         self.search_box = QLineEdit()
-        self.search_box.setPlaceholderText("파일명 검색")
+        self.search_box.setPlaceholderText("파일명·확장자·실제 형식 검색")
         self.search_box.setFixedWidth(220)
         self.search_box.textChanged.connect(self._apply_filters)
         action_row.addWidget(self.search_box)
@@ -195,11 +213,11 @@ class ResultScreen(QWidget):
         action_row.addWidget(self.filter_combo)
         outer.addLayout(action_row)
 
-        self.table = QTableWidget(0, 5)
+        self.table = QTableWidget(0, 7)
         self._header = CheckAllHeaderView(self.table)
         self._header.toggled.connect(self._on_header_toggled)
         self.table.setHorizontalHeader(self._header)
-        self.table.setHorizontalHeaderLabels(["", "상태", "파일명", "실제 형식", "확장자"])
+        self.table.setHorizontalHeaderLabels(["", "상태", "파일명", "실제 형식", "확장자", "크기", "수정일"])
         self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Fixed)
         self.table.setColumnWidth(0, 32)
         self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
@@ -302,7 +320,13 @@ class ResultScreen(QWidget):
             files = self.result.by_status(status_map[filter_choice])
 
         if query:
-            files = [f for f in files if query in f.filename.lower()]
+            files = [
+                f
+                for f in files
+                if query in f.filename.lower()
+                or query in (f.extension or "").lower()
+                or query in (f.detected_format or "").lower()
+            ]
 
         self._current_files = files
         self._populate_table(files)
@@ -314,8 +338,16 @@ class ResultScreen(QWidget):
         self.table.setRowCount(0)
         self.table.setRowCount(len(files))
         for row, info in enumerate(files):
+            not_recoverable = info.recoverable == RecoveryPossibility.NOT_RECOVERABLE
+
             check_item = QTableWidgetItem()
-            check_item.setFlags(Qt.ItemIsUserCheckable | Qt.ItemIsEnabled)
+            if not_recoverable:
+                # PRD_MVP우선순위.md '남은 갭 #5': 복구 불가능한(완전 손상) 파일은 애초에
+                # 선택해서 복구를 시도할 수 없게 체크박스 자체를 비활성화한다.
+                check_item.setFlags(Qt.ItemIsUserCheckable)
+                check_item.setToolTip("복구할 수 없는 파일입니다.")
+            else:
+                check_item.setFlags(Qt.ItemIsUserCheckable | Qt.ItemIsEnabled)
             check_item.setCheckState(Qt.Unchecked)
             check_item.setData(Qt.UserRole, info)
 
@@ -330,11 +362,24 @@ class ResultScreen(QWidget):
             format_item = QTableWidgetItem(info.detected_format or "-")
             ext_item = QTableWidgetItem(info.extension)
 
+            size_item = _NumericSortItem(format_file_size(info.file_size))
+            size_item.setData(Qt.UserRole, info.file_size)
+
+            mtime = _safe_mtime(info.path)
+            date_item = _NumericSortItem(_format_mtime(mtime))
+            date_item.setData(Qt.UserRole, mtime if mtime is not None else -1)
+
+            if not_recoverable:
+                for cell in (status_item, name_item, format_item, ext_item, size_item, date_item):
+                    cell.setToolTip("복구할 수 없는 파일입니다.")
+
             self.table.setItem(row, 0, check_item)
             self.table.setItem(row, 1, status_item)
             self.table.setItem(row, 2, name_item)
             self.table.setItem(row, 3, format_item)
             self.table.setItem(row, 4, ext_item)
+            self.table.setItem(row, 5, size_item)
+            self.table.setItem(row, 6, date_item)
 
         self.table.blockSignals(False)
         self.table.setSortingEnabled(was_sorting)
@@ -352,7 +397,9 @@ class ResultScreen(QWidget):
         result = []
         for row in range(self.table.rowCount()):
             item = self.table.item(row, 0)
-            if item and item.checkState() == Qt.Checked:
+            # 체크박스가 비활성화된(복구 불가능한) 항목은 다른 경로로 체크 상태가
+            # 됐더라도 실제 선택 목록에는 절대 포함시키지 않는다 (최종 안전장치).
+            if item and item.checkState() == Qt.Checked and (item.flags() & Qt.ItemIsEnabled):
                 result.append(item.data(Qt.UserRole))
         return result
 
@@ -379,7 +426,8 @@ class ResultScreen(QWidget):
             for row in range(self.table.rowCount()):
                 item = self.table.item(row, 0)
                 if item:
-                    item.setCheckState(Qt.Checked if row in selected_rows else Qt.Unchecked)
+                    want_checked = row in selected_rows and bool(item.flags() & Qt.ItemIsEnabled)
+                    item.setCheckState(Qt.Checked if want_checked else Qt.Unchecked)
             self.table.blockSignals(False)
         finally:
             self._syncing = False
@@ -392,7 +440,7 @@ class ResultScreen(QWidget):
         self.table.blockSignals(True)
         for row in range(self.table.rowCount()):
             item = self.table.item(row, 0)
-            if item:
+            if item and (state == Qt.Unchecked or (item.flags() & Qt.ItemIsEnabled)):
                 item.setCheckState(state)
         self.table.blockSignals(False)
         if state == Qt.Checked:
@@ -421,3 +469,17 @@ def _qcolor(hex_str: str):
     from PySide6.QtGui import QColor
 
     return QColor(hex_str)
+
+
+def _safe_mtime(path: str) -> float | None:
+    """파일이 스캔 이후 옮겨지거나 삭제됐을 수 있으므로 실패해도 조용히 None을 반환한다."""
+    try:
+        return Path(path).stat().st_mtime
+    except OSError:
+        return None
+
+
+def _format_mtime(mtime: float | None) -> str:
+    if mtime is None:
+        return "-"
+    return datetime.fromtimestamp(mtime).strftime("%Y-%m-%d %H:%M")

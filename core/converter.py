@@ -10,18 +10,45 @@ PRD 10장 "복구 기능", 11장 "이미지 변환", 15장 "복구 결과 검증
 
 from __future__ import annotations
 
+import errno
 import shutil
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 from typing import Optional
 
-from PIL import Image
+from PIL import Image, ImageFile
 
 from core.analyzer import analyze_file, HEIF_SUPPORT
 from models.file_info import FileInfo, FileStatus
 from utils import logger
 from utils.file_utils import unique_recovered_path
+
+# 파일 잠금(다른 프로그램에서 사용 중)은 Windows에서 별도 예외 타입이 없고
+# PermissionError(winerror=32)로 온다. 저장 공간 부족은 winerror=112 또는
+# errno.ENOSPC로 온다 (플랫폼에 따라 다름).
+_WINERROR_FILE_LOCKED = 32
+_WINERROR_DISK_FULL = 112
+
+
+def _classify_os_error(exc: OSError, fallback_prefix: str) -> tuple[str, bool]:
+    """PRD 23장 문구로 변환한다. (사용자에게 보여줄 메시지, 배치 전체를 중단해야 하는지).
+
+    23.1/23.3/23.5에 해당하지 않는 그 외 OSError(예: 완전 손상 파일의 디코딩 실패)는
+    기존과 같은 형식(f"{fallback_prefix}: {exc}")으로 남긴다.
+    """
+    winerror = getattr(exc, "winerror", None)
+
+    if winerror == _WINERROR_FILE_LOCKED:
+        return "다른 프로그램에서 사용 중인 파일입니다.", False
+    if isinstance(exc, PermissionError):
+        return "이 파일에 접근할 수 없습니다.", False
+    if winerror == _WINERROR_DISK_FULL or exc.errno == errno.ENOSPC:
+        # 23.5: 현재까지 성공한 파일은 유지하고, 이후 작업은 중단한다.
+        return "복구 파일을 저장할 공간이 부족합니다.", True
+
+    return f"{fallback_prefix}: {exc}", False
+
 
 EXTENSION_BY_FORMAT = {
     "HEIC": ".heic",
@@ -29,13 +56,18 @@ EXTENSION_BY_FORMAT = {
     "JPEG": ".jpg",
     "PNG": ".png",
     "WEBP": ".webp",
+    "GIF": ".gif",
+    "TIFF": ".tiff",
+    "BMP": ".bmp",
 }
 
-# '형식 변환'에서 사용자가 고를 수 있는 출력 형식 (HEIC/HEIF는 변환 대상으로 쓸 일이 없어 제외)
-CONVERT_TARGET_FORMATS = ["JPEG", "PNG", "WEBP"]
+# '형식 변환'에서 사용자가 고를 수 있는 출력 형식 (HEIC/HEIF는 변환 대상으로 쓸 일이 없어 제외).
+# GIF/TIFF/BMP는 PRD 37.6에 따라 WEBP와 같은 패턴으로 추가함.
+CONVERT_TARGET_FORMATS = ["JPEG", "PNG", "WEBP", "GIF", "TIFF", "BMP"]
 
 # 알파(투명) 채널을 지원하는 출력 형식. 이 목록에 없으면 저장 전에 RGB로 눌러야 한다.
-ALPHA_CAPABLE_FORMATS = {"PNG", "WEBP"}
+# GIF/BMP는 Pillow에서 RGBA 저장이 불안정해 안전하게 RGB로 눌러서 저장한다.
+ALPHA_CAPABLE_FORMATS = {"PNG", "WEBP", "TIFF"}
 
 DEFAULT_CONVERT_FORMAT = "JPEG"
 
@@ -54,6 +86,7 @@ class RecoveryOutcome:
     verified: bool = False
     error_message: Optional[str] = None
     target_format: Optional[str] = None  # CONVERT 모드일 때 실제로 저장한 형식 (JPEG/PNG/WEBP)
+    abort_batch: bool = False  # PRD 23.5: 저장 공간 부족 시 이 파일 이후로는 배치를 중단해야 함
 
     @property
     def label(self) -> str:
@@ -85,7 +118,7 @@ def restore_extension(info: FileInfo, output_dir: Path, suffix: str = "recovered
         output_path = unique_recovered_path(output_dir, info.filename, new_ext, suffix=suffix)
         shutil.copy2(info.path, output_path)  # 원본 보호: copy이지 move가 아님
     except OSError as exc:
-        outcome.error_message = f"파일 복사 실패: {exc}"
+        outcome.error_message, outcome.abort_batch = _classify_os_error(exc, "파일 복사 실패")
         return outcome
 
     outcome.output_path = str(output_path)
@@ -117,15 +150,25 @@ def convert_to_format(
 
     try:
         output_path = unique_recovered_path(output_dir, info.filename, ext, suffix=suffix)
-        with Image.open(info.path) as img:
-            img.load()
-            if target_format not in ALPHA_CAPABLE_FORMATS and img.mode in ("RGBA", "P", "LA"):
-                # 출력 형식이 알파 채널을 지원하지 않으면 저장 전에 RGB로 눌러야 한다 (예: JPEG)
-                img = img.convert("RGB")
-            save_kwargs = {}
-            if target_format in ("JPEG", "WEBP"):
-                save_kwargs["quality"] = quality
-            img.save(output_path, format=target_format, **save_kwargs)
+        # 부분 손상 파일(analyzer가 "부분_손상/부분_복구_가능"으로 판정한 것)도 시도는 되게
+        # 하려면, 분석 때와 마찬가지로 잘린 이미지를 끝까지 읽어보는 모드를 켜야 한다.
+        # 이 플래그는 Pillow 프로세스 전역 설정이라, try/finally로 반드시 되돌려놓는다.
+        ImageFile.LOAD_TRUNCATED_IMAGES = True
+        try:
+            with Image.open(info.path) as img:
+                img.load()
+                if target_format not in ALPHA_CAPABLE_FORMATS and img.mode in ("RGBA", "P", "LA"):
+                    # 출력 형식이 알파 채널을 지원하지 않으면 저장 전에 RGB로 눌러야 한다 (예: JPEG)
+                    img = img.convert("RGB")
+                save_kwargs = {}
+                if target_format in ("JPEG", "WEBP"):
+                    save_kwargs["quality"] = quality
+                img.save(output_path, format=target_format, **save_kwargs)
+        finally:
+            ImageFile.LOAD_TRUNCATED_IMAGES = False
+    except OSError as exc:
+        outcome.error_message, outcome.abort_batch = _classify_os_error(exc, "변환 실패")
+        return outcome
     except Exception as exc:
         outcome.error_message = f"변환 실패: {exc}"
         return outcome
@@ -144,12 +187,13 @@ def recover_file(
     output_dir: str | Path,
     suffix: str = "recovered",
     target_format: str = DEFAULT_CONVERT_FORMAT,
+    quality: int = 90,
 ) -> RecoveryOutcome:
     output_dir = Path(output_dir)
     if mode == RecoveryMode.RESTORE_EXTENSION:
         return restore_extension(info, output_dir, suffix=suffix)
     elif mode == RecoveryMode.CONVERT:
-        return convert_to_format(info, output_dir, target_format=target_format, suffix=suffix)
+        return convert_to_format(info, output_dir, target_format=target_format, suffix=suffix, quality=quality)
     raise ValueError(f"알 수 없는 복구 방식: {mode}")
 
 
@@ -160,6 +204,7 @@ def recover_batch(
     progress_callback=None,  # (current, total, filename) -> None
     suffix: str = "recovered",
     target_format: str = DEFAULT_CONVERT_FORMAT,
+    quality: int = 90,
 ) -> list[RecoveryOutcome]:
     """PRD FR-005 '일괄 복구'. suffix는 복구 파일명 뒤에 붙는 문구 (기본값 'recovered')."""
     output_dir = Path(output_dir)
@@ -167,11 +212,17 @@ def recover_batch(
     total = len(files)
     for idx, info in enumerate(files, start=1):
         try:
-            outcome = recover_file(info, mode, output_dir, suffix=suffix, target_format=target_format)
+            outcome = recover_file(
+                info, mode, output_dir, suffix=suffix, target_format=target_format, quality=quality
+            )
         except Exception as exc:  # 개별 파일 실패가 전체 배치를 막지 않도록
             outcome = RecoveryOutcome(original=info, mode=mode, error_message=str(exc))
         outcomes.append(outcome)
         logger.log_recovery(outcome)
         if progress_callback:
             progress_callback(idx, total, info.filename)
+        if outcome.abort_batch:
+            # PRD 23.5: 저장 공간 부족 등으로 더 진행해도 소용없는 경우, 지금까지 성공한
+            # 파일은 그대로 두고 나머지 파일 처리는 건너뛴다(전체 배치를 여기서 중단).
+            break
     return outcomes

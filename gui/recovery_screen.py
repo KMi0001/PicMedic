@@ -31,6 +31,12 @@ from models.file_info import FileInfo
 from utils.file_utils import DEFAULT_SUFFIX
 
 
+QUALITY_PRESETS = {"고화질": 95, "보통": 85, "저용량": 65}
+DEFAULT_QUALITY_PRESET = "보통"
+# 이 형식들만 Pillow 저장 시 quality를 실제로 쓴다 (core/converter.py::convert_to_format 참고)
+QUALITY_APPLICABLE_FORMATS = {"JPEG", "WEBP"}
+
+
 class RecoveryWorker(QThread):
     progress = Signal(int, int, str)
     finished_batch = Signal(list)  # list[RecoveryOutcome]
@@ -42,6 +48,7 @@ class RecoveryWorker(QThread):
         output_dir: str,
         suffix: str = DEFAULT_SUFFIX,
         target_format: str = DEFAULT_CONVERT_FORMAT,
+        quality: int = 90,
         parent=None,
     ):
         super().__init__(parent)
@@ -50,6 +57,7 @@ class RecoveryWorker(QThread):
         self.output_dir = output_dir
         self.suffix = suffix
         self.target_format = target_format
+        self.quality = quality
 
     def run(self):
         outcomes = recover_batch(
@@ -59,6 +67,7 @@ class RecoveryWorker(QThread):
             progress_callback=lambda cur, total, name: self.progress.emit(cur, total, name),
             suffix=self.suffix,
             target_format=self.target_format,
+            quality=self.quality,
         )
         self.finished_batch.emit(outcomes)
 
@@ -114,11 +123,21 @@ class RecoveryScreen(QWidget):
         self.format_combo.addItems(CONVERT_TARGET_FORMATS)
         self.format_combo.setCurrentText(DEFAULT_CONVERT_FORMAT)
         convert_row.addWidget(self.format_combo)
+
+        self.quality_label = QLabel("화질")
+        self.quality_label.setStyleSheet(f"color: {COLORS['text_secondary']};")
+        convert_row.addWidget(self.quality_label)
+        self.quality_combo = QComboBox()
+        self.quality_combo.addItems(QUALITY_PRESETS.keys())
+        self.quality_combo.setCurrentText(DEFAULT_QUALITY_PRESET)
+        convert_row.addWidget(self.quality_combo)
+
         convert_row.addStretch(1)
         card_layout.addLayout(convert_row)
 
         self.restore_radio.toggled.connect(self._on_mode_changed)
         self.convert_radio.toggled.connect(self._on_mode_changed)
+        self.format_combo.currentTextChanged.connect(self._on_mode_changed)
         self._on_mode_changed()
 
         output_label = QLabel("저장 위치")
@@ -191,8 +210,14 @@ class RecoveryScreen(QWidget):
     # --- 내부 로직 -----------------------------------------------------
 
     def _on_mode_changed(self):
-        self.format_combo.setEnabled(self.convert_radio.isChecked())
-        self.title_label.setText("사진 변환" if self.convert_radio.isChecked() else "사진 복구")
+        is_convert = self.convert_radio.isChecked()
+        self.format_combo.setEnabled(is_convert)
+        self.title_label.setText("사진 변환" if is_convert else "사진 복구")
+
+        # PNG/GIF/BMP는 quality를 쓰지 않으므로(core/converter.py 참고) 화질 선택이 의미 없다.
+        quality_applicable = is_convert and self.format_combo.currentText() in QUALITY_APPLICABLE_FORMATS
+        self.quality_label.setEnabled(quality_applicable)
+        self.quality_combo.setEnabled(quality_applicable)
 
     def _browse_output(self):
         folder = QFileDialog.getExistingDirectory(self, "저장 위치 선택")
@@ -211,13 +236,16 @@ class RecoveryScreen(QWidget):
         mode = RecoveryMode.RESTORE_EXTENSION if self.restore_radio.isChecked() else RecoveryMode.CONVERT
         suffix = self.suffix_edit.text().strip() or DEFAULT_SUFFIX
         target_format = self.format_combo.currentText()
+        quality = QUALITY_PRESETS[self.quality_combo.currentText()]
 
         self.start_btn.setEnabled(False)
         self.progress_bar.setVisible(True)
         self.progress_bar.setValue(0)
         self.status_label.setText("복구 중...")
 
-        self.worker = RecoveryWorker(self.files, mode, output_dir, suffix=suffix, target_format=target_format)
+        self.worker = RecoveryWorker(
+            self.files, mode, output_dir, suffix=suffix, target_format=target_format, quality=quality
+        )
         self.worker.progress.connect(self._on_progress)
         self.worker.finished_batch.connect(lambda outcomes: self._on_finished(outcomes, output_dir))
         self.worker.start()

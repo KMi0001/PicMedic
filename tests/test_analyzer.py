@@ -100,6 +100,30 @@ def run():
         info = analyze_file(p)
         check("txt 파일 -> status=이미지가_아닌_파일/지원안함", info.status in (FileStatus.NOT_AN_IMAGE, FileStatus.UNSUPPORTED), info.summary())
 
+        # 7) PRD 37.6 "추가 포맷 지원": GIF/TIFF/BMP가 더 이상 UNSUPPORTED가 아니라
+        # 정상적으로 분석되는지 확인 (예전엔 core/analyzer.py의 하드코딩된 지원 목록에서 빠져있었음)
+        p = tmp / "normal.gif"
+        Image.new("RGB", (20, 20), color="yellow").save(p, format="GIF")
+        info = analyze_file(p)
+        check("정상 GIF -> status=정상", info.status == FileStatus.NORMAL, info.summary())
+
+        p = tmp / "normal.bmp"
+        Image.new("RGB", (20, 20), color="orange").save(p, format="BMP")
+        info = analyze_file(p)
+        check("정상 BMP -> status=정상", info.status == FileStatus.NORMAL, info.summary())
+
+        p = tmp / "normal.tiff"
+        Image.new("RGB", (20, 20), color="purple").save(p, format="TIFF")
+        info = analyze_file(p)
+        check("정상 TIFF -> status=정상", info.status == FileStatus.NORMAL, info.summary())
+
+        # 7-1) GIF인데 .jpg로 위장 -> 형식 불일치로 잡혀야 함 (WEBP/HEIC와 같은 패턴)
+        p = tmp / "IMG_9999.jpg"
+        Image.new("RGB", (20, 20), color="yellow").save(p, format="GIF")
+        info = analyze_file(p)
+        check("GIF(.jpg 위장) -> status=형식_불일치", info.status == FileStatus.MISMATCH, info.summary())
+        check("GIF(.jpg 위장) -> 복구가능", info.recoverable == RecoveryPossibility.RECOVERABLE)
+
     print(f"\n총 {passed + failed}개 중 {passed}개 통과, {failed}개 실패")
     return failed == 0
 

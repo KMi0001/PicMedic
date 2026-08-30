@@ -31,6 +31,18 @@ def make_heic(path: Path):
     heif_file.save(path, quality=80)
 
 
+def make_gif(path: Path):
+    Image.new("RGB", (20, 20), color="yellow").save(path, format="GIF")
+
+
+def make_bmp(path: Path):
+    Image.new("RGB", (20, 20), color="orange").save(path, format="BMP")
+
+
+def make_tiff(path: Path):
+    Image.new("RGB", (20, 20), color="purple").save(path, format="TIFF")
+
+
 def run():
     passed = 0
     failed = 0
@@ -82,10 +94,30 @@ def run():
         text_path.write_text("이것은 이미지가 아닙니다.", encoding="utf-8")
         check("텍스트 파일 -> 형식 탐지 실패(None)", detector.detect_format(text_path) is None)
 
+        # 6-1) PRD 37.6 "추가 포맷 지원": GIF/TIFF/BMP 시그니처 탐지 및 확장자 일치 확인
+        gif_path = tmp / "normal.gif"
+        make_gif(gif_path)
+        check("정상 GIF -> GIF로 탐지", detector.detect_format(gif_path) == "GIF")
+        check("'.gif' 확장자는 GIF와 일치", detector.extension_matches_format(".gif", "GIF"))
+
+        bmp_path = tmp / "normal.bmp"
+        make_bmp(bmp_path)
+        check("정상 BMP -> BMP로 탐지", detector.detect_format(bmp_path) == "BMP")
+        check("'.bmp' 확장자는 BMP와 일치", detector.extension_matches_format(".bmp", "BMP"))
+
+        tiff_path = tmp / "normal.tiff"
+        make_tiff(tiff_path)
+        check("정상 TIFF -> TIFF로 탐지", detector.detect_format(tiff_path) == "TIFF")
+        check("'.tiff' 확장자는 TIFF와 일치", detector.extension_matches_format(".tiff", "TIFF"))
+
         # 7) 지원 확장자 판별
         check("'.jpg'는 MVP 지원 확장자", detector.is_mvp_supported_extension(".jpg"))
         check("'.webp'는 지원 확장자(복구 변환 대상으로 쓰임)", detector.is_mvp_supported_extension(".webp"))
-        check("'.gif'는 MVP 지원 확장자 아님(향후 지원)", not detector.is_mvp_supported_extension(".gif"))
+        # PRD 37.6 "추가 포맷 지원": GIF/TIFF/BMP도 WEBP와 같은 패턴으로 지원 확장자에 포함됨
+        check("'.gif'는 지원 확장자(추가 포맷 지원)", detector.is_mvp_supported_extension(".gif"))
+        check("'.tiff'는 지원 확장자(추가 포맷 지원)", detector.is_mvp_supported_extension(".tiff"))
+        check("'.bmp'는 지원 확장자(추가 포맷 지원)", detector.is_mvp_supported_extension(".bmp"))
+        check("'.avif'는 아직 지원 확장자 아님", not detector.is_mvp_supported_extension(".avif"))
 
     print(f"\n총 {passed + failed}개 중 {passed}개 통과, {failed}개 실패")
     return failed == 0

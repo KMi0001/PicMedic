@@ -50,7 +50,8 @@ HEIF_BRANDS: dict[bytes, str] = {
 }
 
 # 지원 대상 확장자 -> 그 확장자에서 "정상"으로 간주할 실제 형식들
-# (MVP 범위: PRD 6장 "지원 확장자". WEBP는 복구 시 변환 대상 형식으로 쓸 수 있도록 추가 지원함)
+# (MVP 범위: PRD 6장 "지원 확장자". WEBP는 복구 시 변환 대상 형식으로 쓸 수 있도록 추가 지원함.
+# GIF/TIFF/BMP는 PRD 37.6 "추가 포맷 지원"에 따라 WEBP와 같은 패턴으로 스캔·변환 대상에 포함시킴)
 EXPECTED_FORMAT_BY_EXTENSION: dict[str, set[str]] = {
     ".jpg": {"JPEG"},
     ".jpeg": {"JPEG"},
@@ -58,10 +59,15 @@ EXPECTED_FORMAT_BY_EXTENSION: dict[str, set[str]] = {
     ".heic": {"HEIC"},
     ".heif": {"HEIF", "HEIC"},
     ".webp": {"WEBP"},
+    ".gif": {"GIF"},
+    ".tiff": {"TIFF"},
+    ".tif": {"TIFF"},
+    ".bmp": {"BMP"},
 }
 
-# MVP에서 "알고는 있지만 지원 대상은 아닌" 확장자 (PRD 6장 "향후")
-FUTURE_EXTENSIONS = {".gif", ".tiff", ".tif", ".bmp"}
+# MVP에서 "알고는 있지만 지원 대상은 아닌" 확장자 (PRD 6장 "향후"). 현재는 없음 —
+# 향후 새 형식(예: AVIF)을 스캔은 하되 지원 불가로 표시만 하고 싶을 때 여기에 추가한다.
+FUTURE_EXTENSIONS: set[str] = set()
 
 MVP_SUPPORTED_EXTENSIONS = set(EXPECTED_FORMAT_BY_EXTENSION.keys())
 

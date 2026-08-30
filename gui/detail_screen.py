@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
 from core.converter import RecoveryMode
 from gui.theme import COLORS, STATUS_COLORS
 from models.file_info import FileInfo, FileStatus
+from utils.file_utils import format_file_size
 
 PREVIEW_SIZE = 320
 
@@ -107,7 +108,7 @@ class DetailScreen(QWidget):
         self._clear_grid()
         self._add_row("파일 확장자", info.extension or "-")
         self._add_row("실제 형식", info.detected_format or "알 수 없음")
-        self._add_row("파일 크기", _format_size(info.file_size))
+        self._add_row("파일 크기", format_file_size(info.file_size))
         if info.width and info.height:
             self._add_row("해상도", f"{info.width} × {info.height}")
         else:
@@ -200,12 +201,3 @@ class DetailScreen(QWidget):
     def _on_convert_clicked(self):
         if self.current_info:
             self.recover_requested.emit([self.current_info], RecoveryMode.CONVERT)
-
-
-def _format_size(num_bytes: int) -> str:
-    size = float(num_bytes)
-    for unit in ("B", "KB", "MB", "GB"):
-        if size < 1024:
-            return f"{size:.1f} {unit}" if unit != "B" else f"{int(size)} {unit}"
-        size /= 1024
-    return f"{size:.1f} TB"

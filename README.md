@@ -36,7 +36,9 @@ PicMedic/
 │   ├── test_detector.py
 │   ├── test_analyzer.py
 │   ├── test_converter.py
-│   └── test_logger.py
+│   ├── test_logger.py
+│   ├── test_scanner.py
+│   └── test_result_screen.py
 └── requirements.txt
 ```
 
@@ -54,8 +56,12 @@ python tests/test_detector.py
 python tests/test_analyzer.py
 python tests/test_converter.py
 python tests/test_logger.py
+python tests/test_scanner.py
+python tests/test_result_screen.py
 ```
-모두 [PASS]로 통과해야 합니다 (총 55개 케이스).
+모두 [PASS]로 통과해야 합니다 (총 95개 케이스, 심볼릭 링크 생성 권한이 있는 환경에서는 99개).
+`test_scanner.py`는 심볼릭 링크를 만들 권한이 없는 환경(예: 개발자 모드가 꺼진 Windows)에서는
+순환 테스트 일부가 [SKIP]으로 표시됩니다.
 
 ## 사용 흐름
 
