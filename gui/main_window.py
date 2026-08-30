@@ -24,7 +24,7 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("PicMedic — 사진 진단 · 복구 · 정리")
-        self.resize(980, 680)
+        self.resize(760, 600)
         self.setStyleSheet(APP_STYLESHEET)
 
         self.stack = QStackedWidget()
