@@ -171,6 +171,13 @@ AI 이미지 복원, 얼굴 인식, 이미지 내용 분석, 자동 사진 분�
 ### ~~6. [버그, macOS에서 재현] 폴더 재귀 스캔이 심볼릭 링크 순환에서 무한 루프 + 취소 안 됨~~ → ✅ 해결됨
 `core/scanner.py::iter_candidate_files`가 `Path.glob("**/*")`로 재귀 스캔하던 걸 `os.walk(followlinks=True)` 기반으로 바꾸고, 방문한 디렉터리의 실제 경로(`resolve()`)를 추적해 이미 방문한 곳은 `dirnames`에서 제거하는 방식으로 순환을 차단했다. 또한 `iter_candidate_files`/`scan_paths`에도 `should_cancel`을 전달해, 파일 목록을 모으는 단계(예전엔 취소를 체크할 지점 자체가 없던 곳)에서도 즉시 중단되도록 고쳤다. `tests/test_scanner.py`에 실제 순환 디렉터리(윈도우 junction)로 회귀 테스트 추가.
 
+### ~~7. [버그, 실사용 재현] 대량 스캔 결과에서 전체선택/해제 시 응답 없음~~ → ✅ 해결됨
+16,965장 스캔 후 검사 결과 화면에서 헤더 "전체 선택"을 누르고 다시 해제하니 각각 7~10초씩 걸리며 "응답 없음"이 뜸. 원인 두 가지:
+1. `_set_all_checked`가 체크박스를 다 갱신한 뒤 `selectAll()`/`clearSelection()`을 부르면 Qt의 `selectionChanged`가 다시 발생해 `_on_selection_changed`가 방금 한 것과 같은 O(행 수) 루프를 또 한 번 돌림 (재진입 가드 `_syncing`이 이 경로에만 빠져 있었음).
+2. **더 큰 원인**: 테이블 정렬(`setSortingEnabled(True)`)이 켜진 채로 수만 번 `setCheckState`/`selectAll`/`clearSelection`을 부르면 Qt가 매번 재정렬 여부를 검토해 기하급수적으로 느려짐 — 실측 결과 정렬을 잠깐 꺼두는 것만으로 6.7초 → 0.19초로 단축됨.
+
+`_set_all_checked`/`_on_selection_changed`에 `setSortingEnabled(False)`+`setUpdatesEnabled(False)`+`_syncing` 가드를 모두 적용. `tests/test_result_screen.py`에 5,000행 규모 회귀 테스트 추가(3초 제한, 실측 0.1~0.2초).
+
 ---
 
 ## 부록 A — 비기능 요구사항 (24장)

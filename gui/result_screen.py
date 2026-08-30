@@ -334,6 +334,7 @@ class ResultScreen(QWidget):
     def _populate_table(self, files: list):
         was_sorting = self.table.isSortingEnabled()
         self.table.setSortingEnabled(False)  # 채우는 동안 정렬되면 행-데이터가 뒤섞일 수 있음
+        self.table.setUpdatesEnabled(False)  # 수만 행일 때 매 setItem마다 다시 그리지 않도록
         self.table.blockSignals(True)
         self.table.setRowCount(0)
         self.table.setRowCount(len(files))
@@ -383,6 +384,7 @@ class ResultScreen(QWidget):
 
         self.table.blockSignals(False)
         self.table.setSortingEnabled(was_sorting)
+        self.table.setUpdatesEnabled(True)
         self._update_selection_label()
 
     def _on_row_double_clicked(self, index):
@@ -420,6 +422,11 @@ class ResultScreen(QWidget):
         if self._syncing:
             return
         self._syncing = True
+        # Ctrl+A 등으로 수만 행이 한 번에 선택/해제될 수도 있으므로, 여기도
+        # _set_all_checked과 동일하게 다시 그리기/정렬을 잠가둔다.
+        was_sorting = self.table.isSortingEnabled()
+        self.table.setSortingEnabled(False)
+        self.table.setUpdatesEnabled(False)
         try:
             selected_rows = {idx.row() for idx in self.table.selectionModel().selectedRows()}
             self.table.blockSignals(True)
@@ -430,6 +437,8 @@ class ResultScreen(QWidget):
                     item.setCheckState(Qt.Checked if want_checked else Qt.Unchecked)
             self.table.blockSignals(False)
         finally:
+            self.table.setUpdatesEnabled(True)
+            self.table.setSortingEnabled(was_sorting)
             self._syncing = False
         self._update_selection_label()
 
@@ -437,16 +446,33 @@ class ResultScreen(QWidget):
         self._set_all_checked(Qt.Checked if checked else Qt.Unchecked)
 
     def _set_all_checked(self, state):
-        self.table.blockSignals(True)
-        for row in range(self.table.rowCount()):
-            item = self.table.item(row, 0)
-            if item and (state == Qt.Unchecked or (item.flags() & Qt.ItemIsEnabled)):
-                item.setCheckState(state)
-        self.table.blockSignals(False)
-        if state == Qt.Checked:
-            self.table.selectAll()
-        else:
-            self.table.clearSelection()
+        # 대량(수만 행)일 때 응답 없음이 뜨던 원인 두 가지:
+        # 1) 아래서 selectAll()/clearSelection()을 부르면 Qt가 selectionChanged를 쏘고,
+        #    그게 _on_selection_changed로 이어져서 방금 이 함수가 한 것과 똑같은
+        #    O(행 수) 루프를 또 한 번 돌렸다 (재진입 가드가 이 경로에만 빠져 있었음).
+        #    -> _syncing으로 중복 작업을 건너뛰게 함.
+        # 2) 정렬이 켜진 채로 17,000번 가까이 setCheckState/selectAll/clearSelection을
+        #    부르면 Qt가 매번 재정렬을 검토해서 기하급수적으로 느려짐(실측 6~10초 이상).
+        #    -> 이 구간 동안 정렬을 꺼서 0.2초대로 단축됨.
+        was_sorting = self.table.isSortingEnabled()
+        self.table.setSortingEnabled(False)
+        self.table.setUpdatesEnabled(False)
+        self._syncing = True
+        try:
+            self.table.blockSignals(True)
+            for row in range(self.table.rowCount()):
+                item = self.table.item(row, 0)
+                if item and (state == Qt.Unchecked or (item.flags() & Qt.ItemIsEnabled)):
+                    item.setCheckState(state)
+            self.table.blockSignals(False)
+            if state == Qt.Checked:
+                self.table.selectAll()
+            else:
+                self.table.clearSelection()
+        finally:
+            self._syncing = False
+            self.table.setUpdatesEnabled(True)
+            self.table.setSortingEnabled(was_sorting)
         self._update_selection_label()
 
     def _update_selection_label(self):
