@@ -20,14 +20,15 @@ PySide6가 UI 차이를 흡수하므로, 필요한 경우에만 `sys.platform` �
 - **`.gitignore`**: 새로운 OS 전용 잡파일(예: `.DS_Store`, `Thumbs.db`)이 생기면 즉시 추가.
 - **폰트**: [gui/theme.py](gui/theme.py)의 `font-family` 폴백 목록(Windows/macOS 한글 폰트 포함)에
   새 폰트를 쓸 경우 양쪽 OS에 실제로 존재하는지 확인 후 추가.
-- **아이콘**: 런타임 창 아이콘은 `assets/icon.ico`(Qt가 크로스플랫폼으로 읽음)로 충분하지만,
-  macOS 앱 번들(`.app`)을 빌드할 계획이 생기면 `.icns` 준비 필요 (아직 없음).
+- **아이콘**: 런타임 창 아이콘은 `assets/icon.ico`(Qt가 크로스플랫폼으로 읽음)로 충분. macOS 앱 번들(`.app`)
+  빌드용 `assets/icon.icns`는 준비되어 있음 (`PicMedic-mac.spec`에서 사용).
 
 ## 빌드
 
 - Windows: `pyinstaller PicMedic.spec` (또는 README.md의 전체 커맨드)
-- macOS: 위 spec은 Windows 전용 아이콘(`.ico`)을 참조하므로 그대로 재사용 불가 —
-  macOS에서 빌드할 때는 아이콘 경로를 `.icns`/`.png`로, `--add-data` 구분자를 `:`로 바꿔서 새로 실행.
+- macOS: `pyinstaller PicMedic-mac.spec` (`.icns` 아이콘 + `.app` 번들 생성용 별도 spec).
+  크로스 컴파일 불가 — 반드시 macOS에서 빌드. macOS 하드웨어가 없을 때는
+  `.github/workflows/build-macos.yml`(GitHub Actions macOS 러너)로 빌드해 아티팩트로 받을 수 있음.
 
 ## 참고 문서
 

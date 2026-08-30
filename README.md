@@ -81,6 +81,24 @@ pyinstaller --noconfirm --windowed --onefile --name PicMedic --icon assets/icon.
 - 두 번째 빌드부터는 `PicMedic.spec`이 위 설정을 기억하고 있어 `pyinstaller PicMedic.spec`만 실행해도 됩니다
 - 재빌드 전 이전 산출물을 지우려면: `rm -rf build dist`
 
+## .app 빌드 (macOS 배포용)
+
+PyInstaller는 크로스 컴파일을 지원하지 않으므로 **반드시 macOS에서** 빌드해야 합니다.
+
+```bash
+pip install pyinstaller
+pyinstaller --noconfirm PicMedic-mac.spec
+```
+
+- 결과물: `dist/PicMedic.app`
+- 아이콘은 `assets/icon.icns` 사용 (Windows용 `.ico`와 별도 파일)
+- Windows용 `PicMedic.spec`을 그대로 재사용할 수 없어 `PicMedic-mac.spec`을 따로 둠 (`.icns` 아이콘, `--add-data` 구분자 `:`, `.app` 번들 생성이 다름)
+- 재빌드 전 이전 산출물을 지우려면: `rm -rf build dist`
+
+### 로컬 macOS 없이 빌드하기 (GitHub Actions)
+
+`.github/workflows/build-macos.yml`이 `claude/**` 브랜치 푸시 시 GitHub의 macOS 러너에서 자동으로 `.app`을 빌드해 Actions 아티팩트(`PicMedic-macOS`)로 올려줍니다. Actions 탭 → 해당 워크플로우 실행 → Artifacts에서 zip을 내려받아 압축 해제 후 실행하면 됩니다. 필요시 "Run workflow" 버튼으로 수동 실행도 가능합니다.
+
 ## 로그 (FR-006)
 
 스캔 1회, 복구 파일 1개마다 `logs/picmedic_log.jsonl`에 한 줄씩(JSON Lines) 자동 기록됩니다.

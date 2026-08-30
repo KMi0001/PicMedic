@@ -1,0 +1,43 @@
+name: Build macOS App
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - "claude/**"
+    paths:
+      - "**.py"
+      - "PicMedic-mac.spec"
+      - "requirements.txt"
+      - "assets/**"
+      - ".github/workflows/build-macos.yml"
+
+jobs:
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Build .app with PyInstaller
+        run: pyinstaller --noconfirm PicMedic-mac.spec
+
+      - name: Zip .app bundle
+        run: |
+          cd dist
+          ditto -c -k --sequesterRsrc --keepParent PicMedic.app PicMedic-macOS.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PicMedic-macOS
+          path: dist/PicMedic-macOS.zip
+          retention-days: 14
