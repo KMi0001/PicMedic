@@ -51,6 +51,13 @@ QWidget {{
     font-size: 13px;
 }}
 
+/* QLabel/QRadioButton/QCheckBox는 카드(흰 배경) 위에도 자주 올라가는데, 위 QWidget
+   규칙 때문에 배경 지정을 안 해주면 각자 앱 기본 배경(민트)을 칠해버려서 흰 카드 위에
+   얼룩진 띠처럼 보인다. 기본값을 투명으로 깔아서 이 종류의 버그를 원천 차단한다. */
+QLabel, QRadioButton, QCheckBox {{
+    background-color: transparent;
+}}
+
 QLabel#Title {{
     font-size: 22px;
     font-weight: 600;

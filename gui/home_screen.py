@@ -10,8 +10,8 @@ import json
 from datetime import datetime
 from pathlib import Path
 
-from PySide6.QtCore import Qt, Signal, QSettings, QStandardPaths
-from PySide6.QtGui import QPixmap
+from PySide6.QtCore import Qt, Signal, QSettings, QStandardPaths, QPointF, QRectF
+from PySide6.QtGui import QPixmap, QPainter, QPainterPath, QPen, QColor
 from PySide6.QtWidgets import (
     QWidget,
     QVBoxLayout,
@@ -35,6 +35,37 @@ _IMAGE_FILTER_PATTERN = " ".join(f"*{ext}" for ext in sorted(SCANNABLE_EXTENSION
 IMAGE_FILE_FILTER = f"이미지 파일 ({_IMAGE_FILTER_PATTERN});;모든 파일 (*)"
 
 
+def _image_icon_pixmap(color: str, size: int = 28) -> QPixmap:
+    """선택 카드 아이콘: 목업과 동일한 '사진' 아웃라인(폴더 이모지 대신 벡터로 그림)."""
+    scale = size / 24.0
+    pixmap = QPixmap(size, size)
+    pixmap.fill(Qt.transparent)
+
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.Antialiasing)
+    pen = QPen(QColor(color))
+    pen.setWidthF(1.7 * scale)
+    pen.setCapStyle(Qt.RoundCap)
+    pen.setJoinStyle(Qt.RoundJoin)
+    painter.setPen(pen)
+    painter.setBrush(Qt.NoBrush)
+
+    frame = QRectF(3 * scale, 4 * scale, 18 * scale, 16 * scale)
+    painter.drawRoundedRect(frame, 2.5 * scale, 2.5 * scale)
+    painter.drawEllipse(QPointF(8.5 * scale, 9.5 * scale), 1.5 * scale, 1.5 * scale)
+
+    mountains = QPainterPath()
+    mountains.moveTo(4 * scale, 16.5 * scale)
+    mountains.lineTo(9 * scale, 11.5 * scale)
+    mountains.lineTo(12.5 * scale, 15 * scale)
+    mountains.lineTo(17 * scale, 10 * scale)
+    mountains.lineTo(20 * scale, 13.5 * scale)
+    painter.drawPath(mountains)
+
+    painter.end()
+    return pixmap
+
+
 class SelectionCard(QFrame):
     """파일/폴더 선택 버튼과 드래그 앤 드롭 영역을 하나로 묶은 카드."""
 
@@ -52,12 +83,13 @@ class SelectionCard(QFrame):
         layout.setSpacing(8)
         layout.setAlignment(Qt.AlignCenter)
 
-        icon = QLabel("\U0001F4C1")  # 📁
+        icon = QLabel()
         icon.setFixedSize(64, 64)
         icon.setAlignment(Qt.AlignCenter)
         icon.setStyleSheet(
-            f"font-size: 26px; background-color: {COLORS['selection']}; border-radius: 32px;"
+            f"background-color: {COLORS['selection']}; border-radius: 32px;"
         )
+        icon.setPixmap(_image_icon_pixmap(COLORS["primary"], size=28))
         layout.addWidget(icon, alignment=Qt.AlignCenter)
 
         heading = QLabel("파일이나 폴더를 선택하세요")
@@ -106,6 +138,66 @@ class SelectionCard(QFrame):
             self.paths_dropped.emit(paths)
 
 
+def _status_icon_pixmap(ok: bool, accent: str, size: int = 24) -> QPixmap:
+    """완료(✓)/중단(⚠) 상태를 원 안에 벡터로 그린 아이콘. 이모지 폰트를 쓰지 않아
+    OS(윈도우 컬러 이모지 vs macOS)에 따라 색이 달라지는 문제를 피한다.
+
+    목업은 24px 원 안에 13px짜리 아이콘을 중앙 배치한다(아이콘이 원을 거의
+    다 채우지 않고 여백이 있음) — 그 비율(13/24)과 중앙 정렬 오프셋을 그대로 따른다.
+    """
+    icon_box = size * (13 / 24)
+    inner_scale = icon_box / 24.0
+    offset = (size - icon_box) / 2
+
+    def pt(x: float, y: float) -> QPointF:
+        return QPointF(offset + x * inner_scale, offset + y * inner_scale)
+
+    pixmap = QPixmap(size, size)
+    pixmap.fill(Qt.transparent)
+
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.Antialiasing)
+    painter.setPen(Qt.NoPen)
+    painter.setBrush(QColor(accent))
+    painter.drawEllipse(0, 0, size, size)
+
+    if ok:
+        pen = QPen(QColor("white"))
+        pen.setWidthF(3 * inner_scale)
+        pen.setCapStyle(Qt.RoundCap)
+        pen.setJoinStyle(Qt.RoundJoin)
+        painter.setPen(pen)
+        check = QPainterPath()
+        check.moveTo(pt(5, 12.5))
+        check.lineTo(pt(9.5, 17))
+        check.lineTo(pt(19, 7))
+        painter.drawPath(check)
+    else:
+        clip = QPainterPath()
+        clip.addEllipse(0, 0, size, size)
+        painter.setClipPath(clip)
+
+        painter.setBrush(QColor("white"))
+        triangle = QPainterPath()
+        triangle.moveTo(pt(12, 4.5))
+        triangle.lineTo(pt(21.5, 20.5))
+        triangle.lineTo(pt(2.5, 20.5))
+        triangle.closeSubpath()
+        painter.drawPath(triangle)
+
+        pen = QPen(QColor(accent))
+        pen.setWidthF(2 * inner_scale)
+        pen.setCapStyle(Qt.RoundCap)
+        painter.setPen(pen)
+        painter.drawLine(pt(12, 10.3), pt(12, 14.8))
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QColor(accent))
+        painter.drawEllipse(pt(12, 17.5), 0.9 * inner_scale, 0.9 * inner_scale)
+
+    painter.end()
+    return pixmap
+
+
 class _RecentRow(QFrame):
     """최근 검사 카드 안의 클릭 가능한 한 행."""
 
@@ -113,6 +205,7 @@ class _RecentRow(QFrame):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.setObjectName("RecentRow")
         self.setCursor(Qt.PointingHandCursor)
 
     def mouseReleaseEvent(self, event):
@@ -147,40 +240,48 @@ class RecentCard(QFrame):
             return
 
         for idx, entry in enumerate(entries):
-            row = self._build_row(entry, is_last=(idx == len(entries) - 1))
+            row = self._build_row(
+                entry, is_first=(idx == 0), is_last=(idx == len(entries) - 1)
+            )
             self._layout.addWidget(row)
 
-    def _build_row(self, entry: dict, is_last: bool) -> QFrame:
+    def _build_row(self, entry: dict, is_first: bool, is_last: bool) -> QFrame:
         ok = entry.get("status") == "completed"
         accent = COLORS["success"] if ok else COLORS["warning"]
 
         row = _RecentRow()
         border = "none" if is_last else f"1px solid {COLORS['border']}"
+        # 카드(RecentCard)의 border-radius:12px와 맞춰서, 첫/마지막 행의 바깥쪽 모서리만
+        # 둥글게 해준다 — 안 그러면 행의 사각 배경이 카드의 둥근 모서리 밖으로 삐져나와 덮어버림.
+        radius_css = "border-radius: 0;"
+        if is_first and is_last:
+            radius_css = "border-radius: 12px;"
+        elif is_first:
+            radius_css = "border-top-left-radius: 12px; border-top-right-radius: 12px;"
+        elif is_last:
+            radius_css = "border-bottom-left-radius: 12px; border-bottom-right-radius: 12px;"
         row.setStyleSheet(
-            f"QFrame {{ border: none; border-bottom: {border}; }}"
-            f"QFrame:hover {{ background-color: {COLORS['bg']}; }}"
+            f"QFrame#RecentRow {{ background-color: {COLORS['surface']}; border: none; "
+            f"border-bottom: {border}; {radius_css} }}"
+            f"QFrame#RecentRow:hover {{ background-color: {COLORS['bg']}; }}"
         )
         row.clicked.connect(lambda entry=entry: self.entry_activated.emit(entry))
 
         row_layout = QHBoxLayout(row)
-        row_layout.setContentsMargins(16, 12, 16, 12)
+        row_layout.setContentsMargins(18, 13, 18, 13)
         row_layout.setSpacing(12)
 
-        dot = QLabel("✓" if ok else "⚠")  # ✓ / ⚠
+        dot = QLabel()
         dot.setFixedSize(24, 24)
-        dot.setAlignment(Qt.AlignCenter)
-        dot.setStyleSheet(
-            f"background-color: {accent}; color: white; border-radius: 12px; "
-            f"font-weight: 700; font-size: 11px;"
-        )
+        dot.setPixmap(_status_icon_pixmap(ok, accent))
         row_layout.addWidget(dot)
 
         text_col = QVBoxLayout()
         text_col.setSpacing(1)
         name = QLabel(entry.get("label", ""))
-        name.setStyleSheet("font-weight: 500; background: transparent;")
+        name.setStyleSheet("font-weight: 500; font-size: 13.5px; background: transparent;")
         status_label = QLabel(_status_line(entry))
-        status_label.setStyleSheet(f"color: {accent}; font-size: 11px; background: transparent;")
+        status_label.setStyleSheet(f"color: {accent}; font-size: 12px; background: transparent;")
         text_col.addWidget(name)
         text_col.addWidget(status_label)
         row_layout.addLayout(text_col, 1)
@@ -214,7 +315,7 @@ class HomeScreen(QWidget):
         content_layout.setSpacing(20)
 
         header_row = QHBoxLayout()
-        header_row.setSpacing(12)
+        header_row.setSpacing(6)
 
         brand_icon = QLabel()
         brand_icon.setFixedSize(44, 44)
@@ -223,17 +324,18 @@ class HomeScreen(QWidget):
                 44, 44, Qt.KeepAspectRatio, Qt.SmoothTransformation
             )
         )
-        header_row.addWidget(brand_icon)
+        header_row.addWidget(brand_icon, alignment=Qt.AlignVCenter)
 
         brand_text = QVBoxLayout()
         brand_text.setSpacing(2)
         title = QLabel("PicMedic")
-        title.setStyleSheet("font-size: 20px; font-weight: 700; margin-top: 8px;")
+        title.setStyleSheet("font-size: 20px; font-weight: 700; margin: 0; padding: 0;")
         subtitle = QLabel("사진을 치료해줄게요")
-        subtitle.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 12.5px;")
+        subtitle.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 12.5px; margin: 0; padding: 0;")
         brand_text.addWidget(title)
         brand_text.addWidget(subtitle)
         header_row.addLayout(brand_text)
+        header_row.setAlignment(brand_text, Qt.AlignVCenter)
         header_row.addStretch(1)
 
         content_layout.addLayout(header_row)
