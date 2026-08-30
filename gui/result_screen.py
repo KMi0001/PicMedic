@@ -234,7 +234,7 @@ class ResultScreen(QWidget):
         self.selection_label.setStyleSheet(f"color: {COLORS['text_secondary']};")
         bottom_row.addWidget(self.selection_label)
         bottom_row.addStretch(1)
-        self.recover_selected_btn = QPushButton("선택 항목 복구")
+        self.recover_selected_btn = QPushButton("Medic!")
         self.recover_selected_btn.setObjectName("Primary")
         self.recover_selected_btn.setEnabled(False)
         self.recover_selected_btn.clicked.connect(self._on_recover_selected)

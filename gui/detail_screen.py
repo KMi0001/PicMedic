@@ -42,10 +42,10 @@ class DetailScreen(QWidget):
         back_btn.clicked.connect(self.back_requested.emit)
         outer.addWidget(back_btn, alignment=Qt.AlignLeft)
 
-        content_row = QHBoxLayout()
-        content_row.setSpacing(24)
+        content_col = QVBoxLayout()
+        content_col.setSpacing(24)
 
-        # --- 왼쪽: 미리보기 ---
+        # --- 위: 미리보기 ---
         preview_card = QFrame()
         preview_card.setObjectName("Card")
         preview_layout = QVBoxLayout(preview_card)
@@ -55,9 +55,9 @@ class DetailScreen(QWidget):
         self.preview_label.setFixedSize(PREVIEW_SIZE, PREVIEW_SIZE)
         self.preview_label.setStyleSheet(f"color: {COLORS['text_secondary']};")
         preview_layout.addWidget(self.preview_label)
-        content_row.addWidget(preview_card)
+        content_col.addWidget(preview_card, alignment=Qt.AlignHCenter)
 
-        # --- 오른쪽: 정보 + 액션 ---
+        # --- 아래: 정보 + 액션 ---
         info_card = QFrame()
         info_card.setObjectName("Card")
         info_layout = QVBoxLayout(info_card)
@@ -96,8 +96,8 @@ class DetailScreen(QWidget):
         btn_row.addWidget(self.convert_btn)
         info_layout.addLayout(btn_row)
 
-        content_row.addWidget(info_card, stretch=1)
-        outer.addLayout(content_row, stretch=1)
+        content_col.addWidget(info_card)
+        outer.addLayout(content_col, stretch=1)
 
     # --- 외부에서 호출 --------------------------------------------------
 
@@ -129,14 +129,20 @@ class DetailScreen(QWidget):
             self.warning_label.hide()
 
         recoverable = info.status in (FileStatus.MISMATCH, FileStatus.PARTIAL_CORRUPTION)
+        # "복구"는 문제가 있는 파일에만 의미가 있으므로 그런 파일에서만 보여준다.
+        self.restore_btn.setVisible(recoverable)
         self.restore_btn.setEnabled(recoverable and bool(info.detected_format))
-        self.convert_btn.setEnabled(recoverable)
+        # "변환"은 복구와 무관하게, 디코딩만 된다면(readable) 정상 파일도 다른 형식으로
+        # 바꿀 수 있어야 한다 (예: 정상 PNG를 웹 업로드용 WEBP로).
+        self.convert_btn.setEnabled(info.readable)
         if recoverable:
             self.recovery_note_label.setText(
                 "높은 확률로 복구할 수 있습니다."
                 if info.status == FileStatus.MISMATCH
                 else "일부 데이터가 손상되어 결과가 완전하지 않을 수 있습니다."
             )
+        elif info.status == FileStatus.NORMAL:
+            self.recovery_note_label.setText("다른 파일 형식으로 변환할 수 있습니다.")
         else:
             self.recovery_note_label.setText("")
 

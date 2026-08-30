@@ -105,9 +105,9 @@ class RecoveryScreen(QWidget):
         self.selection_label.setStyleSheet("font-weight: 600;")
         card_layout.addWidget(self.selection_label)
 
-        mode_label = QLabel("복구 방식")
-        mode_label.setStyleSheet(f"color: {COLORS['text_secondary']};")
-        card_layout.addWidget(mode_label)
+        self.mode_label = QLabel("복구 방식")
+        self.mode_label.setStyleSheet(f"color: {COLORS['text_secondary']};")
+        card_layout.addWidget(self.mode_label)
 
         self.mode_group = QButtonGroup(self)
         self.restore_radio = QRadioButton("확장자 복원")
@@ -189,9 +189,21 @@ class RecoveryScreen(QWidget):
         self.files = files
         self.selection_label.setText(f"선택 파일: {len(files)}개")
 
-        if preselected_mode == RecoveryMode.RESTORE_EXTENSION:
+        # 확장자와 실제 형식이 다른 파일이 하나도 없으면(예: 정상 파일만 골라서
+        # "변환"하러 온 경우) "확장자 복원"은 애초에 할 게 없다. 이 경우 선택지가
+        # "형식 변환" 하나뿐이니 라디오 버튼 자체를 없애고, 곧바로 변환 옵션(형식/화질)만
+        # 보여준다.
+        can_restore = any(f.is_mismatched for f in files)
+        self._convert_only = not can_restore
+
+        self.restore_radio.setVisible(can_restore)
+        self.convert_radio.setVisible(can_restore)
+        self.mode_label.setText("복구 방식" if can_restore else "확장자 변환")
+        self.verify_check.setText("복구 후 파일 검증" if can_restore else "변환 후 파일 검증")
+
+        if preselected_mode == RecoveryMode.RESTORE_EXTENSION and can_restore:
             self.restore_radio.setChecked(True)
-        elif preselected_mode == RecoveryMode.CONVERT:
+        else:
             self.convert_radio.setChecked(True)
 
         self.format_combo.setCurrentText(DEFAULT_CONVERT_FORMAT)
@@ -214,10 +226,11 @@ class RecoveryScreen(QWidget):
         self.format_combo.setEnabled(is_convert)
         self.title_label.setText("사진 변환" if is_convert else "사진 복구")
 
-        # PNG/GIF/BMP는 quality를 쓰지 않으므로(core/converter.py 참고) 화질 선택이 의미 없다.
+        # PNG/GIF/BMP는 quality를 쓰지 않으므로(core/converter.py 참고) 화질 선택 자체가
+        # 의미 없다 — 비활성화가 아니라 아예 숨긴다.
         quality_applicable = is_convert and self.format_combo.currentText() in QUALITY_APPLICABLE_FORMATS
-        self.quality_label.setEnabled(quality_applicable)
-        self.quality_combo.setEnabled(quality_applicable)
+        self.quality_label.setVisible(quality_applicable)
+        self.quality_combo.setVisible(quality_applicable)
 
     def _browse_output(self):
         folder = QFileDialog.getExistingDirectory(self, "저장 위치 선택")
