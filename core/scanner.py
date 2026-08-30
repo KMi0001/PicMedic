@@ -32,6 +32,10 @@ def iter_candidate_files(root: Path, recursive: bool = True) -> Iterable[Path]:
     for path in root.glob(pattern):
         if not path.is_file():
             continue
+        # macOS가 만드는 리소스 포크(AppleDouble) 파일: 원본과 같은 확장자를 쓰지만
+        # 실제로는 이미지가 아닌 메타데이터라 손상 파일로 오탐된다.
+        if path.name.startswith("._"):
+            continue
         # 확장자가 전혀 이미지가 아닌 것으로 보이는 파일(.txt, .exe 등)은 건너뛴다.
         # 단, PRD 23.7 "잘못된 확장자" 케이스(확장자는 이미지인데 내용이 다름)는
         # 확장자 기준으로는 잡히므로 문제 없다.

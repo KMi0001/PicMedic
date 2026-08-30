@@ -14,3 +14,7 @@ test_samples/
 
 # OS
 Thumbs.db
+.DS_Store
+.AppleDouble
+.Spotlight-V100
+.Trashes
