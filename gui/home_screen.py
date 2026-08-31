@@ -405,6 +405,9 @@ class HomeScreen(QWidget):
 
         dialog = QDialog(self)
         dialog.setWindowTitle("최근 검사 결과")
+        # ApplicationModal(기본값)이면 검사 세션 창(gui/scan_session_window.py)이
+        # 여러 개 떠 있을 때 이 팝업 하나 때문에 전부 멈춘다 — 홈 창만 막는다.
+        dialog.setWindowModality(Qt.WindowModal)
         layout = QVBoxLayout(dialog)
         layout.setContentsMargins(24, 24, 24, 24)
         layout.setSpacing(14)

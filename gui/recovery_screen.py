@@ -87,6 +87,9 @@ def _confirm_dialog(
     "유지"/"삭제" (gui/recovery_screen.py::_on_finished, 복구된 파일 유지 여부)."""
     dialog = QDialog(parent)
     dialog.setWindowTitle("PicMedic")
+    # ApplicationModal(기본값)이 아니라 이 창(부모 체인)만 막는다 — 여러 검사 세션
+    # 창이 동시에 떠 있을 때 팝업 하나 때문에 다른 세션까지 멈추지 않게 한다.
+    dialog.setWindowModality(Qt.WindowModal)
 
     layout = QHBoxLayout(dialog)
     layout.setContentsMargins(20, 20, 20, 20)
@@ -133,7 +136,9 @@ class _ProgressDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("PicMedic")
-        self.setModal(True)
+        # ApplicationModal이 아니라 이 창(세션)만 막는다 — 다른 검사 세션 창은
+        # 계속 조작 가능해야 "다중 검사" 취지에 맞는다.
+        self.setWindowModality(Qt.WindowModal)
         self.setWindowFlags(self.windowFlags() & ~Qt.WindowCloseButtonHint)
         self.setFixedWidth(340)
 

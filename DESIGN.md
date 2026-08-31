@@ -104,6 +104,13 @@ accent bar(`border-left`) + `padding-left: 8px`. 카드 안의 최상위 섹션 
 새로운 확인 팝업이 필요하면 `_confirm_dialog`와 같은 패턴(아이콘 + 메시지 + 취소/확인)을
 그대로 따르고, 화면 간에 완전히 동일한 요구가 2번째로 생기면 그때 공용 컴포넌트로 옮긴다.
 
+**모달 범위는 항상 `Qt.WindowModal`로 지정한다, `setModal(True)`/기본 `exec()`가 주는
+`Qt.ApplicationModal`을 쓰지 않는다.** 검사 세션마다 독립된 창([gui/scan_session_window.py](gui/scan_session_window.py)
+참고)이 여러 개 동시에 뜰 수 있어서, ApplicationModal 팝업 하나가 앱 전체를 막아버리면
+다른 세션 창까지 조작 불가능해진다 — `_confirm_dialog`/`_ProgressDialog`/최근 검사
+팝업/목록 팝업 전부 `dialog.setWindowModality(Qt.WindowModal)`을 명시해서 자기 창(부모
+체인)만 막도록 되어 있다.
+
 ## 진행 상황 팝업 (모달)
 
 여러 파일을 순차 처리하는 배치 작업(복구/변환)의 진행 상황은 화면에 인라인으로
@@ -135,6 +142,32 @@ accent bar(`border-left`) + `padding-left: 8px`. 카드 안의 최상위 섹션 
   팝업을 닫고 `exec()` 호출부로 제어를 돌려준다. 실제로 200개 배치를 취소해서
   중첩 루프 안에서도 취소 버튼 클릭과 후속 유지/삭제 다이얼로그가 정상 동작함을
   확인함(부분 처리 결과 개수가 총 파일 수보다 작게 나옴, 삭제 시 출력 파일 0개).
+
+## 다중 창 구조 (검사 세션)
+
+`gui/main_window.py`의 `MainWindow`는 홈 화면 하나만 상주시킨다. 파일/폴더를 선택할
+때마다 검사~복구 전체 흐름(검사 진행 → 검사 결과 → 상세 → 복구 → 복구 결과)을
+[gui/scan_session_window.py](gui/scan_session_window.py) `ScanSessionWindow`라는
+독립된 창으로 새로 띄운다 — 몇 개든 동시에 진행 가능(PRD_MVP우선순위.md 갭 #10).
+
+- **세션 창 = `QWidget` + `Qt.Window` 플래그, 부모는 `MainWindow`.** 부모가 있어서
+  `APP_STYLESHEET`를 그대로 물려받으면서도(별도로 스타일시트를 설정할 필요 없음),
+  `Qt.Window` 플래그 덕분에 독립된 최상위 창(제목표시줄 + 자체 닫기 버튼)으로 뜬다.
+- **살아있는 세션은 `MainWindow._sessions` 리스트로 붙잡아둔다.** 파이썬 참조가
+  하나도 안 남으면 스캔/복구 워커가 도는 중에도 창이 GC될 수 있다
+  (`QThread: Destroyed while thread is still running`로 죽음) — 세션이 끝나
+  `closed` 시그널을 낼 때만 리스트에서 지운다.
+- **`closeEvent`에서 워커가 도는 중이면 닫기를 막는다** — `ScanningScreen.worker`/
+  `RecoveryScreen.worker`의 `isRunning()`을 확인해서, 취소 버튼으로 스레드가 실제로
+  끝난 뒤에만 창이 닫히게 한다.
+- **"최근 검사" 목록(`HomeScreen`)만 세션과 무관하게 전역 공유.** `ScanSessionWindow`
+  생성자에 `home_screen` 인스턴스를 그대로 넘겨받아 `record_scan_outcome`/
+  `record_recovery_outcome`을 호출한다 — 그 외 화면(`ResultScreen`, `DetailScreen`,
+  `RecoveryScreen`, `RecoveryResultScreen`)은 세션마다 새로 만드는 인스턴스라 서로
+  상태가 섞이지 않는다.
+- 새 화면을 이 흐름에 추가할 때도 이 패턴을 따른다 — 화면 클래스 자체는 지금처럼
+  상태 없이(`set_x()`로 데이터를 주입받는) 만들고, "어디서 생성되고 어떻게 연결되는지"만
+  세션 단위로 관리한다.
 
 ## 폼 컨트롤 — QComboBox
 

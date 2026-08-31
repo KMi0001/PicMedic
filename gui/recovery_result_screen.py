@@ -10,8 +10,8 @@ import os
 import sys
 import subprocess
 
-from PySide6.QtCore import Qt, Signal, QUrl
-from PySide6.QtGui import QDesktopServices
+from PySide6.QtCore import Qt, Signal, QUrl, QPointF
+from PySide6.QtGui import QDesktopServices, QPainter, QPixmap, QColor, QPen, QPainterPath
 from PySide6.QtWidgets import (
     QWidget,
     QVBoxLayout,
@@ -26,6 +26,53 @@ from PySide6.QtWidgets import (
 
 from gui.result_screen import SummaryChip
 from gui.theme import COLORS
+
+
+def _list_icon_pixmap(kind: str, accent: str, size: int = 32) -> QPixmap:
+    """목록 팝업 헤더 아이콘 — 최근 검사 목록/확인 팝업과 같은 스타일(색 원 + 흰색
+    벡터 글리프, 이모지 미사용). DESIGN.md 아이콘 시스템의 성공/건너뜀/오류 세 종류."""
+    icon_box = size * (13 / 24)
+    inner_scale = icon_box / 24.0
+    offset = (size - icon_box) / 2
+
+    def pt(x, y):
+        return QPointF(offset + x * inner_scale, offset + y * inner_scale)
+
+    pixmap = QPixmap(size, size)
+    pixmap.fill(Qt.transparent)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.Antialiasing)
+    painter.setPen(Qt.NoPen)
+    painter.setBrush(QColor(accent))
+    painter.drawEllipse(0, 0, size, size)
+
+    if kind == "success":
+        pen = QPen(QColor("white"))
+        pen.setWidthF(3 * inner_scale)
+        pen.setCapStyle(Qt.RoundCap)
+        pen.setJoinStyle(Qt.RoundJoin)
+        painter.setPen(pen)
+        path = QPainterPath()
+        path.moveTo(pt(5, 12.5))
+        path.lineTo(pt(9.5, 17))
+        path.lineTo(pt(19, 7))
+        painter.drawPath(path)
+    elif kind == "error":
+        pen = QPen(QColor("white"))
+        pen.setWidthF(3 * inner_scale)
+        pen.setCapStyle(Qt.RoundCap)
+        painter.setPen(pen)
+        painter.drawLine(pt(6.5, 6.5), pt(17.5, 17.5))
+        painter.drawLine(pt(17.5, 6.5), pt(6.5, 17.5))
+    elif kind == "skip":
+        pen = QPen(QColor("white"))
+        pen.setWidthF(3 * inner_scale)
+        pen.setCapStyle(Qt.RoundCap)
+        painter.setPen(pen)
+        painter.drawLine(pt(6, 12), pt(18, 12))
+
+    painter.end()
+    return pixmap
 
 
 class RecoveryResultScreen(QWidget):
@@ -61,10 +108,18 @@ class RecoveryResultScreen(QWidget):
         self.partial_chip = SummaryChip("부분 성공", COLORS["warning"], clickable=True)
         self.skipped_chip = SummaryChip("건너뜀", COLORS["muted"], clickable=True)
         self.fail_chip = SummaryChip("실패", COLORS["danger"], clickable=True)
-        self.success_chip.clicked.connect(lambda: self._show_list("성공/부분 성공 파일", self._success_lines()))
-        self.partial_chip.clicked.connect(lambda: self._show_list("성공/부분 성공 파일", self._success_lines()))
-        self.skipped_chip.clicked.connect(lambda: self._show_list("건너뛴 파일", self._skipped_lines()))
-        self.fail_chip.clicked.connect(lambda: self._show_list("실패 파일", self._fail_lines()))
+        self.success_chip.clicked.connect(
+            lambda: self._show_list("성공/부분 성공 파일", self._success_lines(), "success", COLORS["success"])
+        )
+        self.partial_chip.clicked.connect(
+            lambda: self._show_list("성공/부분 성공 파일", self._success_lines(), "success", COLORS["success"])
+        )
+        self.skipped_chip.clicked.connect(
+            lambda: self._show_list("건너뛴 파일", self._skipped_lines(), "skip", COLORS["muted"])
+        )
+        self.fail_chip.clicked.connect(
+            lambda: self._show_list("실패 파일", self._fail_lines(), "error", COLORS["danger"])
+        )
         for chip in (self.success_chip, self.partial_chip, self.skipped_chip, self.fail_chip):
             chips_row.addWidget(chip)
         chips_row.addStretch(1)
@@ -122,11 +177,27 @@ class RecoveryResultScreen(QWidget):
             if not o.success and not o.skipped
         ]
 
-    def _show_list(self, title: str, lines: list[str]):
+    def _show_list(self, title: str, lines: list[str], icon_kind: str, accent: str):
         dialog = QDialog(self)
         dialog.setWindowTitle(title)
+        # 이 세션 창만 막고 다른 검사 세션 창은 계속 조작 가능하게 (다중 검사 지원)
+        dialog.setWindowModality(Qt.WindowModal)
         dialog.resize(480, 360)
         layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setSpacing(12)
+
+        header_row = QHBoxLayout()
+        header_row.setSpacing(10)
+        icon_label = QLabel()
+        icon_label.setPixmap(_list_icon_pixmap(icon_kind, accent))
+        header_row.addWidget(icon_label)
+        header_label = QLabel(f"{title} · {len(lines)}개" if lines else title)
+        header_label.setStyleSheet(f"font-weight: 700; font-size: 15px; color: {accent};")
+        header_row.addWidget(header_label)
+        header_row.addStretch(1)
+        layout.addLayout(header_row)
+
         list_widget = QListWidget()
         if lines:
             for line in lines:
@@ -136,7 +207,9 @@ class RecoveryResultScreen(QWidget):
             placeholder.setFlags(Qt.NoItemFlags)
             list_widget.addItem(placeholder)
         layout.addWidget(list_widget)
+
         close_btn = QPushButton("닫기")
+        close_btn.setObjectName("Primary")
         close_btn.clicked.connect(dialog.accept)
         layout.addWidget(close_btn)
         dialog.exec()
