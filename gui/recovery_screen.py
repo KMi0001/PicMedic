@@ -9,6 +9,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtCore import Qt, Signal, QThread, QSettings
+from PySide6.QtGui import QPainter, QPixmap, QColor, QFont
 from PySide6.QtWidgets import (
     QWidget,
     QVBoxLayout,
@@ -23,7 +24,7 @@ from PySide6.QtWidgets import (
     QFrame,
     QFileDialog,
     QProgressBar,
-    QMessageBox,
+    QDialog,
 )
 
 from core.converter import RecoveryMode, recover_batch, CONVERT_TARGET_FORMATS, DEFAULT_CONVERT_FORMAT
@@ -36,6 +37,61 @@ QUALITY_PRESETS = {"고화질": 95, "보통": 85, "저용량": 65}
 DEFAULT_QUALITY_PRESET = "보통"
 # 이 형식들만 Pillow 저장 시 quality를 실제로 쓴다 (core/converter.py::convert_to_format 참고)
 QUALITY_APPLICABLE_FORMATS = {"JPEG", "WEBP"}
+
+
+def _question_icon_pixmap(accent: str, size: int = 48) -> QPixmap:
+    """확인 필요 팝업 아이콘: 최근 검사 목록 아이콘(gui/home_screen.py::_status_icon_pixmap)과
+    같은 스타일(색 원 + 흰색 글리프, 이모지 폰트 미사용)로 맞춘 물음표 아이콘."""
+    pixmap = QPixmap(size, size)
+    pixmap.fill(Qt.transparent)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.Antialiasing)
+    painter.setPen(Qt.NoPen)
+    painter.setBrush(QColor(accent))
+    painter.drawEllipse(0, 0, size, size)
+    painter.setFont(QFont("Segoe UI", int(size * (13 / 24) * 0.55), QFont.Bold))
+    painter.setPen(QColor("white"))
+    painter.drawText(pixmap.rect(), Qt.AlignCenter, "?")
+    painter.end()
+    return pixmap
+
+
+def _confirm_dialog(parent: QWidget, message: str) -> bool:
+    """취소/확인 버튼이 있는 카드형 확인 팝업. 확인을 누르면 True."""
+    dialog = QDialog(parent)
+    dialog.setWindowTitle("PicMedic")
+
+    layout = QHBoxLayout(dialog)
+    layout.setContentsMargins(20, 20, 20, 20)
+    layout.setSpacing(16)
+
+    icon_label = QLabel()
+    icon_label.setPixmap(_question_icon_pixmap(COLORS["primary"]))
+    layout.addWidget(icon_label, alignment=Qt.AlignTop)
+
+    text_col = QVBoxLayout()
+    msg_label = QLabel(message)
+    msg_label.setWordWrap(True)
+    msg_label.setFixedWidth(280)
+    text_col.addWidget(msg_label)
+
+    text_col.addSpacing(12)
+    btn_row = QHBoxLayout()
+    btn_row.addStretch(1)
+    cancel_btn = QPushButton("취소")
+    confirm_btn = QPushButton("확인")
+    confirm_btn.setObjectName("Primary")
+    confirm_btn.setDefault(True)
+    btn_row.addWidget(cancel_btn)
+    btn_row.addWidget(confirm_btn)
+    text_col.addLayout(btn_row)
+
+    layout.addLayout(text_col)
+
+    cancel_btn.clicked.connect(dialog.reject)
+    confirm_btn.clicked.connect(dialog.accept)
+
+    return dialog.exec() == QDialog.Accepted
 
 
 class RecoveryWorker(QThread):
@@ -265,16 +321,11 @@ class RecoveryScreen(QWidget):
         if mode == RecoveryMode.RESTORE_EXTENSION:
             normal_count = sum(1 for f in self.files if f.status == FileStatus.NORMAL)
             if normal_count:
-                box = QMessageBox(self)
-                box.setWindowTitle("PicMedic")
-                box.setText(
-                    f"선택한 파일 중 {normal_count}개는 이미 정상 파일이라 복원할 내용이 없어 건너뜁니다.\n계속 진행할까요?"
+                confirmed = _confirm_dialog(
+                    self,
+                    f"선택한 파일 중 {normal_count}개는 이미 정상 파일이라 복원할 내용이 없어 건너뜁니다.\n계속 진행할까요?",
                 )
-                confirm_btn = box.addButton("확인", QMessageBox.AcceptRole)
-                box.addButton("취소", QMessageBox.RejectRole)
-                box.setDefaultButton(confirm_btn)
-                box.exec()
-                if box.clickedButton() != confirm_btn:
+                if not confirmed:
                     return
 
         self.start_btn.setEnabled(False)
