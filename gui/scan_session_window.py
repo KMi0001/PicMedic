@@ -112,8 +112,8 @@ class ScanSessionWindow(QWidget):
         self.duplicate_screen.back_requested.connect(lambda: self.stack.setCurrentWidget(self.result_screen))
         self.duplicate_screen.view_trash_requested.connect(self._open_trash)
 
-        # 임시 휴지통 -> 중복 사진
-        self.trash_screen.back_requested.connect(lambda: self.stack.setCurrentWidget(self.duplicate_screen))
+        # 임시 휴지통 -> 중복 사진 (남은 중복이 없으면 빈 화면 대신 검사 결과로)
+        self.trash_screen.back_requested.connect(self._back_from_trash)
 
         # Detail -> Result / Recovery
         self.detail_screen.back_requested.connect(lambda: self.stack.setCurrentWidget(self.result_screen))
@@ -192,12 +192,24 @@ class ScanSessionWindow(QWidget):
         self.stack.setCurrentWidget(self.recovery_screen)
 
     def _open_duplicates(self):
-        self.duplicate_screen.set_result(self.result_screen.result)
+        result = self.result_screen.result
+        if not result or not result.duplicate_groups():
+            # 처리할 중복이 아예 없으면 빈 화면을 보여줄 필요 없이 검사 결과로
+            # 바로 돌아간다.
+            _info_dialog(self, "중복된 파일이 없습니다.")
+            return
+        self.duplicate_screen.set_result(result)
         self.stack.setCurrentWidget(self.duplicate_screen)
 
     def _open_trash(self):
         self.trash_screen.refresh()
         self.stack.setCurrentWidget(self.trash_screen)
+
+    def _back_from_trash(self):
+        if self.duplicate_screen.has_pending():
+            self.stack.setCurrentWidget(self.duplicate_screen)
+        else:
+            self.stack.setCurrentWidget(self.result_screen)
 
     def _on_recovery_finished(self, outcomes, output_dir):
         if self.result_screen.result is not None:

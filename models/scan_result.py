@@ -60,6 +60,21 @@ class ScanResult:
     def by_status(self, status: FileStatus) -> list[FileInfo]:
         return [f for f in self.files if f.status == status]
 
+    def remove(self, info: FileInfo) -> None:
+        """파일 하나를 결과에서 완전히 뺀다(Phase 2 중복 정리로 임시 휴지통에
+        옮겼을 때 사용). 이걸 안 하면 content_hash는 그대로 남아있어서, 옮긴
+        파일을 다시 검사한 적도 없는데 duplicate_groups()가 계속 같은 그룹을
+        보여준다 — 원본은 항상 보존되니 이건 '검사 결과 목록'에서만 지우는
+        것이지 실제 파일 삭제가 아니다."""
+        try:
+            self.files.remove(info)
+        except ValueError:
+            return
+        self.total = max(0, self.total - 1)
+        counter = _COUNTER_BY_STATUS.get(info.status)
+        if counter:
+            setattr(self, counter, max(0, getattr(self, counter) - 1))
+
     def duplicate_groups(self) -> list[list[FileInfo]]:
         """content_hash가 같은 파일들을 그룹으로 묶어 반환한다(Phase 2 '정확 중복'
         탐지). 파일이 2개 이상 모인 그룹만 반환 — 혼자인 해시는 중복이 아니므로

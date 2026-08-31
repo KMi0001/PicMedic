@@ -130,6 +130,7 @@ class DuplicateScreen(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self._result = None  # 정리(휴지통 이동) 후 옮긴 파일을 여기서도 빼야 재조회 시 다시 안 나타남
         self._cluster_entries: list[_ClusterEntry] = []
         self._manual_entries: list[_ManualEntry] = []
         self._cluster_section: QLabel | None = None
@@ -201,6 +202,7 @@ class DuplicateScreen(QWidget):
         만들어야 해서(실사용 리포트: 680개), 만드는 동안 매번 다시 그리지
         않도록 업데이트를 잠깐 꺼둔다 — 안 그러면 위젯 하나 추가할 때마다
         레이아웃을 다시 계산해서 눈에 띄게(때로는 "응답 없음"까지) 느려진다."""
+        self._result = result
         groups = result.duplicate_groups() if result else []
         self._cluster_entries = []
         self._manual_entries = []
@@ -242,6 +244,11 @@ class DuplicateScreen(QWidget):
             self._refresh_summary()
         finally:
             self.setUpdatesEnabled(True)
+
+    def has_pending(self) -> bool:
+        """정리할 그룹/조합이 아직 남아있는지 — 임시 휴지통에서 뒤로 나올 때
+        빈 화면을 거치지 않고 검사 결과로 바로 보낼지 판단하는 데 쓰인다."""
+        return bool(self._cluster_entries or self._manual_entries)
 
     def _refresh_summary(self) -> None:
         """칩/빈 상태/섹션 제목을 지금 남아있는 카드(_cluster_entries/_manual_entries)
@@ -397,6 +404,10 @@ class DuplicateScreen(QWidget):
             try:
                 trash.move_to_trash(info.path)
                 moved += 1
+                # 검사 결과에서도 빼야 다음에 "중복 파일 보기"를 다시 눌렀을 때
+                # 이미 옮긴 파일이 또 중복으로 잡혀 되살아나 보이지 않는다.
+                if self._result is not None:
+                    self._result.remove(info)
             except OSError:
                 continue
 
