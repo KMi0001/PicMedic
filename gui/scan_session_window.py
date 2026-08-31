@@ -100,20 +100,42 @@ def _info_dialog(parent, message: str) -> None:
     dialog.exec()
 
 
+class _CurrentOnlyStack(QStackedWidget):
+    """일반 QStackedWidget은 minimumSizeHint()가 담고 있는 모든 페이지 중 가장 큰
+    값을 기준으로 잡아서, 화면이 5개(검사/결과/상세/복구/복구결과)나 들어있는 이
+    창은 검사 화면만 보여줄 때도 제일 큰 페이지(결과 화면 표)만큼 최소 크기가
+    묶여버린다 — ScanSessionWindow.resize()로 작게 줄여도 그 아래로는 안 줄어듦.
+    지금 보이는 페이지의 크기만 반영하도록 오버라이드해서 이 묶임을 푼다."""
+
+    def sizeHint(self):
+        widget = self.currentWidget()
+        return widget.sizeHint() if widget else super().sizeHint()
+
+    def minimumSizeHint(self):
+        widget = self.currentWidget()
+        return widget.minimumSizeHint() if widget else super().minimumSizeHint()
+
+
 class ScanSessionWindow(QWidget):
     """스캔 1회 = 창 1개. 부모(MainWindow)에 얹혀서 스타일시트를 물려받으면서도
     Qt.Window 플래그로 독립된 최상위 창(제목표시줄, 자체 X 버튼)으로 뜬다."""
 
     closed = Signal(object)  # self — main_window가 세션 목록에서 정리하도록
 
+    # 검사 진행 중엔 카드 하나 크기(ScanningScreen.sizeHint() 기준)에 맞춰 작게,
+    # 결과가 나오면 표를 보기 편하게 크게 — 검사 중일 때 흰 카드 하나만 있는데
+    # 창이 크면 주변 여백만 넓어 보여서 "팝업" 느낌이 안 살던 문제를 고친다.
+    _SCANNING_SIZE = (600, 440)
+    _NORMAL_SIZE = (760, 600)
+
     def __init__(self, home_screen, paths: list[str], parent=None):
         super().__init__(parent)
         self.setWindowFlags(Qt.Window)
         self.home_screen = home_screen
         self.setWindowTitle("PicMedic — 사진 진단 · 복구 · 정리")
-        self.resize(760, 600)
+        self.resize(*self._SCANNING_SIZE)
 
-        self.stack = QStackedWidget()
+        self.stack = _CurrentOnlyStack()
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.addWidget(self.stack)
@@ -179,6 +201,7 @@ class ScanSessionWindow(QWidget):
         self._scan_origin_paths = paths
         self._resume_base_result = None
         self._resume_base_planned_total = 0
+        self.resize(*self._SCANNING_SIZE)
         self.stack.setCurrentWidget(self.scanning_screen)
         self.scanning_screen.start_scan(paths)
 
@@ -190,6 +213,7 @@ class ScanSessionWindow(QWidget):
         self._resume_base_planned_total = self._pending_planned_total
         self._current_scan_paths = self._pending_remaining_paths
         # _scan_origin_paths는 그대로 유지 (최근 검사 목록엔 원래 선택했던 경로로 남아야 하므로)
+        self.resize(*self._SCANNING_SIZE)
         self.stack.setCurrentWidget(self.scanning_screen)
         self.scanning_screen.start_scan(self._current_scan_paths)
 
@@ -213,6 +237,7 @@ class ScanSessionWindow(QWidget):
             self.result_screen.set_result(
                 result, cancelled=cancelled, planned_total=planned_total, remaining_paths=remaining_paths
             )
+            self.resize(*self._NORMAL_SIZE)
             self.stack.setCurrentWidget(self.result_screen)
 
     def _open_detail(self, info):
