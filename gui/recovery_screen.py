@@ -206,7 +206,12 @@ class RecoveryScreen(QWidget):
         self.mode_label.setText("복구 방식" if can_restore else "확장자 변환")
         self.verify_check.setText("복구 후 파일 검증" if can_restore else "변환 후 파일 검증")
 
-        if preselected_mode == RecoveryMode.RESTORE_EXTENSION and can_restore:
+        # 검사 결과 화면의 "Medic!"(일괄 복구)은 preselected_mode 없이 들어온다. 복원할 게
+        # 있으면(can_restore) 기본값은 "확장자 복원"이어야 한다 — 안 그러면 안전한 옵션인
+        # "확장자 복원"으로 명시적으로 바꾸지 않는 한 정상 파일까지 매번 재인코딩(형식 변환)
+        # 당하게 된다. detail_screen에서 "형식 변환" 버튼을 눌러 들어온 경우(preselected_mode
+        # == CONVERT)에는 사용자가 변환을 원한 게 명확하므로 그대로 존중한다.
+        if can_restore and preselected_mode != RecoveryMode.CONVERT:
             self.restore_radio.setChecked(True)
         else:
             self.convert_radio.setChecked(True)
