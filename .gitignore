@@ -8,6 +8,7 @@ dist/
 
 # Runtime data
 logs/
+임시휴지통/
 
 # Sample/test data generated locally
 test_samples/

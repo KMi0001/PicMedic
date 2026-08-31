@@ -10,7 +10,7 @@ from collections import Counter
 from pathlib import Path
 
 from PySide6.QtCore import Qt, Signal, QThread, QSettings, QPointF
-from PySide6.QtGui import QPainter, QPixmap, QColor, QFont, QPen
+from PySide6.QtGui import QPainter, QPixmap, QColor, QPen
 from PySide6.QtWidgets import (
     QWidget,
     QVBoxLayout,
@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
 )
 
 from core.converter import RecoveryMode, recover_batch, CONVERT_TARGET_FORMATS, DEFAULT_CONVERT_FORMAT
+from gui.common_dialogs import confirm_dialog as _confirm_dialog
 from gui.result_screen import SummaryChip
 from gui.theme import COLORS, STATUS_COLORS
 from models.file_info import FileInfo, FileStatus
@@ -91,23 +92,6 @@ def _convert_icon_pixmap(color: str, size: int = 26) -> QPixmap:
     return pixmap
 
 
-def _question_icon_pixmap(accent: str, size: int = 48) -> QPixmap:
-    """확인 필요 팝업 아이콘: 최근 검사 목록 아이콘(gui/home_screen.py::_status_icon_pixmap)과
-    같은 스타일(색 원 + 흰색 글리프, 이모지 폰트 미사용)로 맞춘 물음표 아이콘."""
-    pixmap = QPixmap(size, size)
-    pixmap.fill(Qt.transparent)
-    painter = QPainter(pixmap)
-    painter.setRenderHint(QPainter.Antialiasing)
-    painter.setPen(Qt.NoPen)
-    painter.setBrush(QColor(accent))
-    painter.drawEllipse(0, 0, size, size)
-    painter.setFont(QFont("Segoe UI", int(size * (13 / 24) * 0.55), QFont.Bold))
-    painter.setPen(QColor("white"))
-    painter.drawText(pixmap.rect(), Qt.AlignCenter, "?")
-    painter.end()
-    return pixmap
-
-
 def _progress_icon_pixmap(accent: str, size: int = 22) -> QPixmap:
     """진행 팝업 헤더 아이콘: 같은 색 원 + 흰색 점 3개("처리 중")로, 다른 팝업
     아이콘(확인/안내 등)과 같은 스타일을 유지한다 — 회전 애니메이션 없이 정적인
@@ -133,54 +117,6 @@ def _progress_icon_pixmap(accent: str, size: int = 22) -> QPixmap:
 
     painter.end()
     return pixmap
-
-
-def _confirm_dialog(
-    parent: QWidget,
-    message: str,
-    confirm_text: str = "확인",
-    cancel_text: str = "취소",
-) -> bool:
-    """왼쪽(취소 역할)/오른쪽(확인 역할, Primary+기본) 버튼이 있는 카드형 확인 팝업.
-    확인 쪽을 누르면 True. 버튼 문구는 상황에 맞게 바꿔 쓴다 — 예:
-    "유지"/"삭제" (gui/recovery_screen.py::_on_finished, 복구된 파일 유지 여부)."""
-    dialog = QDialog(parent)
-    dialog.setWindowTitle("PicMedic")
-    # ApplicationModal(기본값)이 아니라 이 창(부모 체인)만 막는다 — 여러 검사 세션
-    # 창이 동시에 떠 있을 때 팝업 하나 때문에 다른 세션까지 멈추지 않게 한다.
-    dialog.setWindowModality(Qt.WindowModal)
-
-    layout = QHBoxLayout(dialog)
-    layout.setContentsMargins(20, 20, 20, 20)
-    layout.setSpacing(16)
-
-    icon_label = QLabel()
-    icon_label.setPixmap(_question_icon_pixmap(COLORS["primary"]))
-    layout.addWidget(icon_label, alignment=Qt.AlignTop)
-
-    text_col = QVBoxLayout()
-    msg_label = QLabel(message)
-    msg_label.setWordWrap(True)
-    msg_label.setFixedWidth(280)
-    text_col.addWidget(msg_label)
-
-    text_col.addSpacing(12)
-    btn_row = QHBoxLayout()
-    btn_row.addStretch(1)
-    cancel_btn = QPushButton(cancel_text)
-    confirm_btn = QPushButton(confirm_text)
-    confirm_btn.setObjectName("Primary")
-    confirm_btn.setDefault(True)
-    btn_row.addWidget(cancel_btn)
-    btn_row.addWidget(confirm_btn)
-    text_col.addLayout(btn_row)
-
-    layout.addLayout(text_col)
-
-    cancel_btn.clicked.connect(dialog.reject)
-    confirm_btn.clicked.connect(dialog.accept)
-
-    return dialog.exec() == QDialog.Accepted
 
 
 class _ProgressDialog(QDialog):

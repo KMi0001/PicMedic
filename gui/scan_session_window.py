@@ -13,92 +13,18 @@ QStackedWidget으로 전환한다 (예전엔 gui/main_window.py가 이 전체를
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, Signal, QPointF
-from PySide6.QtGui import QPainter, QPixmap, QColor, QPen
-from PySide6.QtWidgets import (
-    QWidget,
-    QStackedWidget,
-    QVBoxLayout,
-    QHBoxLayout,
-    QDialog,
-    QLabel,
-    QPushButton,
-)
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtWidgets import QWidget, QStackedWidget, QVBoxLayout
 
-from gui.theme import COLORS
+from gui.common_dialogs import info_dialog as _info_dialog
 from gui.scanning_screen import ScanningScreen
 from gui.result_screen import ResultScreen
 from gui.detail_screen import DetailScreen
 from gui.recovery_screen import RecoveryScreen
 from gui.recovery_result_screen import RecoveryResultScreen
 from gui.duplicate_screen import DuplicateScreen
+from gui.trash_screen import TrashScreen
 from models.file_info import FileStatus
-
-
-def _info_icon_pixmap(color: str, size: int = 32) -> QPixmap:
-    """안내(정보) 팝업 아이콘 — DESIGN.md 아이콘 시스템의 '안내'(i), 색 원 + 흰색
-    벡터 글리프. 확인 필요(?) 아이콘(gui/recovery_screen.py)과 같은 비율로 그린다."""
-    icon_box = size * (13 / 24)
-    inner_scale = icon_box / 24.0
-    offset = (size - icon_box) / 2
-
-    def pt(x, y):
-        return QPointF(offset + x * inner_scale, offset + y * inner_scale)
-
-    pixmap = QPixmap(size, size)
-    pixmap.fill(Qt.transparent)
-    painter = QPainter(pixmap)
-    painter.setRenderHint(QPainter.Antialiasing)
-    painter.setPen(Qt.NoPen)
-    painter.setBrush(QColor(color))
-    painter.drawEllipse(0, 0, size, size)
-
-    painter.setBrush(QColor("white"))
-    painter.drawEllipse(pt(12, 6.3), 1.1 * inner_scale, 1.1 * inner_scale)
-    pen = QPen(QColor("white"))
-    pen.setWidthF(2.6 * inner_scale)
-    pen.setCapStyle(Qt.RoundCap)
-    painter.setPen(pen)
-    painter.drawLine(pt(12, 10.8), pt(12, 17.5))
-
-    painter.end()
-    return pixmap
-
-
-def _info_dialog(parent, message: str) -> None:
-    """확인 버튼 하나뿐인 안내 팝업 — 네이티브 QMessageBox.information 대신 앱 테마에
-    맞춘 카드형 다이얼로그(DESIGN.md 팝업/다이얼로그 패턴)."""
-    dialog = QDialog(parent)
-    dialog.setWindowTitle("PicMedic")
-    dialog.setWindowModality(Qt.WindowModal)  # 이 세션 창만 막고 다른 세션은 그대로 둔다
-
-    layout = QHBoxLayout(dialog)
-    layout.setContentsMargins(20, 20, 20, 20)
-    layout.setSpacing(16)
-
-    icon_label = QLabel()
-    icon_label.setPixmap(_info_icon_pixmap(COLORS["primary"]))
-    layout.addWidget(icon_label, alignment=Qt.AlignTop)
-
-    text_col = QVBoxLayout()
-    msg_label = QLabel(message)
-    msg_label.setWordWrap(True)
-    msg_label.setFixedWidth(240)
-    text_col.addWidget(msg_label)
-
-    text_col.addSpacing(12)
-    btn_row = QHBoxLayout()
-    btn_row.addStretch(1)
-    ok_btn = QPushButton("확인")
-    ok_btn.setObjectName("Primary")
-    ok_btn.setDefault(True)
-    btn_row.addWidget(ok_btn)
-    text_col.addLayout(btn_row)
-
-    layout.addLayout(text_col)
-
-    ok_btn.clicked.connect(dialog.accept)
-    dialog.exec()
 
 
 class _CurrentOnlyStack(QStackedWidget):
@@ -147,6 +73,7 @@ class ScanSessionWindow(QWidget):
         self.recovery_screen = RecoveryScreen()
         self.recovery_result_screen = RecoveryResultScreen()
         self.duplicate_screen = DuplicateScreen()
+        self.trash_screen = TrashScreen()
 
         for screen in (
             self.scanning_screen,
@@ -155,6 +82,7 @@ class ScanSessionWindow(QWidget):
             self.recovery_screen,
             self.recovery_result_screen,
             self.duplicate_screen,
+            self.trash_screen,
         ):
             self.stack.addWidget(screen)
 
@@ -180,8 +108,12 @@ class ScanSessionWindow(QWidget):
         self.result_screen.resume_requested.connect(self._on_resume_requested)
         self.result_screen.duplicates_requested.connect(self._open_duplicates)
 
-        # 중복 사진 -> 결과
+        # 중복 사진 -> 결과 / 임시 휴지통
         self.duplicate_screen.back_requested.connect(lambda: self.stack.setCurrentWidget(self.result_screen))
+        self.duplicate_screen.view_trash_requested.connect(self._open_trash)
+
+        # 임시 휴지통 -> 중복 사진
+        self.trash_screen.back_requested.connect(lambda: self.stack.setCurrentWidget(self.duplicate_screen))
 
         # Detail -> Result / Recovery
         self.detail_screen.back_requested.connect(lambda: self.stack.setCurrentWidget(self.result_screen))
@@ -244,7 +176,10 @@ class ScanSessionWindow(QWidget):
             self.result_screen.set_result(
                 result, cancelled=cancelled, planned_total=planned_total, remaining_paths=remaining_paths
             )
-            self.duplicate_screen.set_result(result)
+            # 중복 화면은 그룹이 수백 개면 카드를 그만큼 만들어야 해서 스캔 하나
+            # 끝날 때마다 미리 만들어두면(당장 보지도 않는데) 그때마다 응답 없음이
+            # 뜬다 — 사용자가 "중복 파일 보기"를 실제로 눌렀을 때만 만든다
+            # (_open_duplicates 참고).
             self.resize(*self._NORMAL_SIZE)
             self.stack.setCurrentWidget(self.result_screen)
 
@@ -257,7 +192,12 @@ class ScanSessionWindow(QWidget):
         self.stack.setCurrentWidget(self.recovery_screen)
 
     def _open_duplicates(self):
+        self.duplicate_screen.set_result(self.result_screen.result)
         self.stack.setCurrentWidget(self.duplicate_screen)
+
+    def _open_trash(self):
+        self.trash_screen.refresh()
+        self.stack.setCurrentWidget(self.trash_screen)
 
     def _on_recovery_finished(self, outcomes, output_dir):
         if self.result_screen.result is not None:
