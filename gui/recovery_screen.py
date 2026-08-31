@@ -76,8 +76,15 @@ def _question_icon_pixmap(accent: str, size: int = 48) -> QPixmap:
     return pixmap
 
 
-def _confirm_dialog(parent: QWidget, message: str) -> bool:
-    """취소/확인 버튼이 있는 카드형 확인 팝업. 확인을 누르면 True."""
+def _confirm_dialog(
+    parent: QWidget,
+    message: str,
+    confirm_text: str = "확인",
+    cancel_text: str = "취소",
+) -> bool:
+    """왼쪽(취소 역할)/오른쪽(확인 역할, Primary+기본) 버튼이 있는 카드형 확인 팝업.
+    확인 쪽을 누르면 True. 버튼 문구는 상황에 맞게 바꿔 쓴다 — 예:
+    "유지"/"삭제" (gui/recovery_screen.py::_on_finished, 복구된 파일 유지 여부)."""
     dialog = QDialog(parent)
     dialog.setWindowTitle("PicMedic")
 
@@ -98,8 +105,8 @@ def _confirm_dialog(parent: QWidget, message: str) -> bool:
     text_col.addSpacing(12)
     btn_row = QHBoxLayout()
     btn_row.addStretch(1)
-    cancel_btn = QPushButton("취소")
-    confirm_btn = QPushButton("확인")
+    cancel_btn = QPushButton(cancel_text)
+    confirm_btn = QPushButton(confirm_text)
     confirm_btn.setObjectName("Primary")
     confirm_btn.setDefault(True)
     btn_row.addWidget(cancel_btn)
@@ -117,9 +124,11 @@ def _confirm_dialog(parent: QWidget, message: str) -> bool:
 class _ProgressDialog(QDialog):
     """복구/변환 진행 중 뜨는 모달 팝업. 배치 작업이 끝날 때까지 화면(설정/뒤로가기
     등)을 건드릴 수 없게 막는다 — PRD_MVP우선순위.md 갭 #9(진행 중 설정 잠금 필요)를
-    "모든 컨트롤을 개별적으로 비활성화" 대신 모달 팝업 하나로 해결한다. 중단 기능은
-    core/converter.py::recover_batch에 아직 없어(갭 #9 후속) 닫기 버튼도 없앤다 —
-    끝날 때까지 기다리는 것 외에 다른 조작이 불가능함을 명확히 한다."""
+    "모든 컨트롤을 개별적으로 비활성화" 대신 모달 팝업 하나로 해결한다. 창 자체의
+    닫기(X) 버튼은 없앤다 — 취소는 반드시 아래 "취소" 버튼(cancel_requested)을 거쳐서
+    RecoveryWorker.cancel()로 이어지게 하기 위함."""
+
+    cancel_requested = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -144,15 +153,30 @@ class _ProgressDialog(QDialog):
         self.status_label.setStyleSheet(f"color: {COLORS['text_secondary']};")
         layout.addWidget(self.status_label)
 
+        self.cancel_btn = QPushButton("취소")
+        self.cancel_btn.setObjectName("Danger")
+        self.cancel_btn.clicked.connect(self._on_cancel_clicked)
+        layout.addWidget(self.cancel_btn, alignment=Qt.AlignRight)
+
     def start(self, title: str):
         self.title_label.setText(title)
         self.bar.setValue(0)
         self.status_label.setText("준비 중...")
+        self.cancel_btn.setEnabled(True)
+        self.cancel_btn.setText("취소")
 
     def update_progress(self, current: int, total: int, filename: str):
         pct = int((current / total) * 100) if total else 0
         self.bar.setValue(pct)
         self.status_label.setText(f"{filename} 처리 중... ({current}/{total})")
+
+    def _on_cancel_clicked(self):
+        # 이미 처리 중인 파일은 끝까지 끝내야 하니 버튼을 바로 잠그고 진행 중임을 알린다
+        # — RecoveryWorker가 다음 파일로 넘어가기 전에 should_cancel을 체크해서 멈춘다.
+        self.cancel_btn.setEnabled(False)
+        self.cancel_btn.setText("취소하는 중...")
+        self.status_label.setText("현재 파일까지 마치고 중단합니다...")
+        self.cancel_requested.emit()
 
 
 class RecoveryWorker(QThread):
@@ -176,6 +200,10 @@ class RecoveryWorker(QThread):
         self.suffix = suffix
         self.target_format = target_format
         self.quality = quality
+        self._cancel_requested = False
+
+    def cancel(self):
+        self._cancel_requested = True
 
     def run(self):
         outcomes = recover_batch(
@@ -186,6 +214,7 @@ class RecoveryWorker(QThread):
             suffix=self.suffix,
             target_format=self.target_format,
             quality=self.quality,
+            should_cancel=lambda: self._cancel_requested,
         )
         self.finished_batch.emit(outcomes)
 
@@ -199,7 +228,9 @@ class RecoveryScreen(QWidget):
         self.settings = QSettings("PicMedic", "PicMedic")
         self.files: list[FileInfo] = []
         self.worker: RecoveryWorker | None = None
+        self._cancel_requested = False
         self.progress_dialog = _ProgressDialog(self)
+        self.progress_dialog.cancel_requested.connect(self._on_cancel_requested)
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(48, 32, 48, 32)
@@ -403,6 +434,7 @@ class RecoveryScreen(QWidget):
 
         self.start_btn.setEnabled(False)
         self.status_label.setText("")
+        self._cancel_requested = False
 
         self.worker = RecoveryWorker(
             self.files, mode, output_dir, suffix=suffix, target_format=target_format, quality=quality
@@ -421,7 +453,35 @@ class RecoveryScreen(QWidget):
     def _on_progress(self, current: int, total: int, filename: str):
         self.progress_dialog.update_progress(current, total, filename)
 
+    def _on_cancel_requested(self):
+        if self.worker:
+            self.worker.cancel()
+        self._cancel_requested = True
+
     def _on_finished(self, outcomes, output_dir: str):
         self.progress_dialog.accept()
         self.start_btn.setEnabled(True)
+
+        if self._cancel_requested:
+            keep = _confirm_dialog(
+                self,
+                "복구된 파일을 유지하시겠습니까?",
+                confirm_text="유지",
+                cancel_text="삭제",
+            )
+            if not keep:
+                self._delete_outputs(outcomes)
+                return  # 결과 화면으로 넘어가지 않고 설정 화면에 그대로 남는다
+
         self.recovery_finished.emit(outcomes, output_dir)
+
+    def _delete_outputs(self, outcomes):
+        # 원본은 core/converter.py가 항상 별도 폴더에만 쓰므로 여기서 지우는 건 취소
+        # 시점까지 만들어진 결과물 사본뿐 — 원본 파일은 영향받지 않는다. 개별 파일
+        # 삭제 실패(권한 등)는 배치 취소 자체를 막을 이유가 없어 조용히 넘어간다.
+        for outcome in outcomes:
+            if outcome.success and outcome.output_path:
+                try:
+                    Path(outcome.output_path).unlink(missing_ok=True)
+                except OSError:
+                    pass

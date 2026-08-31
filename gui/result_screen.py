@@ -118,10 +118,19 @@ CHIP_WIDTH = 96  # 라벨 길이(정상~형식 불일치)가 달라도 카드 �
 
 
 class SummaryChip(QFrame):
-    def __init__(self, label: str, color: str, parent=None):
+    """상태별 개수 카드. clickable=True로 만들면 눌러서 clicked 시그널을 낼 수 있다
+    (예: gui/recovery_result_screen.py에서 카드를 눌러 해당 파일 목록을 보여줄 때) —
+    기본값 False인 화면(검사 결과/복구 화면의 요약 카드)은 지금처럼 그냥 정보 표시용."""
+
+    clicked = Signal()
+
+    def __init__(self, label: str, color: str, parent=None, clickable: bool = False):
         super().__init__(parent)
         self.setObjectName("Card")
         self.setFixedWidth(CHIP_WIDTH)
+        if clickable:
+            self.setProperty("clickable", "true")
+            self.setCursor(Qt.PointingHandCursor)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(14, 10, 14, 10)
         self.value_label = QLabel("0")
@@ -133,6 +142,11 @@ class SummaryChip(QFrame):
         name_label.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 12px;")
         layout.addWidget(self.value_label)
         layout.addWidget(name_label)
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.clicked.emit()
+        super().mouseReleaseEvent(event)
 
     def set_value(self, value: int):
         self.value_label.setText(f"{value:,}")

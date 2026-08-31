@@ -74,21 +74,32 @@ accent bar(`border-left`) + `padding-left: 8px`. 카드 안의 최상위 섹션 
 - **가운데 정렬**: 칩 묶음이 있는 `QHBoxLayout` 앞뒤에 `addStretch(1)`을 둘 다 넣어서,
   칩이 몇 개든 카드 폭 기준 가운데에 오게 한다(칩 개수에 따라 좌우 빈 공간이 균등하게
   분배됨).
+- **클릭 가능한 카드 (선택적)**: `SummaryChip(..., clickable=True)`로 만들면 카드 자체가
+  버튼처럼 동작한다 — 손 커서 + 호버 시 테두리가 `primary`색으로 바뀌고(`QFrame#Card[clickable="true"]:hover`,
+  [gui/theme.py](gui/theme.py)), 누르면 `clicked` 시그널을 낸다. 기준 구현:
+  [gui/recovery_result_screen.py](gui/recovery_result_screen.py) — "복구 완료" 화면에서
+  "성공/건너뜀/실패 파일 보기" 버튼을 따로 두지 않고, 카드를 직접 눌러 해당 상태의
+  파일 목록 팝업을 연다. 기본값은 `False`라서 검사 결과/복구 화면처럼 그냥 정보만
+  보여주면 되는 곳은 지금처럼 손대지 않아도 그대로 동작한다.
 
 ## 팝업/다이얼로그 패턴
 
 네이티브 `QMessageBox`는 OS 기본 스타일이라 앱 테마(민트 톤, 둥근 카드)와 겉돈다.
 **확인이 필요한 팝업은 `QMessageBox` 대신 `QDialog` 기반 커스텀 컴포넌트를 쓴다.**
 
-기준 구현: [gui/recovery_screen.py](gui/recovery_screen.py) `_confirm_dialog(parent, message)`.
+기준 구현: [gui/recovery_screen.py](gui/recovery_screen.py) `_confirm_dialog(parent, message, confirm_text="확인", cancel_text="취소")`.
 - 왼쪽: 상황에 맞는 원형 아이콘 (위 아이콘 시스템 표 참고)
-- 오른쪽: 메시지 + 버튼 행(취소 / 확인)
-- 확인 버튼은 `objectName="Primary"` + `setDefault(True)` — [gui/theme.py](gui/theme.py)의
+- 오른쪽: 메시지 + 버튼 행(취소 역할 / 확인 역할)
+- 확인 쪽 버튼은 `objectName="Primary"` + `setDefault(True)` — [gui/theme.py](gui/theme.py)의
   `QPushButton#Primary` QSS를 그대로 상속받는다 (다이얼로그에 별도 스타일시트를 설정하지
   않아도 `main_window.py`에서 앱 전체에 건 `APP_STYLESHEET`가 자식 위젯까지 적용됨 —
   기존 "최근 검사 결과" 팝업[gui/home_screen.py:401](gui/home_screen.py:401)과 동일한 방식).
-- 반환값: `bool` (확인=True, 취소/닫기=False) — 호출부는 `if not confirmed: return`으로
+- 반환값: `bool` (확인 쪽=True, 취소/닫기=False) — 호출부는 `if not confirmed: return`으로
   진행을 막는다.
+- **버튼 문구는 상황에 맞게 바꿔 쓴다** — "확인"/"취소"가 항상 맞는 건 아니다. 예:
+  복구 취소 후 "복구된 파일을 유지하시겠습니까?"에는 `confirm_text="유지",
+  cancel_text="삭제"`를 써서, 더 안전한 선택지(유지)가 항상 Primary+기본 버튼 자리에
+  오게 한다 — 파괴적인 선택지(삭제)를 기본값으로 두지 않는다.
 
 새로운 확인 팝업이 필요하면 `_confirm_dialog`와 같은 패턴(아이콘 + 메시지 + 취소/확인)을
 그대로 따르고, 화면 간에 완전히 동일한 요구가 2번째로 생기면 그때 공용 컴포넌트로 옮긴다.
@@ -104,15 +115,26 @@ accent bar(`border-left`) + `padding-left: 8px`. 카드 안의 최상위 섹션 
   저장 위치·"← 뒤로" 등 나머지 설정을 계속 건드릴 수 있어 혼란스럽다
   (`PRD_MVP우선순위.md` 갭 #9). 컨트롤을 하나하나 `setEnabled(False)`로 잠그는 대신,
   `setModal(True)` + `exec()`로 띄운 팝업 하나가 화면 전체 입력을 자동으로 막아준다.
-- **닫기 버튼 없음**: `Qt.WindowCloseButtonHint`를 제거해서 작업 도중에 팝업을 닫을 수
-  없게 한다 — 아직 `core/converter.py::recover_batch`에 중단 기능이 없어(갭 #9 후속
-  과제), 중간에 닫아도 실제 작업은 백그라운드에서 계속 돈다. 중단 기능이 생기면 그때
-  이 팝업에 "중단" 버튼을 추가한다.
+- **창 닫기(X) 버튼 없음, 취소는 전용 버튼으로만**: `Qt.WindowCloseButtonHint`를 제거해서
+  타이틀바 X로 슬쩍 닫아버리는 걸 막는다. 취소는 팝업 안의 "취소" 버튼(`cancel_btn`,
+  `objectName="Danger"`)을 통해서만 — 누르면 `cancel_requested` 시그널을 내보내고,
+  `RecoveryWorker.cancel()`이 플래그를 세워 `core/converter.py::recover_batch`가
+  `should_cancel` 콜백(`core/scanner.py::scan_paths`와 같은 방식)으로 다음 파일로
+  넘어가기 전에 멈춘다 — 처리 중이던 파일은 끝까지 마친다. 버튼은 클릭 즉시
+  `setEnabled(False)` + "취소하는 중..."으로 바꿔 중복 클릭을 막는다.
+- **취소 후: 유지/삭제 확인**: 배치가 멈추면 위 `_confirm_dialog`를
+  `confirm_text="유지", cancel_text="삭제"`로 띄운다. 유지를 고르면 그때까지의
+  결과로 평소처럼 `recovery_finished`를 emit해 결과 화면으로 넘어가고, 삭제를 고르면
+  `outcome.success`인 항목의 `output_path`를 지우고 결과 화면으로 넘어가지 않고 설정
+  화면에 남는다(원본은 애초에 건드리지 않으므로 안전). 개별 파일 삭제 실패(권한 등)는
+  조용히 넘어간다 — 정리 작업 하나 실패했다고 취소 자체를 막을 이유가 없다.
 - **`exec()`는 안전하다**: 모달 다이얼로그를 `exec()`로 띄운 채로 있어도, `QThread`
   워커의 `progress`/`finished_batch` 시그널은 중첩 이벤트 루프 안에서 정상적으로
   전달된다 — 워커를 `start()`한 직후 곧바로 `dialog.exec()`를 호출해도 진행률 갱신이
   끊기지 않는다. 작업이 끝나면 `finished_batch` 핸들러에서 `dialog.accept()`를 호출해
-  팝업을 닫고 `exec()` 호출부로 제어를 돌려준다.
+  팝업을 닫고 `exec()` 호출부로 제어를 돌려준다. 실제로 200개 배치를 취소해서
+  중첩 루프 안에서도 취소 버튼 클릭과 후속 유지/삭제 다이얼로그가 정상 동작함을
+  확인함(부분 처리 결과 개수가 총 파일 수보다 작게 나옴, 삭제 시 출력 파일 0개).
 
 ## 폼 컨트롤 — QComboBox
 

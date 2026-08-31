@@ -84,6 +84,10 @@ QFrame#Card {{
     border-radius: 12px;
 }}
 
+QFrame#Card[clickable="true"]:hover {{
+    border-color: {COLORS['primary']};
+}}
+
 QFrame#SelectionCard {{
     background-color: {COLORS['surface']};
     border: 2px dashed {COLORS['dashed']};

@@ -15,7 +15,7 @@ import shutil
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 from PIL import Image, ImageFile
 
@@ -218,12 +218,15 @@ def recover_batch(
     suffix: str = "recovered",
     target_format: str = DEFAULT_CONVERT_FORMAT,
     quality: int = 90,
+    should_cancel: Optional[Callable[[], bool]] = None,  # core/scanner.py::scan_paths와 같은 취소 방식
 ) -> list[RecoveryOutcome]:
     """PRD FR-005 '일괄 복구'. suffix는 복구 파일명 뒤에 붙는 문구 (기본값 'recovered')."""
     output_dir = Path(output_dir)
     outcomes = []
     total = len(files)
     for idx, info in enumerate(files, start=1):
+        if should_cancel and should_cancel():
+            break
         try:
             outcome = recover_file(
                 info, mode, output_dir, suffix=suffix, target_format=target_format, quality=quality

@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
 )
 
+from gui.result_screen import SummaryChip
 from gui.theme import COLORS
 
 
@@ -50,30 +51,24 @@ class RecoveryResultScreen(QWidget):
         title.setObjectName("Title")
         card_layout.addWidget(title)
 
-        self.success_label = QLabel()
-        self.partial_label = QLabel()
-        self.skipped_label = QLabel()
-        self.fail_label = QLabel()
-        for lbl, color in (
-            (self.success_label, COLORS["success"]),
-            (self.partial_label, COLORS["warning"]),
-            (self.skipped_label, COLORS["text_secondary"]),
-            (self.fail_label, COLORS["danger"]),
-        ):
-            lbl.setStyleSheet(f"font-size: 15px; font-weight: 600; color: {color};")
-            card_layout.addWidget(lbl)
-
-        btn_row = QHBoxLayout()
-        self.view_success_btn = QPushButton("성공 파일 보기")
-        self.view_success_btn.clicked.connect(lambda: self._show_list("성공/부분 성공 파일", self._success_lines()))
-        self.view_skipped_btn = QPushButton("건너뜀 파일 보기")
-        self.view_skipped_btn.clicked.connect(lambda: self._show_list("건너뛴 파일", self._skipped_lines()))
-        self.view_fail_btn = QPushButton("실패 파일 보기")
-        self.view_fail_btn.clicked.connect(lambda: self._show_list("실패 파일", self._fail_lines()))
-        btn_row.addWidget(self.view_success_btn)
-        btn_row.addWidget(self.view_skipped_btn)
-        btn_row.addWidget(self.view_fail_btn)
-        card_layout.addLayout(btn_row)
+        # 상태별 개수 카드 = 동시에 버튼. SummaryChip을 clickable=True로 재사용해서
+        # 누르면 해당 상태의 파일 목록을 보여준다(DESIGN.md "상태 요약 카드" 참고) —
+        # 따로 "OO 보기" 버튼 행을 두지 않는다.
+        chips_row = QHBoxLayout()
+        chips_row.setSpacing(10)
+        chips_row.addStretch(1)
+        self.success_chip = SummaryChip("성공", COLORS["success"], clickable=True)
+        self.partial_chip = SummaryChip("부분 성공", COLORS["warning"], clickable=True)
+        self.skipped_chip = SummaryChip("건너뜀", COLORS["muted"], clickable=True)
+        self.fail_chip = SummaryChip("실패", COLORS["danger"], clickable=True)
+        self.success_chip.clicked.connect(lambda: self._show_list("성공/부분 성공 파일", self._success_lines()))
+        self.partial_chip.clicked.connect(lambda: self._show_list("성공/부분 성공 파일", self._success_lines()))
+        self.skipped_chip.clicked.connect(lambda: self._show_list("건너뛴 파일", self._skipped_lines()))
+        self.fail_chip.clicked.connect(lambda: self._show_list("실패 파일", self._fail_lines()))
+        for chip in (self.success_chip, self.partial_chip, self.skipped_chip, self.fail_chip):
+            chips_row.addWidget(chip)
+        chips_row.addStretch(1)
+        card_layout.addLayout(chips_row)
 
         self.output_label = QLabel()
         self.output_label.setWordWrap(True)
@@ -100,10 +95,10 @@ class RecoveryResultScreen(QWidget):
         skipped = sum(1 for o in outcomes if o.skipped)
         fail = sum(1 for o in outcomes if not o.success and not o.skipped)
 
-        self.success_label.setText(f"성공 {success}")
-        self.partial_label.setText(f"부분 성공 {partial}")
-        self.skipped_label.setText(f"건너뜀 {skipped}")
-        self.fail_label.setText(f"실패 {fail}")
+        self.success_chip.set_value(success)
+        self.partial_chip.set_value(partial)
+        self.skipped_chip.set_value(skipped)
+        self.fail_chip.set_value(fail)
         self.output_label.setText(f"저장 위치:\n{output_dir}")
 
     def _success_lines(self) -> list[str]:
