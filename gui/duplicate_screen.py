@@ -48,6 +48,21 @@ from utils.file_utils import format_file_size
 SKIP_LABEL = "이 조합은 정리하지 않음(건너뛰기)"
 
 
+class _ClickableLabel(QLabel):
+    """파일 경로 레이블 — 눌러서 사진을 볼 수 있다는 걸 알 수 있게 커서만 바꾸고,
+    클릭 시 clicked를 쏜다(어떤 파일인지는 호출부가 알고 있으므로 인자 없음)."""
+
+    clicked = Signal()
+
+    def __init__(self, text: str):
+        super().__init__(text)
+        self.setCursor(Qt.PointingHandCursor)
+
+    def mousePressEvent(self, event):
+        self.clicked.emit()
+        super().mousePressEvent(event)
+
+
 def _duplicate_icon_pixmap(color: str, size: int = 26) -> QPixmap:
     """페이지 제목 아이콘 — 겹친 사각형 두 개로 "복사본이 있다"는 의미.
     검사 결과 화면의 돋보기 아이콘과 같은 아웃라인 스트로크 스타일."""
@@ -127,6 +142,7 @@ class DuplicateScreen(QWidget):
 
     back_requested = Signal()
     view_trash_requested = Signal()  # 정리(휴지통 이동) 완료 후 휴지통 화면으로 이동
+    file_selected = Signal(object)  # 파일 경로 클릭 -> 상세보기(사진 미리보기)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -294,6 +310,17 @@ class DuplicateScreen(QWidget):
         sub.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 11px;")
         layout.addWidget(sub)
 
+        # 폴더 조합 전체를 미리 렌더링하면 수백 개 카드에서 다시 느려지므로,
+        # 대표로 첫 그룹의 파일 하나만 눌렀을 때 상세보기로 보여준다.
+        sample_info = group_list[0][0]
+        sample_link = _ClickableLabel("샘플 사진 보기")
+        sample_link.setStyleSheet(
+            f"color: {COLORS['primary']}; font-size: 11px; text-decoration: underline;"
+        )
+        sample_link.setToolTip("이 조합에 속한 사진 중 하나를 미리 봅니다")
+        sample_link.clicked.connect(lambda info=sample_info: self.file_selected.emit(info))
+        layout.addWidget(sample_link)
+
         button_group = QButtonGroup(card)
 
         skip_radio = QRadioButton(SKIP_LABEL)
@@ -347,9 +374,11 @@ class DuplicateScreen(QWidget):
             radios.append(radio)
             row.addWidget(radio)
 
-            path_label = QLabel(info.path)
+            path_label = _ClickableLabel(info.path)
             path_label.setWordWrap(True)
             path_label.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 12px;")
+            path_label.setToolTip("눌러서 사진 보기")
+            path_label.clicked.connect(lambda info=info: self.file_selected.emit(info))
             row.addWidget(path_label, stretch=1)
             layout.addLayout(row)
 
@@ -390,9 +419,8 @@ class DuplicateScreen(QWidget):
 
         confirmed = confirm_dialog(
             self,
-            f"선택한 {len(to_remove)}개 파일을 임시 휴지통으로 이동합니다.\n"
-            "원본은 삭제되지 않고 옮겨지기만 하며, 나중에 직접 확인할 수 있어요.\n"
-            "건너뛰기로 둔 항목은 그대로 남아있어요.\n계속할까요?",
+            f"선택한 {len(to_remove)}개 파일을 임시 휴지통으로 옮길게요.\n\n"
+            "완전히 삭제되는 게 아니라서 나중에 원래 위치로 복원할 수 있어요.",
             confirm_text="이동",
             cancel_text="취소",
         )
@@ -400,6 +428,7 @@ class DuplicateScreen(QWidget):
             return
 
         moved = 0
+        failed: list[str] = []
         for info in to_remove:
             try:
                 trash.move_to_trash(info.path)
@@ -408,10 +437,17 @@ class DuplicateScreen(QWidget):
                 # 이미 옮긴 파일이 또 중복으로 잡혀 되살아나 보이지 않는다.
                 if self._result is not None:
                     self._result.remove(info)
-            except OSError:
-                continue
+            except OSError as exc:
+                failed.append(f"{Path(info.path).name} ({exc})")
 
-        info_dialog(self, f"{moved}개 파일을 임시 휴지통으로 옮겼습니다.\n확인해주세요.")
+        if failed:
+            info_dialog(
+                self,
+                f"{moved}개 파일을 임시 휴지통으로 옮겼습니다.\n"
+                f"{len(failed)}개는 옮기지 못했습니다:\n" + "\n".join(failed),
+            )
+        else:
+            info_dialog(self, f"{moved}개 파일을 임시 휴지통으로 옮겼습니다.\n확인해주세요.")
 
         # 실제로 처리된 카드만 화면에서 지우고, 건너뛴 카드는 다시 볼 수 있게 남긴다.
         for entry in resolved_clusters:

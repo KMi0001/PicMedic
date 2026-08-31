@@ -89,7 +89,7 @@ class DetailScreen(QWidget):
         btn_row = QHBoxLayout()
         self.restore_btn = QPushButton("실제 형식으로 복구")
         self.restore_btn.clicked.connect(self._on_restore_clicked)
-        self.convert_btn = QPushButton("JPEG로 변환")
+        self.convert_btn = QPushButton("확장자 변환")
         self.convert_btn.setObjectName("Primary")
         self.convert_btn.clicked.connect(self._on_convert_clicked)
         btn_row.addWidget(self.restore_btn)

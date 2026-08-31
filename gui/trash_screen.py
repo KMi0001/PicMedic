@@ -2,12 +2,14 @@
 gui/trash_screen.py
 
 Phase 2 "사진 정리" — utils/trash.py::TRASH_DIR(임시 휴지통)에 옮겨진 파일 목록을
-보여주는 화면. 지금은 보기 + 폴더 열기까지만 지원(복원/영구 삭제는 아직 없음 —
-필요하면 탐색기/Finder에서 직접 처리). gui/duplicate_screen.py에서 파일을
-휴지통으로 옮긴 직후 이 화면으로 넘어온다.
+보여주는 화면. 선택한 파일을 원래 있던 폴더로 복원하거나(영구 삭제는 아직 없음 —
+필요하면 탐색기/Finder에서 직접 처리), 폴더를 직접 열어 볼 수 있다.
+gui/duplicate_screen.py에서 파일을 휴지통으로 옮긴 직후 이 화면으로 넘어온다.
 """
 
 from __future__ import annotations
+
+from pathlib import Path
 
 from PySide6.QtCore import Qt, Signal, QUrl, QRectF
 from PySide6.QtGui import QPainter, QPixmap, QColor, QPen, QDesktopServices
@@ -19,8 +21,10 @@ from PySide6.QtWidgets import (
     QPushButton,
     QListWidget,
     QListWidgetItem,
+    QAbstractItemView,
 )
 
+from gui.common_dialogs import info_dialog
 from gui.result_screen import SummaryChip
 from gui.theme import COLORS
 from utils import trash
@@ -96,6 +100,7 @@ class TrashScreen(QWidget):
 
         hint = QLabel(
             "완전히 삭제된 게 아니라 이 폴더로 옮겨진 것뿐이에요. "
+            "다시 필요하면 목록에서 선택 후 \"선택 항목 복원\"으로 원래 위치에 되돌릴 수 있고, "
             "필요 없으면 폴더를 열어서 직접 정리해주세요."
         )
         hint.setWordWrap(True)
@@ -103,11 +108,18 @@ class TrashScreen(QWidget):
         outer.addWidget(hint)
 
         self.list_widget = QListWidget()
+        self.list_widget.setSelectionMode(QAbstractItemView.ExtendedSelection)
         outer.addWidget(self.list_widget, stretch=1)
 
-        open_folder_btn = QPushButton("폴더 열기")
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(10)
+        restore_btn = QPushButton("선택 항목 복원")
+        restore_btn.clicked.connect(self._on_restore_clicked)
+        btn_row.addWidget(restore_btn)
+        open_folder_btn = QPushButton("임시 휴지통 폴더 열기")
         open_folder_btn.clicked.connect(self._open_folder)
-        outer.addWidget(open_folder_btn)
+        btn_row.addWidget(open_folder_btn)
+        outer.addLayout(btn_row)
 
         self.refresh()
 
@@ -120,11 +132,40 @@ class TrashScreen(QWidget):
         if files:
             for path in files:
                 size = format_file_size(path.stat().st_size) if path.exists() else "-"
-                self.list_widget.addItem(QListWidgetItem(f"{path.name} · {size}"))
+                item = QListWidgetItem(f"{path.name} · {size}")
+                item.setData(Qt.UserRole, str(path))
+                self.list_widget.addItem(item)
         else:
             placeholder = QListWidgetItem("임시 휴지통이 비어 있습니다.")
             placeholder.setFlags(Qt.NoItemFlags)
             self.list_widget.addItem(placeholder)
+
+    def _on_restore_clicked(self):
+        items = self.list_widget.selectedItems()
+        paths = [item.data(Qt.UserRole) for item in items if item.data(Qt.UserRole)]
+        if not paths:
+            info_dialog(self, "복원할 파일을 먼저 목록에서 선택해주세요.")
+            return
+
+        restored = 0
+        failed: list[str] = []
+        for path in paths:
+            try:
+                trash.restore_from_trash(path)
+                restored += 1
+            except (ValueError, OSError) as exc:
+                failed.append(f"{Path(path).name} ({exc})")
+
+        self.refresh()
+
+        if failed:
+            info_dialog(
+                self,
+                f"{restored}개 복원했습니다.\n"
+                f"{len(failed)}개는 복원하지 못했습니다:\n" + "\n".join(failed),
+            )
+        else:
+            info_dialog(self, f"{restored}개 파일을 원래 위치로 복원했습니다.")
 
     def _open_folder(self):
         trash.trash_dir().mkdir(parents=True, exist_ok=True)

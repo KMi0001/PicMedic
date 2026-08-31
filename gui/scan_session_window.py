@@ -92,6 +92,7 @@ class ScanSessionWindow(QWidget):
         self._resume_base_planned_total = 0          # 이어서 검사 중이면: 원래 전체 계획 파일 수
         self._pending_remaining_paths: list[str] | None = None  # 현재 결과 화면에서 '이어서 검사' 가능한 나머지 파일
         self._pending_planned_total = 0
+        self._detail_return_screen = self.result_screen  # 상세보기 뒤로가기 시 돌아갈 화면(연 곳에 따라 다름)
 
         self._wire_signals()
         self.stack.setCurrentWidget(self.scanning_screen)
@@ -108,15 +109,20 @@ class ScanSessionWindow(QWidget):
         self.result_screen.resume_requested.connect(self._on_resume_requested)
         self.result_screen.duplicates_requested.connect(self._open_duplicates)
 
-        # 중복 사진 -> 결과 / 임시 휴지통
+        # 중복 사진 -> 결과 / 임시 휴지통 / 상세보기(사진 미리보기)
         self.duplicate_screen.back_requested.connect(lambda: self.stack.setCurrentWidget(self.result_screen))
         self.duplicate_screen.view_trash_requested.connect(self._open_trash)
+        self.duplicate_screen.file_selected.connect(
+            lambda info: self._open_detail(info, return_to=self.duplicate_screen)
+        )
 
         # 임시 휴지통 -> 중복 사진 (남은 중복이 없으면 빈 화면 대신 검사 결과로)
         self.trash_screen.back_requested.connect(self._back_from_trash)
 
-        # Detail -> Result / Recovery
-        self.detail_screen.back_requested.connect(lambda: self.stack.setCurrentWidget(self.result_screen))
+        # Detail -> 열었던 화면(결과 또는 중복 사진) / Recovery
+        self.detail_screen.back_requested.connect(
+            lambda: self.stack.setCurrentWidget(self._detail_return_screen)
+        )
         self.detail_screen.recover_requested.connect(self._open_recovery)
 
         # Recovery -> Result / RecoveryResult
@@ -183,7 +189,8 @@ class ScanSessionWindow(QWidget):
             self.resize(*self._NORMAL_SIZE)
             self.stack.setCurrentWidget(self.result_screen)
 
-    def _open_detail(self, info):
+    def _open_detail(self, info, return_to=None):
+        self._detail_return_screen = return_to or self.result_screen
         self.detail_screen.set_file(info)
         self.stack.setCurrentWidget(self.detail_screen)
 

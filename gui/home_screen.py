@@ -28,6 +28,7 @@ from core.converter import RecoveryMode
 from core.scanner import SCANNABLE_EXTENSIONS
 from gui.result_screen import SummaryChip
 from gui.theme import COLORS, STATUS_COLORS
+from gui.trash_screen import TrashScreen
 from utils.assets import asset_path
 
 MAX_RECENT = 5
@@ -341,6 +342,13 @@ class HomeScreen(QWidget):
         header_row.setAlignment(brand_text, Qt.AlignVCenter)
         header_row.addStretch(1)
 
+        # 임시로 접근성만 확보 — 지금은 스캔 세션(gui/scan_session_window.py)에서
+        # 중복 정리를 거쳐야만 볼 수 있는데, 세션과 무관하게 언제든 확인하고 싶다는
+        # 요청으로 홈 화면에도 바로가기를 둔다.
+        trash_btn = QPushButton("임시 휴지통")
+        trash_btn.clicked.connect(self._open_trash)
+        header_row.addWidget(trash_btn)
+
         content_layout.addLayout(header_row)
 
         self.selection_card = SelectionCard()
@@ -396,6 +404,21 @@ class HomeScreen(QWidget):
         valid = [p for p in paths if Path(p).exists()]
         if valid:
             self.paths_chosen.emit(valid)
+
+    def _open_trash(self):
+        """세션(ScanSessionWindow) 없이도 임시 휴지통을 바로 볼 수 있게 하는
+        진입점 — utils/trash.py의 TRASH_DIR은 세션과 무관한 전역 폴더라 화면만
+        새로 하나 띄우면 된다."""
+        dialog = QDialog(self)
+        dialog.setWindowTitle("임시 휴지통")
+        dialog.setWindowModality(Qt.WindowModal)
+        layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(0, 0, 0, 0)
+        screen = TrashScreen()
+        screen.back_requested.connect(dialog.accept)
+        layout.addWidget(screen)
+        dialog.resize(560, 520)
+        dialog.exec()
 
     def _show_recent_summary(self, entry: dict):
         """스캔을 다시 하지 않고, 그때 결과 요약을 팝업으로 보여준다."""
