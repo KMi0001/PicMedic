@@ -142,5 +142,9 @@ class MainWindow(QMainWindow):
                     self.result_screen.result.mark_recovered(outcome.original)
             self.result_screen.refresh_current_result()
 
+        # 이번 복구가 어느 '최근 검사' 항목에서 시작됐는지는 _scan_origin_paths로 알 수 있다
+        # (검사 결과 화면에서 왔든 상세 화면에서 왔든, 새 스캔을 시작하기 전까지는 유지됨).
+        self.home_screen.record_recovery_outcome(self._scan_origin_paths, outcomes, output_dir)
+
         self.recovery_result_screen.set_outcomes(outcomes, output_dir)
         self.stack.setCurrentWidget(self.recovery_result_screen)

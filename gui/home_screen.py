@@ -10,12 +10,13 @@ import json
 from datetime import datetime
 from pathlib import Path
 
-from PySide6.QtCore import Qt, Signal, QSettings, QStandardPaths, QPointF, QRectF
-from PySide6.QtGui import QPixmap, QPainter, QPainterPath, QPen, QColor
+from PySide6.QtCore import Qt, Signal, QSettings, QStandardPaths, QPointF, QRectF, QUrl
+from PySide6.QtGui import QPixmap, QPainter, QPainterPath, QPen, QColor, QDesktopServices
 from PySide6.QtWidgets import (
     QWidget,
     QVBoxLayout,
     QHBoxLayout,
+    QGridLayout,
     QLabel,
     QPushButton,
     QFrame,
@@ -23,8 +24,10 @@ from PySide6.QtWidgets import (
     QDialog,
 )
 
+from core.converter import RecoveryMode
 from core.scanner import SCANNABLE_EXTENSIONS
-from gui.theme import COLORS
+from gui.result_screen import SummaryChip
+from gui.theme import COLORS, STATUS_COLORS
 from utils.assets import asset_path
 
 MAX_RECENT = 5
@@ -397,39 +400,96 @@ class HomeScreen(QWidget):
     def _show_recent_summary(self, entry: dict):
         """스캔을 다시 하지 않고, 그때 결과 요약을 팝업으로 보여준다."""
         paths = entry.get("paths", [])
+        ok = entry.get("status") == "completed"
+        accent = COLORS["success"] if ok else COLORS["warning"]
 
         dialog = QDialog(self)
         dialog.setWindowTitle("최근 검사 결과")
-        dialog.resize(360, 320)
         layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(24, 24, 24, 24)
+        layout.setSpacing(14)
 
+        # 최근 검사 목록 행과 같은 완료(✓)/중단(⚠) 아이콘을 크게 재사용해서
+        # 한눈에 결과 성격을 알 수 있게 한다 (DESIGN.md 아이콘 시스템 참고).
+        header_row = QHBoxLayout()
+        header_row.setSpacing(12)
+        icon_label = QLabel()
+        icon_label.setPixmap(_status_icon_pixmap(ok, accent, size=40))
+        header_row.addWidget(icon_label, alignment=Qt.AlignTop)
+
+        text_col = QVBoxLayout()
+        text_col.setSpacing(2)
         title_label = QLabel(entry.get("label", ""))
         title_label.setWordWrap(True)
-        title_label.setStyleSheet("font-weight: 600; font-size: 14px;")
-        layout.addWidget(title_label)
-
-        meta_label = QLabel(f"검사 시각: {entry.get('timestamp', '-')}")
-        meta_label.setStyleSheet(f"color: {COLORS['text_secondary']};")
-        layout.addWidget(meta_label)
+        title_label.setFixedWidth(240)
+        title_label.setStyleSheet("font-weight: 700; font-size: 15px;")
+        text_col.addWidget(title_label)
 
         status_label = QLabel(_status_line(entry))
-        layout.addWidget(status_label)
+        status_label.setStyleSheet(f"color: {accent}; font-weight: 600; font-size: 12.5px;")
+        text_col.addWidget(status_label)
 
-        layout.addSpacing(6)
+        meta_label = QLabel(f"검사 시각: {entry.get('timestamp', '-')}")
+        meta_label.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 11.5px;")
+        text_col.addWidget(meta_label)
 
-        for key, label_text in (
-            ("normal", "정상"),
-            ("mismatch", "형식 불일치"),
-            ("partial_corruption", "부분 손상"),
-            ("corrupted", "손상"),
-            ("unsupported", "지원 안 함"),
-            ("not_an_image", "이미지 아님"),
-        ):
-            value = entry.get(key, 0)
-            if value:
-                layout.addWidget(QLabel(f"{label_text}: {value:,}"))
+        header_row.addLayout(text_col, 1)
+        layout.addLayout(header_row)
 
-        layout.addStretch(1)
+        # 상태별 개수 — 검사 결과 화면과 같은 SummaryChip 카드(DESIGN.md "상태 요약
+        # 카드"). 칸이 최대 6개까지 나올 수 있어 한 줄이 아니라 3열 그리드로 접는다.
+        chip_defs = (
+            ("normal", "정상", STATUS_COLORS["정상"]),
+            ("mismatch", "형식 불일치", STATUS_COLORS["형식_불일치"]),
+            ("partial_corruption", "부분 손상", STATUS_COLORS["부분_손상"]),
+            ("corrupted", "손상", STATUS_COLORS["손상"]),
+            ("unsupported", "지원 안 함", COLORS["muted"]),
+            ("not_an_image", "이미지 아님", COLORS["muted"]),
+        )
+        present = [(label, color, entry.get(key, 0)) for key, label, color in chip_defs if entry.get(key, 0)]
+        if present:
+            grid = QGridLayout()
+            grid.setSpacing(8)
+            for idx, (label, color, value) in enumerate(present):
+                chip = SummaryChip(label, color)
+                chip.set_value(value)
+                grid.addWidget(chip, idx // 3, idx % 3)
+            layout.addLayout(grid)
+
+        # 이 스캔을 기준으로 복구/변환까지 했었다면(main_window.py::_on_recovery_finished가
+        # record_recovery_outcome으로 기록) 결과와 저장 폴더 바로가기를 보여준다. 복구 이후
+        # 사용자가 폴더/파일을 옮기거나 지웠을 수 있으니, "복구했다는 기록"은 그대로 두되
+        # 폴더가 실제로 있는지는 열기를 누르는 시점에 확인한다.
+        recovery_dir = entry.get("recovery_output_dir")
+        if recovery_dir:
+            layout.addSpacing(2)
+            recovery_row = QHBoxLayout()
+            recovery_row.setSpacing(8)
+            recovery_icon = QLabel()
+            recovery_icon.setPixmap(_status_icon_pixmap(True, COLORS["success"], size=18))
+            recovery_row.addWidget(recovery_icon)
+            recovery_kind = "변환 완료" if entry.get("recovery_mode") == RecoveryMode.CONVERT.value else "복구 완료"
+            recovery_label = QLabel(f"{recovery_kind} · {entry.get('recovery_count', 0)}개")
+            recovery_label.setStyleSheet(f"color: {COLORS['success']}; font-weight: 600; font-size: 12.5px;")
+            recovery_row.addWidget(recovery_label)
+            recovery_row.addStretch(1)
+            open_folder_btn = QPushButton("폴더 열기")
+            recovery_row.addWidget(open_folder_btn)
+            layout.addLayout(recovery_row)
+
+            folder_missing_label = QLabel("폴더를 찾을 수 없습니다 — 이동되었거나 삭제된 것 같아요.")
+            folder_missing_label.setWordWrap(True)
+            folder_missing_label.setStyleSheet(f"color: {COLORS['danger']}; font-size: 11.5px;")
+            folder_missing_label.hide()
+            layout.addWidget(folder_missing_label)
+
+            def open_recovery_folder():
+                if Path(recovery_dir).exists():
+                    QDesktopServices.openUrl(QUrl.fromLocalFile(recovery_dir))
+                else:
+                    folder_missing_label.show()
+
+            open_folder_btn.clicked.connect(open_recovery_folder)
 
         btn_row = QHBoxLayout()
         rescan_btn = QPushButton("다시 검사")
@@ -479,6 +539,27 @@ class HomeScreen(QWidget):
         entries = entries[:MAX_RECENT]
         self._save_recent_entries(entries)
         self._refresh_recent_list()
+
+    def record_recovery_outcome(self, paths: list[str], outcomes: list, output_dir: str) -> None:
+        """복구/변환이 끝나면(main_window.py::_on_recovery_finished) 같은 원본 경로(paths)로
+        기록된 '최근 검사' 항목에 결과 폴더를 남겨서, 최근 검사 팝업에서 바로 열 수 있게 한다.
+        같은 스캔을 여러 번 복구했으면 가장 최근 것만 남는다(이력 전체를 쌓지 않음)."""
+        recovered_count = sum(1 for o in outcomes if o.success)
+        if not paths or not recovered_count:
+            return
+
+        entries = self._load_recent_entries()
+        for entry in entries:
+            if entry.get("paths") == paths:
+                entry["recovery_output_dir"] = output_dir
+                entry["recovery_count"] = recovered_count
+                # 배치 하나는 항상 모드 하나(gui/recovery_screen.py::_start_recovery가
+                # RESTORE_EXTENSION/CONVERT 중 하나로만 recover_batch를 호출)라
+                # 첫 outcome의 mode만 봐도 된다 — "복구 완료"/"변환 완료" 문구를 결정.
+                entry["recovery_mode"] = outcomes[0].mode.value
+                self._save_recent_entries(entries)
+                self._refresh_recent_list()
+                return
 
     def _load_recent_entries(self) -> list[dict]:
         raw = self.settings.value(RECENT_SCANS_KEY, "")

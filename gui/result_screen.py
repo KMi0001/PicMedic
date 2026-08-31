@@ -9,8 +9,8 @@ from __future__ import annotations
 from datetime import datetime
 from pathlib import Path
 
-from PySide6.QtCore import Qt, Signal, QRect, QItemSelectionModel
-from PySide6.QtGui import QColor
+from PySide6.QtCore import Qt, Signal, QRect, QRectF, QPointF, QItemSelectionModel
+from PySide6.QtGui import QColor, QIcon, QPainter, QPainterPath, QPen, QPixmap
 from PySide6.QtWidgets import (
     QWidget,
     QVBoxLayout,
@@ -41,6 +41,49 @@ FILTER_OPTIONS = [
     "복구 가능한 파일만",
     "지원안함/오류",
 ]
+
+
+def _outline_icon(color: str, size: int, draw) -> QPixmap:
+    """스트로크만 있는 아웃라인 벡터 아이콘 공통 뼈대 (gui/home_screen.py의
+    _image_icon_pixmap과 같은 스타일 — 24 기준 좌표에 scale을 곱해서 그린다).
+    draw(painter, scale)를 호출해 실제 모양만 그리게 한다."""
+    scale = size / 24.0
+    pixmap = QPixmap(size, size)
+    pixmap.fill(Qt.transparent)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.Antialiasing)
+    pen = QPen(QColor(color))
+    pen.setWidthF(1.8 * scale)
+    pen.setCapStyle(Qt.RoundCap)
+    pen.setJoinStyle(Qt.RoundJoin)
+    painter.setPen(pen)
+    painter.setBrush(Qt.NoBrush)
+    draw(painter, scale)
+    painter.end()
+    return pixmap
+
+
+def _home_icon_pixmap(color: str, size: int = 18) -> QPixmap:
+    def draw(painter, scale):
+        roof = QPainterPath()
+        roof.moveTo(3 * scale, 11 * scale)
+        roof.lineTo(12 * scale, 4 * scale)
+        roof.lineTo(21 * scale, 11 * scale)
+        painter.drawPath(roof)
+        painter.drawLine(QPointF(5.5 * scale, 9.5 * scale), QPointF(5.5 * scale, 20 * scale))
+        painter.drawLine(QPointF(5.5 * scale, 20 * scale), QPointF(18.5 * scale, 20 * scale))
+        painter.drawLine(QPointF(18.5 * scale, 20 * scale), QPointF(18.5 * scale, 9.5 * scale))
+        painter.drawRoundedRect(QRectF(10 * scale, 13 * scale, 4 * scale, 7 * scale), 1 * scale, 1 * scale)
+
+    return _outline_icon(color, size, draw)
+
+
+def _search_icon_pixmap(color: str, size: int = 22) -> QPixmap:
+    def draw(painter, scale):
+        painter.drawEllipse(QPointF(10.5 * scale, 10.5 * scale), 6.5 * scale, 6.5 * scale)
+        painter.drawLine(QPointF(15.2 * scale, 15.2 * scale), QPointF(20 * scale, 20 * scale))
+
+    return _outline_icon(color, size, draw)
 
 
 class CheckAllHeaderView(QHeaderView):
@@ -169,13 +212,23 @@ class ResultScreen(QWidget):
         outer.setSpacing(14)
 
         header_row = QHBoxLayout()
+        header_row.setSpacing(10)
+        title_icon = QLabel()
+        title_icon.setPixmap(_search_icon_pixmap(COLORS["primary"], 26))
+        header_row.addWidget(title_icon)
         title = QLabel("검사 결과")
         title.setObjectName("Title")
         header_row.addWidget(title)
         header_row.addStretch(1)
-        rescan_btn = QPushButton("다시 검사")
-        rescan_btn.clicked.connect(self.rescan_requested.emit)
-        header_row.addWidget(rescan_btn)
+        # "다시 검사"를 눌러도 실제로는 홈 화면(파일/폴더 재선택)으로 돌아갈 뿐이라
+        # (gui/main_window.py의 rescan_requested 연결부 참고) 이름과 동작이 어긋났었다.
+        # 실제 동작에 맞게 "홈" + 집 아이콘으로 바꾸고, 은은하게 강조되도록 글자/아이콘만
+        # primary색을 준다(화면의 진짜 주요 동작인 "Medic!"과 겹치지 않게 배경은 그대로).
+        home_btn = QPushButton(" 홈")
+        home_btn.setIcon(QIcon(_home_icon_pixmap(COLORS["primary"])))
+        home_btn.setStyleSheet(f"color: {COLORS['primary']}; font-weight: 600;")
+        home_btn.clicked.connect(self.rescan_requested.emit)
+        header_row.addWidget(home_btn)
         outer.addLayout(header_row)
 
         self.cancelled_banner_frame = QFrame()
@@ -197,13 +250,22 @@ class ResultScreen(QWidget):
         self.cancelled_banner_frame.hide()
         outer.addWidget(self.cancelled_banner_frame)
 
+        # 칩을 누르면 아래 필터 드롭다운을 그 상태로 바꿔서 표를 바로 걸러 보여준다
+        # (DESIGN.md "상태 요약 카드" clickable 옵션 — gui/recovery_result_screen.py와
+        # 같은 패턴, 여기서는 별도 팝업 대신 이미 있는 표 필터를 재사용).
         chips_row = QHBoxLayout()
-        self.chip_total = SummaryChip("총 파일", COLORS["text"])
-        self.chip_normal = SummaryChip("정상", STATUS_COLORS["정상"])
-        self.chip_mismatch = SummaryChip("형식 불일치", STATUS_COLORS["형식_불일치"])
-        self.chip_partial = SummaryChip("부분 손상", STATUS_COLORS["부분_손상"])
-        self.chip_corrupted = SummaryChip("손상", STATUS_COLORS["손상"])
-        self.chip_recovered = SummaryChip("복구 완료", STATUS_COLORS["복구_완료"])
+        self.chip_total = SummaryChip("총 파일", COLORS["text"], clickable=True)
+        self.chip_normal = SummaryChip("정상", STATUS_COLORS["정상"], clickable=True)
+        self.chip_mismatch = SummaryChip("형식 불일치", STATUS_COLORS["형식_불일치"], clickable=True)
+        self.chip_partial = SummaryChip("부분 손상", STATUS_COLORS["부분_손상"], clickable=True)
+        self.chip_corrupted = SummaryChip("손상", STATUS_COLORS["손상"], clickable=True)
+        self.chip_recovered = SummaryChip("복구 완료", STATUS_COLORS["복구_완료"], clickable=True)
+        self.chip_total.clicked.connect(lambda: self._filter_by_chip("전체"))
+        self.chip_normal.clicked.connect(lambda: self._filter_by_chip("정상"))
+        self.chip_mismatch.clicked.connect(lambda: self._filter_by_chip("형식 불일치"))
+        self.chip_partial.clicked.connect(lambda: self._filter_by_chip("부분 손상"))
+        self.chip_corrupted.clicked.connect(lambda: self._filter_by_chip("손상"))
+        self.chip_recovered.clicked.connect(lambda: self._filter_by_chip("복구 완료"))
         for chip in (
             self.chip_total,
             self.chip_normal,
@@ -311,6 +373,9 @@ class ResultScreen(QWidget):
     def _show_recoverable_only(self):
         idx = FILTER_OPTIONS.index("복구 가능한 파일만")
         self.filter_combo.setCurrentIndex(idx)
+
+    def _filter_by_chip(self, filter_choice: str):
+        self.filter_combo.setCurrentIndex(FILTER_OPTIONS.index(filter_choice))
 
     def _apply_filters(self):
         if not self.result:
