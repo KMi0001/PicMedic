@@ -36,3 +36,4 @@ PySide6가 UI 차이를 흡수하므로, 필요한 경우에만 `sys.platform` �
 - [PicMedic_PRD_v2.md](PicMedic_PRD_v2.md) — 기획서
 - [PRD_MVP우선순위.md](PRD_MVP우선순위.md) — 우선순위별 구현 체크리스트
 - [DESIGN.md](DESIGN.md) — 색상/아이콘/팝업 등 UI 디자인 가이드 (새 화면·컴포넌트 추가 시 참고)
+- [PLATFORM_EXPANSION.md](PLATFORM_EXPANSION.md) — 웹/앱(모바일) 확장 검토 메모 (아직 미착수, 방향만 정리됨)

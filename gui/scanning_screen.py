@@ -26,6 +26,7 @@ from gui.theme import COLORS
 class ScanWorker(QThread):
     progress = Signal(int, int, str)           # current, total, filename
     finished_scan = Signal(object, bool, list)  # ScanResult, cancelled, remaining_paths
+    heavy_format_detected = Signal()            # HEIC/HEIF 발견 시 1회만(core/scanner.py 참고)
 
     def __init__(self, paths: list[str], parent=None):
         super().__init__(parent)
@@ -41,6 +42,7 @@ class ScanWorker(QThread):
             recursive=True,
             progress_callback=lambda cur, total, name: self.progress.emit(cur, total, name),
             should_cancel=lambda: self._cancel_requested,
+            on_heavy_format=self.heavy_format_detected.emit,
         )
         self.finished_scan.emit(result, self._cancel_requested, remaining_paths)
 
@@ -83,6 +85,16 @@ class ScanningScreen(QWidget):
         self.current_file_label.setStyleSheet(f"color: {COLORS['text_secondary']};")
         card_layout.addWidget(self.current_file_label)
 
+        # HEIC/HEIF는 디코딩이 훨씬 무거워서(PRD_MVP우선순위.md 갭 #8 실측: JPEG
+        # 대비 10배 이상) 검사 중 처음 발견되면 왜 오래 걸리는지 안내한다.
+        self.heavy_format_label = QLabel(
+            "HEIC 사진이 포함되어 있어 검사가 더 오래 걸릴 수 있어요."
+        )
+        self.heavy_format_label.setWordWrap(True)
+        self.heavy_format_label.setStyleSheet(f"color: {COLORS['warning']}; font-weight: 600;")
+        self.heavy_format_label.setVisible(False)
+        card_layout.addWidget(self.heavy_format_label)
+
         time_row = QVBoxLayout()
         self.elapsed_label = QLabel("경과 시간: 0초")
         self.eta_label = QLabel("예상 남은 시간: 계산 중...")
@@ -108,6 +120,7 @@ class ScanningScreen(QWidget):
         self.count_label.setText("0 / 0")
         self.current_file_label.setText("현재 검사: -")
         self.eta_label.setText("예상 남은 시간: 계산 중...")
+        self.heavy_format_label.setVisible(False)
         self.cancel_btn.setEnabled(True)
         self.cancel_btn.setText("취소")
         self._planned_total = 0
@@ -118,7 +131,11 @@ class ScanningScreen(QWidget):
         self.worker = ScanWorker(paths)
         self.worker.progress.connect(self._on_progress)
         self.worker.finished_scan.connect(self._on_finished)
+        self.worker.heavy_format_detected.connect(self._on_heavy_format_detected)
         self.worker.start()
+
+    def _on_heavy_format_detected(self):
+        self.heavy_format_label.setVisible(True)
 
     def _on_progress(self, current: int, total: int, filename: str):
         self._planned_total = total

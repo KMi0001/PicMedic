@@ -17,6 +17,11 @@ from core.detector import MVP_SUPPORTED_EXTENSIONS, FUTURE_EXTENSIONS
 from models.scan_result import ScanResult
 from utils import logger
 
+# PRD_MVP우선순위.md 갭 #8 조사로 확인됨: HEIC/HEIF는 HEVC 기반 디코딩이라
+# JPEG보다 10배 이상 느리다(실측 0.3~0.7초/장 vs JPEG 0.03초대). 이 형식이
+# 섞인 폴더는 검사가 눈에 띄게 오래 걸릴 수 있어 진행 화면에 안내를 띄운다.
+HEAVY_DECODE_FORMATS = {"HEIC", "HEIF"}
+
 # 스캔 대상으로 삼을 확장자: MVP 지원 + 향후 지원 예정(지원 불가로 표시하기 위해 포함)
 SCANNABLE_EXTENSIONS = MVP_SUPPORTED_EXTENSIONS | FUTURE_EXTENSIONS
 
@@ -107,9 +112,11 @@ def _scan_files(
     files: list[Path],
     progress_callback: Optional[ProgressCallback] = None,
     should_cancel: Optional[Callable[[], bool]] = None,
+    on_heavy_format: Optional[Callable[[], None]] = None,
 ) -> ScanResult:
     total = len(files)
     result = ScanResult()
+    heavy_format_seen = False
 
     for idx, path in enumerate(files, start=1):
         if should_cancel and should_cancel():
@@ -128,6 +135,13 @@ def _scan_files(
                 error_message=f"분석 중 예외 발생: {exc}",
             )
 
+        # HEIC/HEIF가 섞여 있으면 검사가 눈에 띄게 오래 걸릴 수 있어(위 HEAVY_DECODE_FORMATS
+        # 주석 참고), 진행 화면이 처음 발견한 시점에 딱 한 번 안내를 띄울 수 있게 알려준다.
+        if not heavy_format_seen and info.detected_format in HEAVY_DECODE_FORMATS:
+            heavy_format_seen = True
+            if on_heavy_format:
+                on_heavy_format()
+
         result.add(info)
 
         if progress_callback:
@@ -141,10 +155,15 @@ def scan_folder(
     recursive: bool = True,
     progress_callback: Optional[ProgressCallback] = None,
     should_cancel: Optional[Callable[[], bool]] = None,
+    on_heavy_format: Optional[Callable[[], None]] = None,
 ) -> tuple[ScanResult, list[str]]:
     """폴더(or 단일 파일) 하나를 스캔한다. (ScanResult, 아직 검사 못한 파일 경로 목록)을 반환한다."""
     return scan_paths(
-        [root], recursive=recursive, progress_callback=progress_callback, should_cancel=should_cancel
+        [root],
+        recursive=recursive,
+        progress_callback=progress_callback,
+        should_cancel=should_cancel,
+        on_heavy_format=on_heavy_format,
     )
 
 
@@ -153,6 +172,7 @@ def scan_paths(
     recursive: bool = True,
     progress_callback: Optional[ProgressCallback] = None,
     should_cancel: Optional[Callable[[], bool]] = None,
+    on_heavy_format: Optional[Callable[[], None]] = None,
 ) -> tuple[ScanResult, list[str]]:
     """
     여러 파일/폴더 경로를 한 번에 스캔하여 ScanResult 하나로 합친다.
@@ -161,6 +181,8 @@ def scan_paths(
 
     - progress_callback(current, total, filename): 매 파일 처리 후 호출
     - should_cancel(): True를 반환하면 남은 파일 처리를 중단 (PRD Screen 02 '취소')
+    - on_heavy_format(): HEIC/HEIF처럼 디코딩이 무거운 형식을 스캔 중 처음 발견하면
+      한 번 호출된다 (진행 화면에서 "오래 걸릴 수 있음" 안내를 띄우는 용도).
     - 같은 파일이 여러 경로(예: 폴더 스캔과 개별 파일 선택)로 중복 포함되면 한 번만 검사한다.
 
     반환값: (ScanResult, remaining_paths)
@@ -180,7 +202,9 @@ def scan_paths(
             seen.add(resolved)
             files.append(path)
 
-    result = _scan_files(files, progress_callback=progress_callback, should_cancel=should_cancel)
+    result = _scan_files(
+        files, progress_callback=progress_callback, should_cancel=should_cancel, on_heavy_format=on_heavy_format
+    )
     logger.log_scan(", ".join(str(r) for r in roots), result)
 
     remaining_paths = [str(p) for p in files[result.total:]]
