@@ -265,11 +265,17 @@ class RecoveryScreen(QWidget):
         if mode == RecoveryMode.RESTORE_EXTENSION:
             normal_count = sum(1 for f in self.files if f.status == FileStatus.NORMAL)
             if normal_count:
-                QMessageBox.information(
-                    self,
-                    "PicMedic",
-                    f"선택한 파일 중 {normal_count}개는 이미 정상 파일이라 복원할 내용이 없어 건너뜁니다.",
+                box = QMessageBox(self)
+                box.setWindowTitle("PicMedic")
+                box.setText(
+                    f"선택한 파일 중 {normal_count}개는 이미 정상 파일이라 복원할 내용이 없어 건너뜁니다.\n계속 진행할까요?"
                 )
+                confirm_btn = box.addButton("확인", QMessageBox.AcceptRole)
+                box.addButton("취소", QMessageBox.RejectRole)
+                box.setDefaultButton(confirm_btn)
+                box.exec()
+                if box.clickedButton() != confirm_btn:
+                    return
 
         self.start_btn.setEnabled(False)
         self.progress_bar.setVisible(True)
