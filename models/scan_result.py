@@ -60,6 +60,16 @@ class ScanResult:
     def by_status(self, status: FileStatus) -> list[FileInfo]:
         return [f for f in self.files if f.status == status]
 
+    def duplicate_groups(self) -> list[list[FileInfo]]:
+        """content_hash가 같은 파일들을 그룹으로 묶어 반환한다(Phase 2 '정확 중복'
+        탐지). 파일이 2개 이상 모인 그룹만 반환 — 혼자인 해시는 중복이 아니므로
+        제외."""
+        groups: dict[str, list[FileInfo]] = {}
+        for f in self.files:
+            if f.content_hash:
+                groups.setdefault(f.content_hash, []).append(f)
+        return [group for group in groups.values() if len(group) > 1]
+
     def merge(self, other: "ScanResult") -> "ScanResult":
         """이어서 검사한 결과(other)를 이 결과 뒤에 합친 새 ScanResult를 반환한다."""
         return ScanResult(

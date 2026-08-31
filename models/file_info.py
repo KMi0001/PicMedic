@@ -43,6 +43,7 @@ class FileInfo:
     detected_format: Optional[str] = None    # 실제로 감지된 형식 (예: "HEIC")
     mime_type: Optional[str] = None
     file_size: int = 0                       # bytes
+    content_hash: Optional[str] = None       # 파일 내용 SHA-256 (Phase 2 '정확 중복' 탐지용)
 
     # --- 이미지 속성 (디코딩 성공 시에만 채워짐) ---
     width: Optional[int] = None

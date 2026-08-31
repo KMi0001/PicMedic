@@ -200,6 +200,7 @@ class ResultScreen(QWidget):
     recovery_requested = Signal(list)    # list[FileInfo]
     rescan_requested = Signal()
     resume_requested = Signal()          # 중단된 검사를 나머지 파일부터 이어서 진행
+    duplicates_requested = Signal()      # "중복 파일 보기" — gui/duplicate_screen.py로 이동
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -281,6 +282,10 @@ class ResultScreen(QWidget):
         self.recoverable_btn = QPushButton("복구 가능한 파일 보기")
         self.recoverable_btn.clicked.connect(self._show_recoverable_only)
         action_row.addWidget(self.recoverable_btn)
+
+        self.duplicates_btn = QPushButton("중복 파일 보기")
+        self.duplicates_btn.clicked.connect(self.duplicates_requested.emit)
+        action_row.addWidget(self.duplicates_btn)
 
         action_row.addStretch(1)
 

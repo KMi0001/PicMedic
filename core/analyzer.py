@@ -12,6 +12,7 @@ detector.py 로 실제 파일 형식을 알아낸 뒤, Pillow로 실제 디코�
 
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 from typing import Optional
 
@@ -43,6 +44,19 @@ MIME_TYPE_MAP = {
 # 아주 작은 파일(헤더조차 없음)이나 텍스트로만 채워진 파일은
 # "손상된 이미지"가 아니라 "애초에 이미지가 아닌 파일"로 본다.
 MIN_PLAUSIBLE_IMAGE_BYTES = 16
+
+
+def _compute_file_hash(path: Path) -> Optional[str]:
+    """파일 내용 SHA-256 (Phase 2 '정확 중복' 탐지용). 이미지 디코딩과 무관하게
+    원본 바이트 기준이라, 디코딩 성공 여부와 상관없이 모든 파일에 매길 수 있다."""
+    try:
+        digest = hashlib.sha256()
+        with open(path, "rb") as f:
+            for chunk in iter(lambda: f.read(1024 * 1024), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
+    except OSError:
+        return None
 
 
 class _DecodeResult:
@@ -155,6 +169,7 @@ def analyze_file(path: str | Path) -> FileInfo:
         return info
 
     info.file_size = path.stat().st_size
+    info.content_hash = _compute_file_hash(path)
 
     detected_format = detector.detect_format(path)
     info.detected_format = detected_format

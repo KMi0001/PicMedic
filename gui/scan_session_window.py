@@ -31,6 +31,7 @@ from gui.result_screen import ResultScreen
 from gui.detail_screen import DetailScreen
 from gui.recovery_screen import RecoveryScreen
 from gui.recovery_result_screen import RecoveryResultScreen
+from gui.duplicate_screen import DuplicateScreen
 from models.file_info import FileStatus
 
 
@@ -145,6 +146,7 @@ class ScanSessionWindow(QWidget):
         self.detail_screen = DetailScreen()
         self.recovery_screen = RecoveryScreen()
         self.recovery_result_screen = RecoveryResultScreen()
+        self.duplicate_screen = DuplicateScreen()
 
         for screen in (
             self.scanning_screen,
@@ -152,6 +154,7 @@ class ScanSessionWindow(QWidget):
             self.detail_screen,
             self.recovery_screen,
             self.recovery_result_screen,
+            self.duplicate_screen,
         ):
             self.stack.addWidget(screen)
 
@@ -170,11 +173,15 @@ class ScanSessionWindow(QWidget):
         # Scanning -> Result / (홈으로)
         self.scanning_screen.scan_finished.connect(self._on_scan_finished)
 
-        # Result -> Detail / Recovery / 홈
+        # Result -> Detail / Recovery / 홈 / 중복 사진
         self.result_screen.file_selected.connect(self._open_detail)
         self.result_screen.recovery_requested.connect(lambda files: self._open_recovery(files, None))
         self.result_screen.rescan_requested.connect(self._go_home)
         self.result_screen.resume_requested.connect(self._on_resume_requested)
+        self.result_screen.duplicates_requested.connect(self._open_duplicates)
+
+        # 중복 사진 -> 결과
+        self.duplicate_screen.back_requested.connect(lambda: self.stack.setCurrentWidget(self.result_screen))
 
         # Detail -> Result / Recovery
         self.detail_screen.back_requested.connect(lambda: self.stack.setCurrentWidget(self.result_screen))
@@ -237,6 +244,7 @@ class ScanSessionWindow(QWidget):
             self.result_screen.set_result(
                 result, cancelled=cancelled, planned_total=planned_total, remaining_paths=remaining_paths
             )
+            self.duplicate_screen.set_result(result)
             self.resize(*self._NORMAL_SIZE)
             self.stack.setCurrentWidget(self.result_screen)
 
@@ -247,6 +255,9 @@ class ScanSessionWindow(QWidget):
     def _open_recovery(self, files, mode):
         self.recovery_screen.set_files(files, preselected_mode=mode)
         self.stack.setCurrentWidget(self.recovery_screen)
+
+    def _open_duplicates(self):
+        self.stack.setCurrentWidget(self.duplicate_screen)
 
     def _on_recovery_finished(self, outcomes, output_dir):
         if self.result_screen.result is not None:
