@@ -81,8 +81,9 @@
 - [x] 알파(투명) 채널: PNG/WEBP/TIFF는 유지, JPEG/GIF/BMP는 자동으로 RGB 변환 후 저장
 - [x] **정상 파일을 변환해도 "복구 완료"로 잘못 표시되지 않음** — 복구(고장난 파일 수정)와 단순 변환을 구분
 - [x] **품질(quality) 조절 UI 추가** — `gui/recovery_screen.py`에 고화질/보통/저용량 프리셋 콤보 (JPEG/WEBP일 때만 활성화)
-- **구현 위치**: `core/converter.py::convert_to_format`, `gui/recovery_screen.py`
-- **테스트**: `test_converter.py` 39/39 (PNG 알파 유지, WEBP/GIF/TIFF/BMP 변환, quality 적용 확인, 예외 메시지, 미지원 형식 처리 등 포함)
+- [x] **정상 파일이 섞인 채로 확장자 복원을 실행하면 자동으로 건너뜀** (갭 #11) — 형식 변환은 정상 파일에도 쓸 수 있는 의도된 기능이라 그대로 처리
+- **구현 위치**: `core/converter.py::recover_file`, `gui/recovery_screen.py`, `gui/recovery_result_screen.py`
+- **테스트**: `test_converter.py` 46/46 (PNG 알파 유지, WEBP/GIF/TIFF/BMP 변환, quality 적용 확인, 예외 메시지, 미지원 형식 처리, 정상 파일 건너뜀 등 포함)
 - **상태**: ✅ 완료 (품질 UI만 남음, 우선순위 낮음)
 
 ### [x] Screen 04/05/06 (19~21장) — **UX 개선**
@@ -196,12 +197,12 @@ AI 이미지 복원, 얼굴 인식, 이미지 내용 분석, 자동 사진 분�
 ### 10. (신규, 개선 아이디어) 검사 화면을 팝업으로 분리해 다중 검사 지원
 지금은 `gui/main_window.py`가 `ScanningScreen`을 `QStackedWidget`의 싱글턴 페이지로 관리하고, 스캔 진행 상태(`_current_scan_paths`, `_resume_base_result` 등)도 `MainWindow` 인스턴스 변수 하나씩으로 관리해서 한 번에 폴더 하나만 검사할 수 있음. `ScanWorker` 자체는 이미 `QThread`라 백그라운드 실행은 되지만, 검사 화면을 non-modal 팝업(별도 창)으로 바꾸고 스캔마다 별도 세션(워커+상태)을 갖게 리팩터링하면 여러 폴더를 동시에 검사할 수 있게 됨. 규모가 있는 리팩터라 우선순위 낮은 개선 아이디어로 기록.
 
-### 11. (신규, UX 결정 필요) 정상 파일이 섞인 채로 "Medic!"을 눌렀을 때
-검사 결과 화면에서 "전체 선택" 후 복구를 실행하면 정상 파일도 선택에 포함됨(체크박스는 `RecoveryPossibility.NOT_RECOVERABLE`인 완전 손상 파일만 비활성화됨 — `gui/result_screen.py`). 모드별로 실제 동작이 다름:
-- **확장자 복원 모드**: `core/converter.py::restore_extension`이 파일 상태를 확인하지 않고 무조건 복사함 → 정상 파일은 확장자가 이미 맞으므로 의미 없는 복사본만 생성됨 (버그에 가까움).
-- **형식 변환 모드**: PRD상 "정상 파일에도 쓸 수 있는 순수 변환 기능"으로 의도됨(예: 폴더 전체 WEBP 일괄 변환) — 다만 Pillow로 재인코딩하므로 화질 프리셋이 낮으면 정상 파일도 화질이 떨어질 수 있음. `mark_recovered`가 정상 파일 변환 시 "복구완료"로 상태를 바꾸지 않는 것은 이미 올바르게 구현되어 있음.
+### ~~11. [UX] 정상 파일이 섞인 채로 "Medic!"을 눌렀을 때~~ → ✅ 해결됨
+검사 결과 화면에서 "전체 선택" 후 복구를 실행하면 정상 파일도 선택에 포함됨(체크박스는 `RecoveryPossibility.NOT_RECOVERABLE`인 완전 손상 파일만 비활성화됨 — `gui/result_screen.py`). 모드별로 다르게 처리하도록 확정·구현함:
+- **확장자 복원 모드**: `core/converter.py::recover_file`에서 `info.status == FileStatus.NORMAL`이면 파일 IO 없이 `skipped=True`인 `RecoveryOutcome`을 바로 반환하도록 고침(기존엔 파일 상태를 확인하지 않고 무조건 복사해 의미 없는 복사본만 생성했음). `gui/recovery_screen.py`가 확장자 복원 모드로 전환되면 "선택한 파일 중 N개는 이미 정상 파일이라 복원할 내용이 없어 건너뜁니다." 안내문을 보여줌.
+- **형식 변환 모드**: PRD상 "정상 파일에도 쓸 수 있는 순수 변환 기능"으로 의도된 그대로 유지(예: 폴더 전체 WEBP 일괄 변환) — 화질은 기존 "화질" 드롭다운으로 사용자가 직접 조절. `mark_recovered`가 정상 파일 변환 시 "복구완료"로 상태를 바꾸지 않는 기존 동작은 그대로 유지됨.
 
-**제안(논의 중)**: 모드별로 다르게 처리 — 확장자 복원 모드에서는 정상 파일을 배치에서 자동 제외("N개 정상 파일은 복원할 내용이 없어 제외됨" 안내), 형식 변환 모드에서는 의도된 기능이므로 그대로 포함(화질은 기존 "화질" 드롭다운으로 사용자가 직접 조절). 결정되면 `core/converter.py`/`gui/recovery_screen.py`에 반영.
+`RecoveryOutcome`에 `skipped` 필드를 추가하고 `label`이 "건너뜀"을 반환하도록 함. `gui/recovery_result_screen.py`의 성공/부분성공/실패 집계에서 건너뜀 파일을 실패로 잘못 세지 않도록 분리하고, "건너뜀 파일 보기" 버튼을 추가함. `tests/test_converter.py`에 정상 파일 단건(확장자 복원→건너뜀/형식 변환→그대로 처리) 및 혼합 배치(정상+형식불일치) 검증 7개 추가(총 46개 전부 PASS).
 
 ---
 
@@ -220,7 +221,7 @@ AI 이미지 복원, 얼굴 인식, 이미지 내용 분석, 자동 사진 분�
 
 ## 부록 D — KPI (33장) / 품질 검증 (34장)
 - 로그(`logs/picmedic_log.jsonl`)에 스캔/복구 결과가 다 쌓이므로 KPI 집계는 로그 분석 스크립트만 추가하면 가능
-- 테스트: `test_detector.py`(19) + `test_analyzer.py`(17) + `test_converter.py`(39) + `test_logger.py`(14) + `test_scanner.py`(1~5, 심볼릭 링크 권한에 따라) + `test_result_screen.py`(5) = **총 95~99개, 전부 PASS**
+- 테스트: `test_detector.py`(19) + `test_analyzer.py`(17) + `test_converter.py`(46) + `test_logger.py`(14) + `test_scanner.py`(1~5, 심볼릭 링크 권한에 따라) + `test_result_screen.py`(5) = **총 102~106개, 전부 PASS**
 
 ---
 
@@ -236,5 +237,5 @@ AI 이미지 복원, 얼굴 인식, 이미지 내용 분석, 자동 사진 분�
 8. **[갭 #8, 미확인] 스캔 시간 증가 재조사** — 같은 폴더로 재스캔해서 재현되는지 확인
 9. **[갭 #9, UX] 복구/변환 진행 중 설정 잠금 + 중단 버튼 추가**
 10. **[갭 #10, 개선 아이디어] 검사 화면 팝업화 + 다중 검사 지원** — 우선순위 낮음, 규모 있는 리팩터
-11. **[갭 #11, UX 결정 필요] 정상 파일 섞인 일괄 복구 처리 방식 확정** — 모드별 처리안 검토 중
+11. ~~**[갭 #11, UX] 정상 파일 섞인 일괄 복구 처리 방식 확정**~~ → ✅ 해결됨
 10. **[P3] Phase 2 이후** — 이 문서의 P3 섹션 참고, MVP 완결 후 착수

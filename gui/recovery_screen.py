@@ -27,7 +27,7 @@ from PySide6.QtWidgets import (
 
 from core.converter import RecoveryMode, recover_batch, CONVERT_TARGET_FORMATS, DEFAULT_CONVERT_FORMAT
 from gui.theme import COLORS
-from models.file_info import FileInfo
+from models.file_info import FileInfo, FileStatus
 from utils.file_utils import DEFAULT_SUFFIX
 
 
@@ -104,6 +104,11 @@ class RecoveryScreen(QWidget):
         self.selection_label = QLabel("선택 파일: 0개")
         self.selection_label.setStyleSheet("font-weight: 600;")
         card_layout.addWidget(self.selection_label)
+
+        self.skip_note_label = QLabel("")
+        self.skip_note_label.setWordWrap(True)
+        self.skip_note_label.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 11px;")
+        card_layout.addWidget(self.skip_note_label)
 
         self.mode_label = QLabel("복구 방식")
         self.mode_label.setStyleSheet(f"color: {COLORS['text_secondary']};")
@@ -219,6 +224,8 @@ class RecoveryScreen(QWidget):
         self.status_label.setText("")
         self.start_btn.setEnabled(True)
 
+        self._on_mode_changed()  # radio 상태가 이전과 같아 toggled가 안 울려도 안내문은 새 self.files 기준으로 갱신
+
     # --- 내부 로직 -----------------------------------------------------
 
     def _on_mode_changed(self):
@@ -231,6 +238,20 @@ class RecoveryScreen(QWidget):
         quality_applicable = is_convert and self.format_combo.currentText() in QUALITY_APPLICABLE_FORMATS
         self.quality_label.setVisible(quality_applicable)
         self.quality_combo.setVisible(quality_applicable)
+
+        # 확장자 복원 모드는 이미 정상인 파일에는 복원할 내용이 없어 자동으로 건너뛴다
+        # (core/converter.py::recover_file 참고, PRD_MVP우선순위.md '갭 #11'). 형식 변환은
+        # 정상 파일에도 쓸 수 있는 의도된 기능이라 건너뛰지 않는다.
+        if not is_convert:
+            normal_count = sum(1 for f in self.files if f.status == FileStatus.NORMAL)
+            if normal_count:
+                self.skip_note_label.setText(
+                    f"선택한 파일 중 {normal_count}개는 이미 정상 파일이라 복원할 내용이 없어 건너뜁니다."
+                )
+            else:
+                self.skip_note_label.setText("")
+        else:
+            self.skip_note_label.setText("")
 
     def _browse_output(self):
         folder = QFileDialog.getExistingDirectory(self, "저장 위치 선택")

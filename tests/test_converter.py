@@ -162,6 +162,29 @@ def run():
             f"low={Path(low_q.output_path).stat().st_size}B high={Path(high_q.output_path).stat().st_size}B",
         )
 
+        # 17~19) 정상 파일 + 확장자 복원 모드 -> 건너뜀. 형식 변환 모드는 정상 파일에도
+        # 쓸 수 있는 의도된 기능이라 그대로 처리됨 (PRD_MVP우선순위.md '갭 #11' 회귀 테스트).
+        normal_jpg = tmp / "NORMAL.jpg"
+        Image.new("RGB", (40, 40), color="blue").save(normal_jpg, format="JPEG", quality=90)
+        info_normal = analyze_file(normal_jpg)
+        check("사전 조건: 정상 JPEG는 정상으로 판정됨", info_normal.status.value == "정상", info_normal.summary())
+
+        outcome17 = recover_file(info_normal, RecoveryMode.RESTORE_EXTENSION, output_dir)
+        check("정상 파일 확장자 복원은 건너뜀 처리됨", outcome17.skipped, outcome17.label)
+        check("건너뜀 파일은 성공으로 집계되지 않음", not outcome17.success)
+        check("건너뜀 파일은 출력 파일을 만들지 않음", outcome17.output_path is None)
+
+        outcome18 = recover_file(info_normal, RecoveryMode.CONVERT, output_dir, target_format="PNG")
+        check("정상 파일도 형식 변환 모드에서는 그대로 처리됨(의도된 동작)", outcome18.success, outcome18.error_message or "")
+        check("형식 변환은 건너뜀 처리되지 않음", not outcome18.skipped)
+
+        outcomes19 = recover_batch([info, info_normal], RecoveryMode.RESTORE_EXTENSION, output_dir)
+        check(
+            "혼합 배치에서 정상 파일만 건너뛰고 나머지는 정상 처리됨",
+            len(outcomes19) == 2 and outcomes19[0].success and outcomes19[1].skipped,
+            [o.label for o in outcomes19],
+        )
+
     print(f"\n총 {passed + failed}개 중 {passed}개 통과, {failed}개 실패")
     return failed == 0
 

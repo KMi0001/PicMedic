@@ -52,10 +52,12 @@ class RecoveryResultScreen(QWidget):
 
         self.success_label = QLabel()
         self.partial_label = QLabel()
+        self.skipped_label = QLabel()
         self.fail_label = QLabel()
         for lbl, color in (
             (self.success_label, COLORS["success"]),
             (self.partial_label, COLORS["warning"]),
+            (self.skipped_label, COLORS["text_secondary"]),
             (self.fail_label, COLORS["danger"]),
         ):
             lbl.setStyleSheet(f"font-size: 15px; font-weight: 600; color: {color};")
@@ -64,9 +66,12 @@ class RecoveryResultScreen(QWidget):
         btn_row = QHBoxLayout()
         self.view_success_btn = QPushButton("성공 파일 보기")
         self.view_success_btn.clicked.connect(lambda: self._show_list("성공/부분 성공 파일", self._success_lines()))
+        self.view_skipped_btn = QPushButton("건너뜀 파일 보기")
+        self.view_skipped_btn.clicked.connect(lambda: self._show_list("건너뛴 파일", self._skipped_lines()))
         self.view_fail_btn = QPushButton("실패 파일 보기")
         self.view_fail_btn.clicked.connect(lambda: self._show_list("실패 파일", self._fail_lines()))
         btn_row.addWidget(self.view_success_btn)
+        btn_row.addWidget(self.view_skipped_btn)
         btn_row.addWidget(self.view_fail_btn)
         card_layout.addLayout(btn_row)
 
@@ -92,10 +97,12 @@ class RecoveryResultScreen(QWidget):
 
         success = sum(1 for o in outcomes if o.success and o.verified)
         partial = sum(1 for o in outcomes if o.success and not o.verified)
-        fail = sum(1 for o in outcomes if not o.success)
+        skipped = sum(1 for o in outcomes if o.skipped)
+        fail = sum(1 for o in outcomes if not o.success and not o.skipped)
 
         self.success_label.setText(f"성공 {success}")
         self.partial_label.setText(f"부분 성공 {partial}")
+        self.skipped_label.setText(f"건너뜀 {skipped}")
         self.fail_label.setText(f"실패 {fail}")
         self.output_label.setText(f"저장 위치:\n{output_dir}")
 
@@ -106,11 +113,18 @@ class RecoveryResultScreen(QWidget):
             if o.success
         ]
 
+    def _skipped_lines(self) -> list[str]:
+        return [
+            f"{o.original.filename}: {o.error_message or '건너뜀'}"
+            for o in self.outcomes
+            if o.skipped
+        ]
+
     def _fail_lines(self) -> list[str]:
         return [
             f"{o.original.filename}: {o.error_message or '알 수 없는 오류'}"
             for o in self.outcomes
-            if not o.success
+            if not o.success and not o.skipped
         ]
 
     def _show_list(self, title: str, lines: list[str]):

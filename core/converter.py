@@ -87,9 +87,12 @@ class RecoveryOutcome:
     error_message: Optional[str] = None
     target_format: Optional[str] = None  # CONVERT 모드일 때 실제로 저장한 형식 (JPEG/PNG/WEBP)
     abort_batch: bool = False  # PRD 23.5: 저장 공간 부족 시 이 파일 이후로는 배치를 중단해야 함
+    skipped: bool = False  # 처리할 내용이 없어 건너뛴 경우 (예: 이미 정상인 파일의 확장자 복원)
 
     @property
     def label(self) -> str:
+        if self.skipped:
+            return "건너뜀"
         if self.success and self.verified:
             return "성공"
         if self.success and not self.verified:
@@ -191,6 +194,16 @@ def recover_file(
 ) -> RecoveryOutcome:
     output_dir = Path(output_dir)
     if mode == RecoveryMode.RESTORE_EXTENSION:
+        if info.status == FileStatus.NORMAL:
+            # 확장자와 실제 형식이 이미 일치하는 정상 파일은 복원할 내용이 없다 — 그대로
+            # 복사해봤자 의미 없는 중복 파일만 생기므로 건너뛴다 (PRD_MVP우선순위.md '갭 #11').
+            # 반대로 '형식 변환' 모드는 정상 파일에도 쓸 수 있는 의도된 기능이라 건너뛰지 않는다.
+            return RecoveryOutcome(
+                original=info,
+                mode=mode,
+                skipped=True,
+                error_message="이미 정상 파일이라 복원할 내용이 없습니다.",
+            )
         return restore_extension(info, output_dir, suffix=suffix)
     elif mode == RecoveryMode.CONVERT:
         return convert_to_format(info, output_dir, target_format=target_format, suffix=suffix, quality=quality)
