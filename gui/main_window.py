@@ -12,7 +12,7 @@ from PySide6.QtWidgets import QMainWindow
 
 from gui.theme import APP_STYLESHEET
 from gui.home_screen import HomeScreen
-from gui.scan_session_window import ScanSessionWindow
+from gui.scan_session_window import ScanSessionWindow, _info_dialog
 
 
 class MainWindow(QMainWindow):
@@ -40,3 +40,27 @@ class MainWindow(QMainWindow):
     def _on_session_closed(self, session: ScanSessionWindow):
         if session in self._sessions:
             self._sessions.remove(session)
+
+    def closeEvent(self, event):
+        # 세션 창(gui/scan_session_window.py)은 워커가 도는 중엔 자기 창을 못 닫게
+        # 막지만, 홈 화면(여기)까지 닫혀버리면 그 세션으로 다시 돌아올 방법이
+        # 없어진다 — 검사/복구가 하나라도 진행 중이면 안내하고 막는다.
+        if self._has_active_work():
+            _info_dialog(
+                self,
+                "진행 중인 검사/복구가 있어 지금은 홈 화면을 닫을 수 없어요.\n"
+                "완료되거나 중단한 뒤 다시 시도해주세요.",
+            )
+            event.ignore()
+            return
+        super().closeEvent(event)
+
+    def _has_active_work(self) -> bool:
+        for session in self._sessions:
+            scan_worker = getattr(session.scanning_screen, "worker", None)
+            recovery_worker = getattr(session.recovery_screen, "worker", None)
+            if (scan_worker is not None and scan_worker.isRunning()) or (
+                recovery_worker is not None and recovery_worker.isRunning()
+            ):
+                return True
+        return False
