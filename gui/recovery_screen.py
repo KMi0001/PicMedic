@@ -9,8 +9,8 @@ from __future__ import annotations
 from collections import Counter
 from pathlib import Path
 
-from PySide6.QtCore import Qt, Signal, QThread, QSettings
-from PySide6.QtGui import QPainter, QPixmap, QColor, QFont
+from PySide6.QtCore import Qt, Signal, QThread, QSettings, QPointF
+from PySide6.QtGui import QPainter, QPixmap, QColor, QFont, QPen
 from PySide6.QtWidgets import (
     QWidget,
     QVBoxLayout,
@@ -59,6 +59,38 @@ DEFAULT_QUALITY_PRESET = "보통"
 QUALITY_APPLICABLE_FORMATS = {"JPEG", "WEBP"}
 
 
+def _convert_icon_pixmap(color: str, size: int = 26) -> QPixmap:
+    """페이지 제목("사진 복구"/"사진 변환") 옆에 붙는 아이콘 — 서로 반대 방향을
+    가리키는 화살표 두 개로 "다른 형태로 바꾼다"는 의미(복원/변환 둘 다에 해당).
+    검사 결과 화면의 돋보기 아이콘([gui/result_screen.py](gui/result_screen.py)
+    `_search_icon_pixmap`)과 같은 아웃라인 스트로크 스타일."""
+    scale = size / 24.0
+    pixmap = QPixmap(size, size)
+    pixmap.fill(Qt.transparent)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.Antialiasing)
+    pen = QPen(QColor(color))
+    pen.setWidthF(1.8 * scale)
+    pen.setCapStyle(Qt.RoundCap)
+    pen.setJoinStyle(Qt.RoundJoin)
+    painter.setPen(pen)
+
+    def p(x, y):
+        return QPointF(x * scale, y * scale)
+
+    # 위: 오른쪽을 가리키는 화살표
+    painter.drawLine(p(4, 8), p(17, 8))
+    painter.drawLine(p(13, 4), p(17, 8))
+    painter.drawLine(p(13, 12), p(17, 8))
+    # 아래: 왼쪽을 가리키는 화살표
+    painter.drawLine(p(20, 16), p(7, 16))
+    painter.drawLine(p(11, 12), p(7, 16))
+    painter.drawLine(p(11, 20), p(7, 16))
+
+    painter.end()
+    return pixmap
+
+
 def _question_icon_pixmap(accent: str, size: int = 48) -> QPixmap:
     """확인 필요 팝업 아이콘: 최근 검사 목록 아이콘(gui/home_screen.py::_status_icon_pixmap)과
     같은 스타일(색 원 + 흰색 글리프, 이모지 폰트 미사용)로 맞춘 물음표 아이콘."""
@@ -72,6 +104,33 @@ def _question_icon_pixmap(accent: str, size: int = 48) -> QPixmap:
     painter.setFont(QFont("Segoe UI", int(size * (13 / 24) * 0.55), QFont.Bold))
     painter.setPen(QColor("white"))
     painter.drawText(pixmap.rect(), Qt.AlignCenter, "?")
+    painter.end()
+    return pixmap
+
+
+def _progress_icon_pixmap(accent: str, size: int = 22) -> QPixmap:
+    """진행 팝업 헤더 아이콘: 같은 색 원 + 흰색 점 3개("처리 중")로, 다른 팝업
+    아이콘(확인/안내 등)과 같은 스타일을 유지한다 — 회전 애니메이션 없이 정적인
+    아이콘이라 '스피너'보다는 '진행 중임을 나타내는 점'으로 단순화."""
+    icon_box = size * (13 / 24)
+    inner_scale = icon_box / 24.0
+    offset = (size - icon_box) / 2
+
+    def pt(x, y):
+        return QPointF(offset + x * inner_scale, offset + y * inner_scale)
+
+    pixmap = QPixmap(size, size)
+    pixmap.fill(Qt.transparent)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.Antialiasing)
+    painter.setPen(Qt.NoPen)
+    painter.setBrush(QColor(accent))
+    painter.drawEllipse(0, 0, size, size)
+
+    painter.setBrush(QColor("white"))
+    for x in (6.5, 12, 17.5):
+        painter.drawEllipse(pt(x, 12), 1.6 * inner_scale, 1.6 * inner_scale)
+
     painter.end()
     return pixmap
 
@@ -146,9 +205,16 @@ class _ProgressDialog(QDialog):
         layout.setContentsMargins(24, 24, 24, 24)
         layout.setSpacing(12)
 
+        header_row = QHBoxLayout()
+        header_row.setSpacing(8)
+        icon_label = QLabel()
+        icon_label.setPixmap(_progress_icon_pixmap(COLORS["primary"]))
+        header_row.addWidget(icon_label)
         self.title_label = QLabel("")
         self.title_label.setStyleSheet("font-weight: 700; font-size: 14px;")
-        layout.addWidget(self.title_label)
+        header_row.addWidget(self.title_label)
+        header_row.addStretch(1)
+        layout.addLayout(header_row)
 
         self.bar = QProgressBar()
         layout.addWidget(self.bar)
@@ -242,19 +308,26 @@ class RecoveryScreen(QWidget):
         outer.setAlignment(Qt.AlignTop)
         outer.setSpacing(16)
 
-        back_btn = QPushButton("← 뒤로")
-        back_btn.clicked.connect(self.back_requested.emit)
-        outer.addWidget(back_btn, alignment=Qt.AlignLeft)
-
+        # 검사 결과 화면(gui/result_screen.py)과 같은 레이아웃 — 제목은 왼쪽,
+        # 액션 버튼("← 뒤로")은 같은 줄 오른쪽 끝.
+        title_row = QHBoxLayout()
+        title_row.setSpacing(10)
+        title_icon = QLabel()
+        title_icon.setPixmap(_convert_icon_pixmap(COLORS["primary"]))
+        title_row.addWidget(title_icon)
         self.title_label = QLabel("사진 복구")
         self.title_label.setObjectName("Title")
-        outer.addWidget(self.title_label)
+        title_row.addWidget(self.title_label)
+        title_row.addStretch(1)
+        back_btn = QPushButton("← 뒤로")
+        back_btn.clicked.connect(self.back_requested.emit)
+        title_row.addWidget(back_btn)
+        outer.addLayout(title_row)
 
         # 선택 파일 상태 요약 — 검사 결과 화면(gui/result_screen.py)의 SummaryChip을
         # 그대로 재사용해 같은 카드형 스타일로 보여준다. 실제로 존재하는 상태만 노출한다.
         chips_row = QHBoxLayout()
         chips_row.setSpacing(10)
-        chips_row.addStretch(1)
         self.chip_total = SummaryChip("선택 파일", COLORS["text"])
         chips_row.addWidget(self.chip_total)
         self.status_chips: dict[FileStatus, SummaryChip] = {}
