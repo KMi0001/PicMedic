@@ -114,6 +114,47 @@ def _confirm_dialog(parent: QWidget, message: str) -> bool:
     return dialog.exec() == QDialog.Accepted
 
 
+class _ProgressDialog(QDialog):
+    """복구/변환 진행 중 뜨는 모달 팝업. 배치 작업이 끝날 때까지 화면(설정/뒤로가기
+    등)을 건드릴 수 없게 막는다 — PRD_MVP우선순위.md 갭 #9(진행 중 설정 잠금 필요)를
+    "모든 컨트롤을 개별적으로 비활성화" 대신 모달 팝업 하나로 해결한다. 중단 기능은
+    core/converter.py::recover_batch에 아직 없어(갭 #9 후속) 닫기 버튼도 없앤다 —
+    끝날 때까지 기다리는 것 외에 다른 조작이 불가능함을 명확히 한다."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("PicMedic")
+        self.setModal(True)
+        self.setWindowFlags(self.windowFlags() & ~Qt.WindowCloseButtonHint)
+        self.setFixedWidth(340)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(24, 24, 24, 24)
+        layout.setSpacing(12)
+
+        self.title_label = QLabel("")
+        self.title_label.setStyleSheet("font-weight: 700; font-size: 14px;")
+        layout.addWidget(self.title_label)
+
+        self.bar = QProgressBar()
+        layout.addWidget(self.bar)
+
+        self.status_label = QLabel("")
+        self.status_label.setWordWrap(True)
+        self.status_label.setStyleSheet(f"color: {COLORS['text_secondary']};")
+        layout.addWidget(self.status_label)
+
+    def start(self, title: str):
+        self.title_label.setText(title)
+        self.bar.setValue(0)
+        self.status_label.setText("준비 중...")
+
+    def update_progress(self, current: int, total: int, filename: str):
+        pct = int((current / total) * 100) if total else 0
+        self.bar.setValue(pct)
+        self.status_label.setText(f"{filename} 처리 중... ({current}/{total})")
+
+
 class RecoveryWorker(QThread):
     progress = Signal(int, int, str)
     finished_batch = Signal(list)  # list[RecoveryOutcome]
@@ -158,6 +199,7 @@ class RecoveryScreen(QWidget):
         self.settings = QSettings("PicMedic", "PicMedic")
         self.files: list[FileInfo] = []
         self.worker: RecoveryWorker | None = None
+        self.progress_dialog = _ProgressDialog(self)
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(48, 32, 48, 32)
@@ -257,10 +299,6 @@ class RecoveryScreen(QWidget):
         self.verify_check.setChecked(True)
         card_layout.addWidget(self.verify_check)
 
-        self.progress_bar = QProgressBar()
-        self.progress_bar.setVisible(False)
-        card_layout.addWidget(self.progress_bar)
-
         self.status_label = QLabel("")
         self.status_label.setStyleSheet(f"color: {COLORS['text_secondary']};")
         card_layout.addWidget(self.status_label)
@@ -313,8 +351,6 @@ class RecoveryScreen(QWidget):
         self.output_edit.setText(default_dir)
         self.suffix_edit.setText(DEFAULT_SUFFIX)
 
-        self.progress_bar.setVisible(False)
-        self.progress_bar.setValue(0)
         self.status_label.setText("")
         self.start_btn.setEnabled(True)
 
@@ -366,9 +402,7 @@ class RecoveryScreen(QWidget):
                     return
 
         self.start_btn.setEnabled(False)
-        self.progress_bar.setVisible(True)
-        self.progress_bar.setValue(0)
-        self.status_label.setText("복구 중...")
+        self.status_label.setText("")
 
         self.worker = RecoveryWorker(
             self.files, mode, output_dir, suffix=suffix, target_format=target_format, quality=quality
@@ -377,12 +411,17 @@ class RecoveryScreen(QWidget):
         self.worker.finished_batch.connect(lambda outcomes: self._on_finished(outcomes, output_dir))
         self.worker.start()
 
+        # 진행 중에는 모달 팝업만 응답하게 만들어, 배치 작업 중 설정을 바꾸거나 뒤로 가서
+        # 화면이 바뀌는 문제(PRD_MVP우선순위.md 갭 #9)를 막는다. exec()는 중첩 이벤트
+        # 루프라 워커 스레드의 progress/finished_batch 시그널은 계속 정상적으로 처리된다.
+        title = "사진 변환 진행 중" if mode == RecoveryMode.CONVERT else "사진 복구 진행 중"
+        self.progress_dialog.start(title)
+        self.progress_dialog.exec()
+
     def _on_progress(self, current: int, total: int, filename: str):
-        pct = int((current / total) * 100) if total else 0
-        self.progress_bar.setValue(pct)
-        self.status_label.setText(f"{filename} 처리 중... ({current}/{total})")
+        self.progress_dialog.update_progress(current, total, filename)
 
     def _on_finished(self, outcomes, output_dir: str):
+        self.progress_dialog.accept()
         self.start_btn.setEnabled(True)
-        self.status_label.setText("복구 완료")
         self.recovery_finished.emit(outcomes, output_dir)
