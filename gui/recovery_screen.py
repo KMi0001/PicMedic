@@ -6,6 +6,7 @@ PRD 20장 "Screen 05 — Recovery" 구현.
 
 from __future__ import annotations
 
+from collections import Counter
 from pathlib import Path
 
 from PySide6.QtCore import Qt, Signal, QThread, QSettings
@@ -28,9 +29,28 @@ from PySide6.QtWidgets import (
 )
 
 from core.converter import RecoveryMode, recover_batch, CONVERT_TARGET_FORMATS, DEFAULT_CONVERT_FORMAT
-from gui.theme import COLORS
+from gui.result_screen import SummaryChip
+from gui.theme import COLORS, STATUS_COLORS
 from models.file_info import FileInfo, FileStatus
 from utils.file_utils import DEFAULT_SUFFIX
+
+# 상태 카드 순서 + 라벨. NORMAL부터 심각도 순으로, "지원 안 함" 계열은 뒤에 묶는다.
+STATUS_CHIP_LABELS: dict[FileStatus, str] = {
+    FileStatus.NORMAL: "정상",
+    FileStatus.MISMATCH: "형식 불일치",
+    FileStatus.PARTIAL_CORRUPTION: "부분 손상",
+    FileStatus.CORRUPTED: "손상",
+    FileStatus.UNSUPPORTED: "지원 안 함",
+    FileStatus.NOT_AN_IMAGE: "이미지 아님",
+    FileStatus.UNKNOWN: "알 수 없음",
+}
+
+# HEADER_STYLE: 카드 안의 섹션 제목(복구 방식/저장 위치/파일명에 추가할 문구)을
+# 본문 텍스트와 구분되게 강조한다 — 진한 글씨 + 왼쪽 accent bar (DESIGN.md 참고).
+SECTION_HEADER_STYLE = (
+    f"color: {COLORS['text']}; font-weight: 700; font-size: 13px; "
+    f"border-left: 3px solid {COLORS['primary']}; padding-left: 8px; margin-top: 6px;"
+)
 
 
 QUALITY_PRESETS = {"고화질": 95, "보통": 85, "저용량": 65}
@@ -152,18 +172,30 @@ class RecoveryScreen(QWidget):
         self.title_label.setObjectName("Title")
         outer.addWidget(self.title_label)
 
+        # 선택 파일 상태 요약 — 검사 결과 화면(gui/result_screen.py)의 SummaryChip을
+        # 그대로 재사용해 같은 카드형 스타일로 보여준다. 실제로 존재하는 상태만 노출한다.
+        chips_row = QHBoxLayout()
+        chips_row.setSpacing(10)
+        chips_row.addStretch(1)
+        self.chip_total = SummaryChip("선택 파일", COLORS["text"])
+        chips_row.addWidget(self.chip_total)
+        self.status_chips: dict[FileStatus, SummaryChip] = {}
+        for status, label in STATUS_CHIP_LABELS.items():
+            chip = SummaryChip(label, STATUS_COLORS[status.value])
+            chip.setVisible(False)
+            self.status_chips[status] = chip
+            chips_row.addWidget(chip)
+        chips_row.addStretch(1)
+        outer.addLayout(chips_row)
+
         card = QFrame()
         card.setObjectName("Card")
         card_layout = QVBoxLayout(card)
         card_layout.setContentsMargins(24, 24, 24, 24)
         card_layout.setSpacing(14)
 
-        self.selection_label = QLabel("선택 파일: 0개")
-        self.selection_label.setStyleSheet("font-weight: 600;")
-        card_layout.addWidget(self.selection_label)
-
         self.mode_label = QLabel("복구 방식")
-        self.mode_label.setStyleSheet(f"color: {COLORS['text_secondary']};")
+        self.mode_label.setStyleSheet(SECTION_HEADER_STYLE)
         card_layout.addWidget(self.mode_label)
 
         self.mode_group = QButtonGroup(self)
@@ -198,7 +230,7 @@ class RecoveryScreen(QWidget):
         self._on_mode_changed()
 
         output_label = QLabel("저장 위치")
-        output_label.setStyleSheet(f"color: {COLORS['text_secondary']}; margin-top: 8px;")
+        output_label.setStyleSheet(SECTION_HEADER_STYLE)
         card_layout.addWidget(output_label)
 
         output_row = QHBoxLayout()
@@ -210,7 +242,7 @@ class RecoveryScreen(QWidget):
         card_layout.addLayout(output_row)
 
         suffix_label = QLabel("파일명에 추가할 문구")
-        suffix_label.setStyleSheet(f"color: {COLORS['text_secondary']}; margin-top: 8px;")
+        suffix_label.setStyleSheet(SECTION_HEADER_STYLE)
         card_layout.addWidget(suffix_label)
 
         self.suffix_edit = QLineEdit(DEFAULT_SUFFIX)
@@ -244,7 +276,12 @@ class RecoveryScreen(QWidget):
 
     def set_files(self, files: list[FileInfo], preselected_mode: RecoveryMode | None = None):
         self.files = files
-        self.selection_label.setText(f"선택 파일: {len(files)}개")
+        self.chip_total.set_value(len(files))
+        status_counts = Counter(f.status for f in files)
+        for status, chip in self.status_chips.items():
+            count = status_counts.get(status, 0)
+            chip.set_value(count)
+            chip.setVisible(count > 0)
 
         # 확장자와 실제 형식이 다른 파일이 하나도 없으면(예: 정상 파일만 골라서
         # "변환"하러 온 경우) "확장자 복원"은 애초에 할 게 없다. 이 경우 선택지가

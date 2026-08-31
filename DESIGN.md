@@ -42,6 +42,37 @@ UI 스타일/컴포넌트 관련 결정을 기록하는 문서. 코드 값 자�
 이상에서 같은 걸 재사용하지 않는 한 공용 모듈로 미리 뽑아두지 않는다. 오류/안내/건너뜀
 아이콘을 실제로 쓰는 곳이 생기면 그때 같은 패턴으로 추가.
 
+## 섹션 헤더 강조
+
+카드(`QFrame#Card`) 안에 여러 설정 묶음이 있을 때, 각 묶음의 제목(예: "복구 방식",
+"저장 위치")은 본문(라디오 버튼, 입력창 등)과 시각적으로 구분돼야 한다. 일반 텍스트와
+같은 굵기의 `text_secondary` 색만으로는 눈에 잘 안 띈다.
+
+기준 구현: [gui/recovery_screen.py](gui/recovery_screen.py) `SECTION_HEADER_STYLE`
+— 진한 글씨(`font-weight: 700`) + `color: text`(muted 아님) + 왼쪽 3px `primary`색
+accent bar(`border-left`) + `padding-left: 8px`. 카드 안의 최상위 섹션 제목에만
+적용하고, "화질"처럼 다른 컨트롤과 한 줄에 나란히 붙는 보조 라벨에는 적용하지 않는다
+(줄 하나짜리 라벨에 accent bar를 붙이면 구분선처럼 보여 어색해진다).
+
+## 상태 요약 카드 (SummaryChip)
+
+여러 파일을 다루는 화면에서 "그 중 상태별로 몇 개씩인지"를 한눈에 보여줄 때 쓰는
+카드형 위젯. 기준 구현: [gui/result_screen.py](gui/result_screen.py) `SummaryChip`
+(검사 결과 화면에서 최초 도입) — 위: 큰 숫자(20px, bold, 상태 색), 아래: 작은 라벨.
+[gui/recovery_screen.py](gui/recovery_screen.py)의 복구/변환 화면에서도 그대로
+재사용해서 "선택 파일 중 상태별 개수"를 보여준다 — 같은 위젯을 화면마다 새로 만들지
+않고 import해서 쓴다.
+
+- **고정 폭**: `CHIP_WIDTH = 96`(px)으로 고정한다. "정상"처럼 짧은 라벨과 "형식 불일치"
+  처럼 긴 라벨이 섞이면 폭이 들쭉날쭉해 보이므로, 항상 같은 폭에 라벨은
+  `setWordWrap(True)`로 필요하면 두 줄까지 접는다.
+- **개수 0인 항목은 숨긴다**: 선택된 파일에 실제로 없는 상태의 칩은
+  `chip.setVisible(count > 0)`으로 감춘다 (검사 결과 화면처럼 전체 상태를 항상 다
+  보여줘야 하는 경우는 예외 — 그때는 0도 그대로 보여줌).
+- **가운데 정렬**: 칩 묶음이 있는 `QHBoxLayout` 앞뒤에 `addStretch(1)`을 둘 다 넣어서,
+  칩이 몇 개든 카드 폭 기준 가운데에 오게 한다(칩 개수에 따라 좌우 빈 공간이 균등하게
+  분배됨).
+
 ## 팝업/다이얼로그 패턴
 
 네이티브 `QMessageBox`는 OS 기본 스타일이라 앱 테마(민트 톤, 둥근 카드)와 겉돈다.
@@ -59,6 +90,25 @@ UI 스타일/컴포넌트 관련 결정을 기록하는 문서. 코드 값 자�
 
 새로운 확인 팝업이 필요하면 `_confirm_dialog`와 같은 패턴(아이콘 + 메시지 + 취소/확인)을
 그대로 따르고, 화면 간에 완전히 동일한 요구가 2번째로 생기면 그때 공용 컴포넌트로 옮긴다.
+
+## 폼 컨트롤 — QComboBox
+
+기본 `QComboBox`는 OS 네이티브 드롭다운 화살표라 카드/버튼의 민트 톤과 겉돌고
+투박해 보인다. [gui/theme.py](gui/theme.py) `APP_STYLESHEET`에서 전역으로
+`QComboBox::drop-down`을 `primary` 색 둥근 버튼(20px, 4px 여백, radius 5px)으로,
+그 안의 화살표는 흰색 삼각형 아이콘으로 바꿔서 통일했다. 펼침 목록
+(`QComboBox QAbstractItemView`)도 흰 배경 + 둥근 테두리 + 선택 시 `selection`색
+하이라이트로 카드 스타일을 맞췄다.
+
+**화살표 아이콘은 반드시 실제 파일 에셋으로 참조한다** —
+[assets/combo_arrow.png](assets/combo_arrow.png) (12px 흰색 삼각형, `utils.assets.asset_path()`로
+경로를 구함, 기존 `icon.png` 아이콘과 동일한 방식). `QComboBox::down-arrow { image: url(...) }`에
+`data:` URI(base64 인라인)를 직접 넣는 방법은 시도해봤지만 Qt 스타일시트가 `url()`에서
+data URI를 지원하지 않아 렌더링되지 않는다(빈 사각형만 보임) — 이미지가 필요한 QSS
+아이콘은 항상 `assets/`에 실제 파일로 두고 참조할 것.
+
+전역 스타일이라 이 컴포넌트를 쓰는 화면(사진 복구/변환의 형식·화질 선택, 검사 결과의
+필터 드롭다운 등) 전부에 자동 적용된다 — 화면마다 따로 스타일을 줄 필요 없음.
 
 ## 폰트
 

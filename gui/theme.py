@@ -4,6 +4,8 @@ gui/theme.py
 전체 화면에서 공통으로 쓰는 색상/스타일시트(QSS).
 """
 
+from utils.assets import asset_path
+
 COLORS = {
     # 민트 케어 테마
     "bg": "#F1F8F5",
@@ -42,6 +44,13 @@ STATUS_DOT = {
     "알_수_없음": "○",
     "복구_완료": "✓",          # ✓
 }
+
+# QComboBox 드롭다운 버튼(화살표) 아이콘. Qt 스타일시트의 url()은 data: URI를
+# 지원하지 않아(실제 그려보면 이미지가 비어 보임) assets/combo_arrow.png 실제 파일을
+# 참조해야 한다 — 흰색 삼각형, gui/home_screen.py의 icon.png와 같은 방식으로
+# asset_path()를 통해 개발/PyInstaller 빌드 양쪽에서 경로를 구한다.
+# Qt QSS의 url()은 백슬래시를 이스케이프로 해석하므로 슬래시로 바꿔준다.
+_COMBO_ARROW_URL = asset_path("combo_arrow.png").replace("\\", "/")
 
 APP_STYLESHEET = f"""
 QWidget {{
@@ -117,6 +126,43 @@ QLineEdit, QComboBox {{
     border: 1px solid {COLORS['border']};
     border-radius: 8px;
     padding: 6px 10px;
+}}
+
+QComboBox {{
+    padding-right: 28px;
+}}
+
+QComboBox:hover {{
+    border-color: {COLORS['primary']};
+}}
+
+QComboBox::drop-down {{
+    subcontrol-origin: padding;
+    subcontrol-position: top right;
+    width: 20px;
+    margin: 4px;
+    border-radius: 5px;
+    background-color: {COLORS['primary']};
+}}
+
+QComboBox::drop-down:hover {{
+    background-color: {COLORS['primary_hover']};
+}}
+
+QComboBox::down-arrow {{
+    image: url({_COMBO_ARROW_URL});
+    width: 9px;
+    height: 9px;
+}}
+
+QComboBox QAbstractItemView {{
+    background-color: {COLORS['surface']};
+    border: 1px solid {COLORS['border']};
+    border-radius: 8px;
+    outline: none;
+    selection-background-color: {COLORS['selection']};
+    selection-color: {COLORS['text']};
+    padding: 4px;
 }}
 
 QProgressBar {{

@@ -114,15 +114,20 @@ class _NumericSortItem(QTableWidgetItem):
         return super().__lt__(other)
 
 
+CHIP_WIDTH = 96  # 라벨 길이(정상~형식 불일치)가 달라도 카드 폭이 들쭉날쭉해지지 않게 고정
+
+
 class SummaryChip(QFrame):
     def __init__(self, label: str, color: str, parent=None):
         super().__init__(parent)
         self.setObjectName("Card")
+        self.setFixedWidth(CHIP_WIDTH)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(14, 10, 14, 10)
         self.value_label = QLabel("0")
         self.value_label.setStyleSheet(f"font-size: 20px; font-weight: 700; color: {color};")
         name_label = QLabel(label)
+        name_label.setWordWrap(True)
         name_label.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 12px;")
         layout.addWidget(self.value_label)
         layout.addWidget(name_label)
