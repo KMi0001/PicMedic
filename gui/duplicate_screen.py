@@ -39,6 +39,7 @@ from PySide6.QtWidgets import (
     QScrollArea,
 )
 
+from core.duplicate_resolver import suggest_keep, suggest_keep_folder
 from gui.common_dialogs import confirm_dialog, info_dialog
 from gui.result_screen import SummaryChip
 from gui.theme import COLORS
@@ -110,14 +111,15 @@ def _cluster_by_folder(groups: list[list]) -> tuple[dict[frozenset, list[list]],
 class _ClusterEntry:
     """폴더 단위로 일괄 처리 가능한 조합 카드 하나의 상태."""
 
-    __slots__ = ("card", "group_list", "folder_options", "radios", "skip_radio")
+    __slots__ = ("card", "group_list", "folder_options", "radios", "skip_radio", "suggested_folder")
 
-    def __init__(self, card, group_list, folder_options, radios, skip_radio):
+    def __init__(self, card, group_list, folder_options, radios, skip_radio, suggested_folder=None):
         self.card = card
         self.group_list = group_list
         self.folder_options = folder_options
         self.radios = radios
         self.skip_radio = skip_radio
+        self.suggested_folder = suggested_folder  # (Path, 사유) | None — core/duplicate_resolver.py 추천
 
     @property
     def group_count(self) -> int:
@@ -127,13 +129,14 @@ class _ClusterEntry:
 class _ManualEntry:
     """폴더만으로는 못 정하는(같은 폴더 안 중복) 그룹 카드 하나의 상태."""
 
-    __slots__ = ("card", "group", "radios", "skip_radio")
+    __slots__ = ("card", "group", "radios", "skip_radio", "suggested_keep")
 
-    def __init__(self, card, group, radios, skip_radio):
+    def __init__(self, card, group, radios, skip_radio, suggested_keep=None):
         self.card = card
         self.group = group
         self.radios = radios
         self.skip_radio = skip_radio
+        self.suggested_keep = suggested_keep  # (FileInfo, 사유) | None — core/duplicate_resolver.py 추천
 
 
 class DuplicateScreen(QWidget):
@@ -240,9 +243,11 @@ class DuplicateScreen(QWidget):
             # 그룹을 많이 해결해주는 조합을 위로
             for key in sorted(clusters, key=lambda k: len(clusters[k]), reverse=True):
                 group_list = clusters[key]
-                card, folder_options, radios, skip_radio = self._build_cluster_card(sorted(key), group_list)
+                card, folder_options, radios, skip_radio, suggested_folder = self._build_cluster_card(
+                    sorted(key), group_list
+                )
                 self._cluster_entries.append(
-                    _ClusterEntry(card, group_list, folder_options, radios, skip_radio)
+                    _ClusterEntry(card, group_list, folder_options, radios, skip_radio, suggested_folder)
                 )
                 self._list_layout.insertWidget(row, card)
                 row += 1
@@ -252,8 +257,8 @@ class DuplicateScreen(QWidget):
             self._list_layout.insertWidget(row, self._manual_section)
             row += 1
             for idx, group in enumerate(manual, start=1):
-                card, radios, skip_radio = self._build_group_card(idx, group)
-                self._manual_entries.append(_ManualEntry(card, group, radios, skip_radio))
+                card, radios, skip_radio, suggested_keep = self._build_group_card(idx, group)
+                self._manual_entries.append(_ManualEntry(card, group, radios, skip_radio, suggested_keep))
                 self._list_layout.insertWidget(row, card)
                 row += 1
 
@@ -295,7 +300,7 @@ class DuplicateScreen(QWidget):
 
     def _build_cluster_card(
         self, folders: list[Path], group_list: list[list]
-    ) -> tuple[QFrame, list[Path], list[QRadioButton], QRadioButton]:
+    ) -> tuple[QFrame, list[Path], list[QRadioButton], QRadioButton, tuple[Path, str] | None]:
         card = QFrame()
         card.setObjectName("Card")
         layout = QVBoxLayout(card)
@@ -309,6 +314,17 @@ class DuplicateScreen(QWidget):
         sub = QLabel("남길 폴더를 선택하세요 — 나머지 폴더의 파일들이 정리 대상이 됩니다.")
         sub.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 11px;")
         layout.addWidget(sub)
+
+        # 정확 중복 그룹 안 파일들은 바이트 단위로 동일해서 EXIF/용량으로는
+        # 구분이 안 되므로(core/duplicate_resolver.py 참고), 이 조합에 속한
+        # 모든 그룹이 같은 폴더를 추천할 때만 그 폴더를 기본 선택으로 미리
+        # 골라준다 — 신뢰도 낮으면 지금처럼 "건너뛰기"가 기본값으로 남는다.
+        suggested_folder = suggest_keep_folder(group_list)
+        if suggested_folder is not None:
+            hint = QLabel(f"추천: '{suggested_folder[0]}' 폴더 유지 — {suggested_folder[1]}")
+            hint.setWordWrap(True)
+            hint.setStyleSheet(f"color: {COLORS['primary']}; font-size: 11px;")
+            layout.addWidget(hint)
 
         # 폴더 조합 전체를 미리 렌더링하면 수백 개 카드에서 다시 느려지므로,
         # 대표로 첫 그룹의 파일 하나만 눌렀을 때 상세보기로 보여준다.
@@ -324,7 +340,6 @@ class DuplicateScreen(QWidget):
         button_group = QButtonGroup(card)
 
         skip_radio = QRadioButton(SKIP_LABEL)
-        skip_radio.setChecked(True)  # 기본값: 아무 파일도 건드리지 않음
         skip_radio.setStyleSheet(f"color: {COLORS['text_secondary']};")
         button_group.addButton(skip_radio)
         layout.addWidget(skip_radio)
@@ -344,9 +359,22 @@ class DuplicateScreen(QWidget):
             row.addWidget(path_label, stretch=1)
             layout.addLayout(row)
 
-        return card, folders, radios, skip_radio
+        # 기본값: 추천이 있으면 추천 폴더를, 없으면 여전히 "건너뛰기"를 선택
+        if suggested_folder is not None:
+            for folder, radio in zip(folders, radios):
+                if folder == suggested_folder[0]:
+                    radio.setChecked(True)
+                    break
+            else:
+                skip_radio.setChecked(True)
+        else:
+            skip_radio.setChecked(True)
 
-    def _build_group_card(self, idx: int, group: list) -> tuple[QFrame, list[QRadioButton], QRadioButton]:
+        return card, folders, radios, skip_radio, suggested_folder
+
+    def _build_group_card(
+        self, idx: int, group: list
+    ) -> tuple[QFrame, list[QRadioButton], QRadioButton, tuple | None]:
         card = QFrame()
         card.setObjectName("Card")
         layout = QVBoxLayout(card)
@@ -357,10 +385,16 @@ class DuplicateScreen(QWidget):
         header.setStyleSheet("font-weight: 700;")
         layout.addWidget(header)
 
+        suggested_keep = suggest_keep(group)
+        if suggested_keep is not None:
+            hint = QLabel(f"추천: '{Path(suggested_keep[0].path).name}' 유지 — {suggested_keep[1]}")
+            hint.setWordWrap(True)
+            hint.setStyleSheet(f"color: {COLORS['primary']}; font-size: 11px;")
+            layout.addWidget(hint)
+
         button_group = QButtonGroup(card)
 
         skip_radio = QRadioButton("이 그룹은 정리하지 않음(건너뛰기)")
-        skip_radio.setChecked(True)  # 기본값: 아무 파일도 건드리지 않음
         skip_radio.setStyleSheet(f"color: {COLORS['text_secondary']};")
         button_group.addButton(skip_radio)
         layout.addWidget(skip_radio)
@@ -382,10 +416,25 @@ class DuplicateScreen(QWidget):
             row.addWidget(path_label, stretch=1)
             layout.addLayout(row)
 
-        return card, radios, skip_radio
+        # 기본값: 추천이 있으면 추천 파일을, 없으면 여전히 "건너뛰기"를 선택
+        if suggested_keep is not None:
+            for info, radio in zip(group, radios):
+                if info is suggested_keep[0]:
+                    radio.setChecked(True)
+                    break
+            else:
+                skip_radio.setChecked(True)
+        else:
+            skip_radio.setChecked(True)
+
+        return card, radios, skip_radio, suggested_keep
 
     def _on_cleanup_clicked(self):
-        to_remove = []
+        # 그룹 단위로 모아둔다(파일별 flat 목록이 아니라) — 임시 휴지통에
+        # 옮길 때 그룹마다 서브폴더 + "왜 옮겨졌는지" 사유를 남기기 위함
+        # (utils/trash.py::create_trash_group). 튜플: (남길 파일 경로, 옮길
+        # FileInfo 목록, 사유 텍스트)
+        to_process: list[tuple[str, list, str]] = []
         resolved_clusters: list[_ClusterEntry] = []
         resolved_manual: list[_ManualEntry] = []
 
@@ -398,28 +447,46 @@ class DuplicateScreen(QWidget):
             )
             if keep_folder is None:
                 continue  # 이론상 도달 안 함(라디오 그룹이라 항상 하나는 선택됨)
+            auto_applied = entry.suggested_folder is not None and entry.suggested_folder[0] == keep_folder
             for group in entry.group_list:
-                for info in group:
-                    if Path(info.path).parent != keep_folder:
-                        to_remove.append(info)
+                remove_infos = [info for info in group if Path(info.path).parent != keep_folder]
+                keep_info = next(info for info in group if Path(info.path).parent == keep_folder)
+                if remove_infos:
+                    if auto_applied:
+                        reason = f"자동 추천 적용 — {entry.suggested_folder[1]} (폴더: '{keep_folder}')"
+                    else:
+                        reason = f"폴더 단위 정리 — '{keep_folder}' 폴더를 남기기로 선택해서 이 파일들이 이동됨"
+                    to_process.append((keep_info.path, remove_infos, reason))
             resolved_clusters.append(entry)
 
         for entry in self._manual_entries:
             if entry.skip_radio.isChecked():
                 continue
+            keep_info = None
+            remove_infos = []
             for info, radio in zip(entry.group, entry.radios):
-                if not radio.isChecked():
-                    to_remove.append(info)
+                if radio.isChecked():
+                    keep_info = info
+                else:
+                    remove_infos.append(info)
+            if remove_infos and keep_info is not None:
+                auto_applied = entry.suggested_keep is not None and entry.suggested_keep[0] is keep_info
+                if auto_applied:
+                    reason = f"자동 추천 적용 — {entry.suggested_keep[1]}"
+                else:
+                    reason = f"개별 그룹 정리 — '{Path(keep_info.path).name}' 파일을 남기고 이 파일들이 이동됨"
+                to_process.append((keep_info.path, remove_infos, reason))
             resolved_manual.append(entry)
 
-        if not to_remove:
+        total_to_remove = sum(len(infos) for _, infos, _ in to_process)
+        if not total_to_remove:
             # 전부 "건너뛰기"거나 정리할 그룹이 아예 없음 — 할 일 없음
             info_dialog(self, "정리할 파일을 선택하지 않았어요.\n남길 파일(또는 폴더)을 먼저 골라주세요.")
             return
 
         confirmed = confirm_dialog(
             self,
-            f"선택한 {len(to_remove)}개 파일을 임시 휴지통으로 옮길게요.\n\n"
+            f"선택한 {total_to_remove}개 파일을 임시 휴지통으로 옮길게요.\n\n"
             "완전히 삭제되는 게 아니라서 나중에 원래 위치로 복원할 수 있어요.",
             confirm_text="이동",
             cancel_text="취소",
@@ -427,18 +494,21 @@ class DuplicateScreen(QWidget):
         if not confirmed:
             return
 
+        session_ts = trash.new_session_timestamp()
         moved = 0
         failed: list[str] = []
-        for info in to_remove:
-            try:
-                trash.move_to_trash(info.path)
-                moved += 1
-                # 검사 결과에서도 빼야 다음에 "중복 파일 보기"를 다시 눌렀을 때
-                # 이미 옮긴 파일이 또 중복으로 잡혀 되살아나 보이지 않는다.
-                if self._result is not None:
-                    self._result.remove(info)
-            except OSError as exc:
-                failed.append(f"{Path(info.path).name} ({exc})")
+        for group_idx, (keep_path, remove_infos, reason) in enumerate(to_process, start=1):
+            group_dir = trash.create_trash_group(session_ts, group_idx, keep_path, reason)
+            for info in remove_infos:
+                try:
+                    trash.move_to_trash(info.path, group_dir=group_dir)
+                    moved += 1
+                    # 검사 결과에서도 빼야 다음에 "중복 파일 보기"를 다시 눌렀을 때
+                    # 이미 옮긴 파일이 또 중복으로 잡혀 되살아나 보이지 않는다.
+                    if self._result is not None:
+                        self._result.remove(info)
+                except OSError as exc:
+                    failed.append(f"{Path(info.path).name} ({exc})")
 
         if failed:
             info_dialog(
