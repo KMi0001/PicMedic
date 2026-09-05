@@ -32,9 +32,18 @@ _COPY_MARKER_KEYWORDS = (
     "kakaotalk",
 )
 # 끝에 " (1)", "(2)" 처럼 붙는 Windows 복사-충돌 접미사. "IMG_0284"처럼 카메라가
-# 원래 붙이는 숫자 접미사(밑줄/하이픈 + 숫자)는 훨씬 흔해서 오탐이 심하므로
-# 괄호 형태만 복사본 신호로 본다.
+# 원래 붙이는 숫자 접미사(밑줄/하이픈 + 숫자)는 파일명 하나만 보고 판단하면
+# 훨씬 흔해서 오탐이 심하므로, 이 괄호 형태만 "그 파일명 자체로" 복사본 신호로
+# 본다. "_1", "-2" 같은 밑줄/하이픈 접미사는 _stripped_name_exists_in_group()
+# 에서 그룹 문맥(짝이 되는 원본 파일이 실제로 있는지)까지 확인한 뒤에만 신호로
+# 쓴다 — 아래 함수 설명 참고.
 _COPY_MARKER_SUFFIX = re.compile(r"\s?\(\d+\)$")
+
+# "_1", "-2"처럼 밑줄/하이픈 + 숫자로 끝나는 접미사 — core/date_organizer.py::
+# _unique_destination, Windows 탐색기, 메신저 등이 복사 충돌 시 흔히 붙인다.
+# 이 패턴만으로는 "IMG_0284"의 "_0284"와 구분이 안 되므로, 단독으로는 절대
+# 안 쓰고 _stripped_name_exists_in_group()에서만 쓴다.
+_COPY_MARKER_NUMBER_SUFFIX = re.compile(r"[\s_-]\d+$")
 
 
 def _looks_like_copy(filename: str) -> bool:
@@ -45,6 +54,32 @@ def _looks_like_copy(filename: str) -> bool:
     if any(keyword in stem for keyword in _COPY_MARKER_KEYWORDS):
         return True
     return bool(_COPY_MARKER_SUFFIX.search(stem))
+
+
+def _stripped_name_exists_in_group(info: FileInfo, group: list[FileInfo]) -> bool:
+    """info의 파일명에서 "_1", "-2" 같은 숫자 접미사를 뗐을 때, 그 이름을 가진
+    다른 파일이 "같은 그룹 안에 실제로" 있으면 info를 복사본으로 본다 —
+    a.jpg/a_1.jpg처럼 재정리 중 같은 파일이 두 번 복사돼 생긴 전형적인 경우.
+
+    _COPY_MARKER_NUMBER_SUFFIX 패턴 자체는 "IMG_0284"(카메라가 원래 붙이는
+    번호)와 구분이 안 되지만, 이 함수는 "짝이 되는 원본 파일이 그룹 안에
+    실제로 존재하는지"까지 확인한다 — "IMG_0284.jpg" 하나만 있는 그룹에서는
+    스트립한 이름 "IMG.jpg"가 그룹에 없으니 걸리지 않고, a.jpg가 실제로 함께
+    있는 그룹에서만 a_1.jpg가 걸린다(models/scan_result.py::similar_groups()
+    의 안전장치와 같은 원리 — 다만 거기는 "그룹 밖 전체 스캔"에서 짝을
+    찾고, 여기는 "이미 확정된 중복 그룹 안"에서만 찾는다는 차이가 있다)."""
+    stem = Path(info.filename).stem.lower()
+    match = _COPY_MARKER_NUMBER_SUFFIX.search(stem)
+    if not match:
+        return False
+    stripped = stem[: match.start()]
+    ext = Path(info.filename).suffix.lower()
+    return any(
+        other is not info
+        and Path(other.filename).suffix.lower() == ext
+        and Path(other.filename).stem.lower() == stripped
+        for other in group
+    )
 
 
 def _default_creation_time(path: str) -> Optional[float]:
@@ -64,7 +99,10 @@ def suggest_keep(
 ) -> Optional[tuple[FileInfo, str]]:
     """중복 그룹 하나에서 남길 파일을 추천한다.
 
-    1) 파일명에 복사본류 표시가 없는 파일이 정확히 1개면 그 파일을 추천.
+    1) 파일명에 복사본류 표시(키워드/괄호 접미사, 또는 "_1"처럼 숫자를 뗀
+       이름이 그룹 안에 실제로 있는 경우)가 없는 파일이 정확히 1개면 그
+       파일을 추천 — a.jpg/a_1.jpg/a_2.jpg처럼 재정리 중 같은 파일이 여러
+       번 복사돼 생긴 그룹도 한 번에 처리된다.
     2) 그걸로 못 정하면(0개 또는 2개 이상), 후보들 중 파일시스템 생성일이
        유일하게 가장 이른 파일을 추천.
     3) 그것도 동점이거나 생성일을 알 수 없으면 None — 신뢰도 낮은 케이스는
@@ -73,9 +111,13 @@ def suggest_keep(
     if len(group) < 2:
         return None
 
-    clean = [info for info in group if not _looks_like_copy(info.filename)]
+    clean = [
+        info
+        for info in group
+        if not _looks_like_copy(info.filename) and not _stripped_name_exists_in_group(info, group)
+    ]
     if len(clean) == 1:
-        return clean[0], "파일명에 복사본 표시(복사본/사본/카카오톡 등)가 없는 유일한 파일"
+        return clean[0], "파일명에 복사본 표시(복사본/사본/카카오톡/번호 접미사 등)가 없는 유일한 파일"
 
     candidates = clean if clean else list(group)
     times = [(creation_time_fn(info.path), info) for info in candidates]
