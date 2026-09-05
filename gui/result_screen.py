@@ -243,6 +243,20 @@ class ResultScreen(QWidget):
         home_btn.setStyleSheet(f"color: {COLORS['primary']}; font-weight: 600;")
         home_btn.clicked.connect(self.rescan_requested.emit)
         header_row.addWidget(home_btn)
+
+        # 다른 화면으로 이동하는 기능(중복/유사/정리)을 "홈" 옆에 묶어 우측
+        # 정렬한다 — "홈"이 이 묶음의 맨 앞(제일 왼쪽)에 오도록 순서를 유지.
+        self.duplicates_btn = QPushButton("중복 파일 보기")
+        self.duplicates_btn.clicked.connect(self.duplicates_requested.emit)
+        header_row.addWidget(self.duplicates_btn)
+
+        self.similar_btn = QPushButton("유사 사진 보기")
+        self.similar_btn.clicked.connect(self.similar_requested.emit)
+        header_row.addWidget(self.similar_btn)
+
+        self.date_organize_btn = QPushButton("날짜별 정리")
+        self.date_organize_btn.clicked.connect(self.date_organize_requested.emit)
+        header_row.addWidget(self.date_organize_btn)
         outer.addLayout(header_row)
 
         self.cancelled_banner_frame = QFrame()
@@ -292,8 +306,8 @@ class ResultScreen(QWidget):
         outer.addLayout(chips_row)
 
         # 이 줄은 "지금 보이는 목록을 어떻게 걸러 볼지"만 다룬다 — 다른 화면으로
-        # 이동하는 기능(중복/유사/정리)은 목록 필터가 아니라서 아래쪽 nav_row로
-        # 분리했다.
+        # 이동하는 기능(중복/유사/정리)은 목록 필터가 아니라서 헤더 쪽(홈 옆)에
+        # 모아뒀다.
         filter_row = QHBoxLayout()
         self.recoverable_btn = QPushButton("복구 가능한 파일 보기")
         self.recoverable_btn.clicked.connect(self._show_recoverable_only)
@@ -340,29 +354,6 @@ class ResultScreen(QWidget):
         self.recover_selected_btn.clicked.connect(self._on_recover_selected)
         bottom_row.addWidget(self.recover_selected_btn)
         outer.addLayout(bottom_row)
-
-        # 목록을 떠나 다른 화면으로 이동하는 기능들 — "목록을 어떻게 볼지"인
-        # 위쪽 filter_row와 성격이 달라서 화면 맨 아래로 분리했다. 위에 얇은
-        # 구분선을 둬서 "이 아래는 다른 곳으로 이동" 임을 시각적으로 구분한다.
-        nav_frame = QFrame()
-        nav_frame.setStyleSheet(f"border-top: 1px solid {COLORS['border']};")
-        nav_row = QHBoxLayout(nav_frame)
-        nav_row.setContentsMargins(0, 12, 0, 0)
-
-        self.duplicates_btn = QPushButton("중복 파일 보기")
-        self.duplicates_btn.clicked.connect(self.duplicates_requested.emit)
-        nav_row.addWidget(self.duplicates_btn)
-
-        self.similar_btn = QPushButton("유사 사진 보기")
-        self.similar_btn.clicked.connect(self.similar_requested.emit)
-        nav_row.addWidget(self.similar_btn)
-
-        self.date_organize_btn = QPushButton("날짜별 정리")
-        self.date_organize_btn.clicked.connect(self.date_organize_requested.emit)
-        nav_row.addWidget(self.date_organize_btn)
-
-        nav_row.addStretch(1)
-        outer.addWidget(nav_frame)
 
         self.table.itemChanged.connect(self._on_item_changed)
         self.table.selectionModel().selectionChanged.connect(self._on_selection_changed)
