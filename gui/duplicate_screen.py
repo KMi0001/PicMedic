@@ -8,17 +8,27 @@ Phase 2 "사진 정리" 1차 범위 — 정확 중복(파일 내용 SHA-256) 탐
 를 호출해 그룹만 보여준다.
 
 중복 그룹이 수백 개면 그룹마다 하나씩 고르는 게 비현실적이라(실사용 리포트:
-680개 그룹), "폴더째로 중복"인 흔한 경우를 자동으로 묶어서 처리한다:
+680개 그룹, 이후 재정리 버그로 795개 사례), "폴더째로 중복"인 흔한 경우를
+자동으로 묶어서 처리하고, 그래도 카드 하나씩 남는 경우는 다시 신뢰도로 나눈다:
 - 그룹 안 파일들이 전부 서로 다른 폴더에 있으면 -> 그 폴더 조합(frozenset)별로
   같은 패턴의 그룹들을 한데 묶고, "이 폴더 남기기"를 한 번만 고르면 그 조합에
   속한 모든 그룹에 일괄 적용된다.
-- 그룹 안에 같은 폴더 파일이 2개 이상이면(폴더만으로는 구분 불가) -> 기존처럼
-  파일 하나하나 라디오로 고르게 한다(개별 확인 필요, 보통 소수).
+- 그룹 안에 같은 폴더 파일이 2개 이상이면(폴더만으로는 구분 불가) 중 —
+  core/duplicate_resolver.py::suggest_keep()이 확신을 가진(파일명 패턴/생성일)
+  그룹은 카드 대신 체크박스 표 한 줄로 압축한다("자동 추천" 표, 헤더 체크박스로
+  전체 선택/해제, 행 단위 개별 제외도 가능) — a.jpg/a_1.jpg/a_2.jpg류 재정리
+  버그가 수백 그룹으로 한꺼번에 생겨도 표 하나로 스크롤만 하면 되게 하기 위함
+  (gui/result_screen.py의 CheckAllHeaderView 체크박스 테이블 패턴 재사용, 이미
+  수천 행에서 성능 검증됨).
+- 그것도 못 정하면(확신 없음, 보통 소수) -> 기존처럼 파일 하나하나 라디오로
+  고르게 한다(개별 확인 필요).
 
-모든 조합/그룹에는 "정리하지 않음"(건너뛰기) 선택지도 있고 기본값이다 — 아무
-것도 안 고르면 그 파일들은 그대로 둔다. 정리를 실행하면 실제로 처리된
-(건너뛰지 않은) 카드만 화면에서 사라지고, 건너뛴 카드는 나중에 다시 볼 수
-있게 그대로 남는다.
+모든 조합/그룹/표 행에는 "정리하지 않음"(건너뛰기) 선택지도 있고 기본값이다
+(단, 자동 추천 표는 이미 추천이 확실하다는 뜻이라 기본값이 "선택됨"이다 —
+기존에도 카드 하나였을 때 추천이 있으면 기본 선택이었던 것과 같은 원칙).
+아무것도 안 고르면 그 파일들은 그대로 둔다. 정리를 실행하면 실제로 처리된
+(건너뛰지 않은) 카드/행만 화면에서 사라지고, 건너뛴 카드/행은 나중에 다시
+볼 수 있게 그대로 남는다.
 """
 
 from __future__ import annotations
@@ -37,11 +47,15 @@ from PySide6.QtWidgets import (
     QButtonGroup,
     QFrame,
     QScrollArea,
+    QTableWidget,
+    QTableWidgetItem,
+    QHeaderView,
+    QAbstractItemView,
 )
 
 from core.duplicate_resolver import suggest_keep, suggest_keep_folder
 from gui.common_dialogs import confirm_dialog, info_dialog
-from gui.result_screen import SummaryChip
+from gui.result_screen import CheckAllHeaderView, SummaryChip
 from gui.theme import COLORS
 from utils import trash
 from utils.file_utils import format_file_size
@@ -151,8 +165,12 @@ class DuplicateScreen(QWidget):
         super().__init__(parent)
         self._result = None  # 정리(휴지통 이동) 후 옮긴 파일을 여기서도 빼야 재조회 시 다시 안 나타남
         self._cluster_entries: list[_ClusterEntry] = []
+        # (group, keep_info, reason) 병렬 목록 — self._auto_table의 행과 인덱스가 1:1로 맞는다.
+        self._auto_rows: list[tuple[list, object, str]] = []
+        self._auto_table: QTableWidget | None = None
         self._manual_entries: list[_ManualEntry] = []
         self._cluster_section: QLabel | None = None
+        self._auto_section: QLabel | None = None
         self._manual_section: QLabel | None = None
 
         outer = QVBoxLayout(self)
@@ -187,8 +205,9 @@ class DuplicateScreen(QWidget):
 
         hint = QLabel(
             "폴더째로 겹치는 경우는 폴더 하나만 골라도 관련된 그룹 전부에 적용돼요. "
-            "같은 폴더 안에 중복이 있는 경우만 파일을 하나씩 골라주세요. "
-            "정리하고 싶지 않은 조합/그룹은 \"건너뛰기\"를 그대로 두면 손대지 않아요."
+            "같은 폴더 안 중복 중 확신 가능한 건 표에서 체크박스로 한 번에 처리하고, "
+            "애매한 것만 파일을 하나씩 골라주세요. "
+            "정리하고 싶지 않은 조합/그룹/행은 \"건너뛰기\"(또는 체크 해제)를 그대로 두면 손대지 않아요."
         )
         hint.setWordWrap(True)
         hint.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 12px;")
@@ -224,6 +243,8 @@ class DuplicateScreen(QWidget):
         self._result = result
         groups = result.duplicate_groups() if result else []
         self._cluster_entries = []
+        self._auto_rows = []
+        self._auto_table = None
         self._manual_entries = []
 
         self.setUpdatesEnabled(False)
@@ -234,6 +255,20 @@ class DuplicateScreen(QWidget):
                     item.widget().deleteLater()
 
             clusters, manual = _cluster_by_folder(groups)
+
+            # 폴더만으로 못 정한 그룹(manual)을 다시 "확신 가능(자동 추천 표)"과
+            # "확신 불가(개별 카드)"로 나눈다 — suggest_keep()은 신뢰도 낮으면
+            # 이미 None을 반환하도록 설계돼 있어서, 여기서 추가 판단 없이 그
+            # 결과를 그대로 신뢰해도 기존 원칙과 어긋나지 않는다.
+            auto_rows: list[tuple[list, object, str]] = []
+            plain_manual: list[list] = []
+            for group in manual:
+                suggestion = suggest_keep(group)
+                if suggestion is not None:
+                    keep_info, reason = suggestion
+                    auto_rows.append((group, keep_info, reason))
+                else:
+                    plain_manual.append(group)
 
             row = 0
             self._cluster_section = QLabel()
@@ -252,11 +287,20 @@ class DuplicateScreen(QWidget):
                 self._list_layout.insertWidget(row, card)
                 row += 1
 
+            self._auto_section = QLabel()
+            self._auto_section.setStyleSheet("font-weight: 700; margin-top: 8px;")
+            self._list_layout.insertWidget(row, self._auto_section)
+            row += 1
+            self._auto_rows = auto_rows
+            self._auto_table = self._build_auto_table(auto_rows)
+            self._list_layout.insertWidget(row, self._auto_table)
+            row += 1
+
             self._manual_section = QLabel()
             self._manual_section.setStyleSheet("font-weight: 700; margin-top: 8px;")
             self._list_layout.insertWidget(row, self._manual_section)
             row += 1
-            for idx, group in enumerate(manual, start=1):
+            for idx, group in enumerate(plain_manual, start=1):
                 card, radios, skip_radio, suggested_keep = self._build_group_card(idx, group)
                 self._manual_entries.append(_ManualEntry(card, group, radios, skip_radio, suggested_keep))
                 self._list_layout.insertWidget(row, card)
@@ -267,19 +311,25 @@ class DuplicateScreen(QWidget):
             self.setUpdatesEnabled(True)
 
     def has_pending(self) -> bool:
-        """정리할 그룹/조합이 아직 남아있는지 — 임시 휴지통에서 뒤로 나올 때
+        """정리할 그룹/조합/행이 아직 남아있는지 — 임시 휴지통에서 뒤로 나올 때
         빈 화면을 거치지 않고 검사 결과로 바로 보낼지 판단하는 데 쓰인다."""
-        return bool(self._cluster_entries or self._manual_entries)
+        return bool(self._cluster_entries or self._auto_rows or self._manual_entries)
 
     def _refresh_summary(self) -> None:
-        """칩/빈 상태/섹션 제목을 지금 남아있는 카드(_cluster_entries/_manual_entries)
-        기준으로 다시 계산한다 — 정리 실행 후 일부(건너뛴 것)만 남을 때도 이걸로
-        섹션 제목의 개수 표시가 같이 갱신되게 한다."""
-        group_count = sum(e.group_count for e in self._cluster_entries) + len(self._manual_entries)
-        file_count = sum(len(g) for e in self._cluster_entries for g in e.group_list) + sum(
-            len(e.group) for e in self._manual_entries
+        """칩/빈 상태/섹션 제목을 지금 남아있는 카드/행(_cluster_entries/_auto_rows/
+        _manual_entries) 기준으로 다시 계산한다 — 정리 실행 후 일부(건너뛴 것)만
+        남을 때도 이걸로 섹션 제목의 개수 표시가 같이 갱신되게 한다."""
+        group_count = (
+            sum(e.group_count for e in self._cluster_entries)
+            + len(self._auto_rows)
+            + len(self._manual_entries)
         )
-        has_any = bool(self._cluster_entries or self._manual_entries)
+        file_count = (
+            sum(len(g) for e in self._cluster_entries for g in e.group_list)
+            + sum(len(group) for group, _, _ in self._auto_rows)
+            + sum(len(e.group) for e in self._manual_entries)
+        )
+        has_any = bool(self._cluster_entries or self._auto_rows or self._manual_entries)
 
         self.group_chip.set_value(group_count)
         self.file_chip.set_value(file_count)
@@ -292,10 +342,16 @@ class DuplicateScreen(QWidget):
         if self._cluster_entries:
             self._cluster_section.setText(f"폴더 단위로 정리 가능 · {len(self._cluster_entries)}개 조합")
 
+        self._auto_section.setVisible(bool(self._auto_rows))
+        if self._auto_rows:
+            self._auto_section.setText(f"자동 추천으로 일괄 정리 가능 · {len(self._auto_rows)}개 그룹")
+        if self._auto_table:
+            self._auto_table.setVisible(bool(self._auto_rows))
+
         self._manual_section.setVisible(bool(self._manual_entries))
         if self._manual_entries:
             self._manual_section.setText(
-                f"개별로 확인 필요 · {len(self._manual_entries)}개 그룹 (같은 폴더 안 중복)"
+                f"개별로 확인 필요 · {len(self._manual_entries)}개 그룹 (추천 확신 없음)"
             )
 
     def _build_cluster_card(
@@ -429,6 +485,92 @@ class DuplicateScreen(QWidget):
 
         return card, radios, skip_radio, suggested_keep
 
+    def _build_auto_table(self, auto_rows: list[tuple[list, object, str]]) -> QTableWidget:
+        """"확신 가능" 그룹을 체크박스 표 한 줄씩으로 보여준다 — 그룹마다 카드를
+        만들면 재정리 버그처럼 수백 그룹이 한꺼번에 생겼을 때 스크롤이 끝없이
+        길어지는 문제가 있어서, gui/result_screen.py의 CheckAllHeaderView
+        체크박스 테이블 패턴을 그대로 재사용했다(같은 원리로 이미 수천 행에서
+        성능 검증됨). 표 자체는 스크롤바 없이 행 수만큼 정확히 늘어나서, 화면
+        전체를 감싸는 바깥 QScrollArea 하나로만 스크롤된다(표 안/밖 이중
+        스크롤을 피하기 위함)."""
+        table = QTableWidget(len(auto_rows), 4)
+        header = CheckAllHeaderView(table)
+        header.set_checked(True)  # 기본 전체 선택 — 카드 하나였을 때도 추천이 있으면 기본 선택이었음
+        header.toggled.connect(self._set_all_auto_checked)
+        table.setHorizontalHeader(header)
+        table.setHorizontalHeaderLabels(["", "남길 파일 (폴더)", "삭제될 파일", "사유"])
+        table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Fixed)
+        table.setColumnWidth(0, 32)
+        table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        table.setSelectionMode(QAbstractItemView.NoSelection)
+        table.verticalHeader().setVisible(False)
+        table.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        table.setFocusPolicy(Qt.NoFocus)
+        table.doubleClicked.connect(self._on_auto_row_double_clicked)
+
+        table.setUpdatesEnabled(False)
+        try:
+            for row, (group, keep_info, reason) in enumerate(auto_rows):
+                check_item = QTableWidgetItem()
+                check_item.setFlags(Qt.ItemIsUserCheckable | Qt.ItemIsEnabled)
+                check_item.setCheckState(Qt.Checked)
+                table.setItem(row, 0, check_item)
+
+                keep_item = QTableWidgetItem(f"{Path(keep_info.path).name}  ({Path(keep_info.path).parent})")
+                keep_item.setToolTip("더블클릭하면 미리 볼 수 있어요")
+                table.setItem(row, 1, keep_item)
+
+                remove_item = QTableWidgetItem(f"{len(group) - 1}개")
+                table.setItem(row, 2, remove_item)
+
+                reason_item = QTableWidgetItem(reason)
+                table.setItem(row, 3, reason_item)
+        finally:
+            table.setUpdatesEnabled(True)
+
+        table.itemChanged.connect(self._on_auto_item_changed)
+        self._resize_auto_table_height(table)
+        return table
+
+    def _resize_auto_table_height(self, table: QTableWidget) -> None:
+        """표가 자기 행 수만큼만 높이를 차지하게 고정한다(내부 스크롤 없이) —
+        바깥 QScrollArea 하나로만 페이지 전체가 스크롤되게 하기 위함."""
+        height = table.horizontalHeader().height() + table.verticalHeader().length() + 2 * table.frameWidth() + 2
+        table.setFixedHeight(height)
+
+    def _set_all_auto_checked(self, checked: bool) -> None:
+        if not self._auto_table:
+            return
+        state = Qt.Checked if checked else Qt.Unchecked
+        self._auto_table.blockSignals(True)
+        for row in range(self._auto_table.rowCount()):
+            item = self._auto_table.item(row, 0)
+            if item:
+                item.setCheckState(state)
+        self._auto_table.blockSignals(False)
+
+    def _on_auto_item_changed(self, item: QTableWidgetItem) -> None:
+        if item.column() != 0 or not self._auto_table:
+            return
+        total = self._auto_table.rowCount()
+        checked = sum(
+            1
+            for r in range(total)
+            if self._auto_table.item(r, 0) and self._auto_table.item(r, 0).checkState() == Qt.Checked
+        )
+        header = self._auto_table.horizontalHeader()
+        if isinstance(header, CheckAllHeaderView):
+            header.set_checked(total > 0 and checked == total)
+
+    def _on_auto_row_double_clicked(self, index) -> None:
+        if index.column() == 0:
+            return  # 체크박스 칸은 미리보기로 넘기지 않는다
+        row = index.row()
+        if 0 <= row < len(self._auto_rows):
+            _group, keep_info, _reason = self._auto_rows[row]
+            self.file_selected.emit(keep_info)
+
     def _on_cleanup_clicked(self):
         # 그룹 단위로 모아둔다(파일별 flat 목록이 아니라) — 임시 휴지통에
         # 옮길 때 그룹마다 서브폴더 + "왜 옮겨졌는지" 사유를 남기기 위함
@@ -436,6 +578,7 @@ class DuplicateScreen(QWidget):
         # FileInfo 목록, 사유 텍스트)
         to_process: list[tuple[str, list, str]] = []
         resolved_clusters: list[_ClusterEntry] = []
+        resolved_auto_rows: list[int] = []  # 체크된 표 행 인덱스 — 끝에서 역순으로 지움
         resolved_manual: list[_ManualEntry] = []
 
         for entry in self._cluster_entries:
@@ -458,6 +601,16 @@ class DuplicateScreen(QWidget):
                         reason = f"폴더 단위 정리 — '{keep_folder}' 폴더를 남기기로 선택해서 이 파일들이 이동됨"
                     to_process.append((keep_info.path, remove_infos, reason))
             resolved_clusters.append(entry)
+
+        if self._auto_table:
+            for row, (group, keep_info, reason) in enumerate(self._auto_rows):
+                item = self._auto_table.item(row, 0)
+                if not item or item.checkState() != Qt.Checked:
+                    continue  # 체크 해제 = 이 행은 건너뛰기
+                remove_infos = [info for info in group if info is not keep_info]
+                if remove_infos:
+                    to_process.append((keep_info.path, remove_infos, f"자동 추천 적용 — {reason}"))
+                resolved_auto_rows.append(row)
 
         for entry in self._manual_entries:
             if entry.skip_radio.isChecked():
@@ -519,10 +672,18 @@ class DuplicateScreen(QWidget):
         else:
             info_dialog(self, f"{moved}개 파일을 임시 휴지통으로 옮겼습니다.\n확인해주세요.")
 
-        # 실제로 처리된 카드만 화면에서 지우고, 건너뛴 카드는 다시 볼 수 있게 남긴다.
+        # 실제로 처리된 카드/행만 화면에서 지우고, 건너뛴 카드/행은 다시 볼 수
+        # 있게 남긴다.
         for entry in resolved_clusters:
             self._cluster_entries.remove(entry)
             entry.card.deleteLater()
+        if self._auto_table and resolved_auto_rows:
+            self._auto_table.blockSignals(True)
+            for row in sorted(resolved_auto_rows, reverse=True):
+                self._auto_table.removeRow(row)
+                del self._auto_rows[row]
+            self._auto_table.blockSignals(False)
+            self._resize_auto_table_height(self._auto_table)
         for entry in resolved_manual:
             self._manual_entries.remove(entry)
             entry.card.deleteLater()
