@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
 
 from core.converter import RecoveryMode
 from core.scanner import SCANNABLE_EXTENSIONS
+from gui.quality_enhance_dialog import run_quality_enhancement
 from gui.result_screen import SummaryChip
 from gui.theme import COLORS, STATUS_COLORS
 from gui.trash_screen import TrashScreen
@@ -342,13 +343,6 @@ class HomeScreen(QWidget):
         header_row.setAlignment(brand_text, Qt.AlignVCenter)
         header_row.addStretch(1)
 
-        # 임시로 접근성만 확보 — 지금은 스캔 세션(gui/scan_session_window.py)에서
-        # 중복 정리를 거쳐야만 볼 수 있는데, 세션과 무관하게 언제든 확인하고 싶다는
-        # 요청으로 홈 화면에도 바로가기를 둔다.
-        trash_btn = QPushButton("임시 휴지통")
-        trash_btn.clicked.connect(self._open_trash)
-        header_row.addWidget(trash_btn)
-
         content_layout.addLayout(header_row)
 
         self.selection_card = SelectionCard()
@@ -364,6 +358,22 @@ class HomeScreen(QWidget):
         self.recent_card = RecentCard()
         self.recent_card.entry_activated.connect(self._show_recent_summary)
         content_layout.addWidget(self.recent_card)
+
+        # 스캔 세션(gui/scan_session_window.py) 없이도 바로 쓰고 싶다는 요청으로
+        # 하단에 둔 두 바로가기 — 임시 휴지통은 세션과 무관한 전역 폴더 보기라
+        # 기존 스타일(흰 배경) 그대로, 화질 개선은 자주 쓸 기능이라 메인 색상으로
+        # 눈에 띄게 한다.
+        bottom_row = QHBoxLayout()
+        bottom_row.setSpacing(10)
+        trash_btn = QPushButton("임시 휴지통")
+        trash_btn.clicked.connect(self._open_trash)
+        bottom_row.addWidget(trash_btn)
+
+        enhance_btn = QPushButton("화질 개선")
+        enhance_btn.setObjectName("Primary")
+        enhance_btn.clicked.connect(self._open_quality_enhance)
+        bottom_row.addWidget(enhance_btn)
+        content_layout.addLayout(bottom_row)
 
         outer.addWidget(content, alignment=Qt.AlignHCenter)
         outer.addStretch(1)
@@ -419,6 +429,28 @@ class HomeScreen(QWidget):
         layout.addWidget(screen)
         dialog.resize(560, 520)
         dialog.exec()
+
+    def _open_quality_enhance(self):
+        """스캔 없이 사진 한 장만 바로 골라서 화질 개선을 실행하는 진입점 —
+        gui/quality_enhance_dialog.py의 확인/진행/결과 흐름을 그대로 재사용한다."""
+        start_dir = self._default_browse_dir()
+        path, _ = QFileDialog.getOpenFileName(
+            self, "화질 개선할 사진 선택", start_dir, IMAGE_FILE_FILTER
+        )
+        if not path:
+            return
+        self._remember_browse_dir(str(Path(path).parent))
+
+        width = height = None
+        try:
+            from PIL import Image
+
+            with Image.open(path) as img:
+                width, height = img.size
+        except Exception:
+            pass  # 크기를 못 읽어도 예상 소요 시간 안내만 빠질 뿐 기능은 그대로 동작
+
+        run_quality_enhancement(self, path, width, height)
 
     def _show_recent_summary(self, entry: dict):
         """스캔을 다시 하지 않고, 그때 결과 요약을 팝업으로 보여준다."""

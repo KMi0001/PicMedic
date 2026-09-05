@@ -19,11 +19,17 @@ from PySide6.QtWidgets import (
 )
 
 from core.converter import RecoveryMode
+from core import quality_enhancer
+from gui.quality_enhance_dialog import run_quality_enhancement
 from gui.theme import COLORS, STATUS_COLORS
 from models.file_info import FileInfo, FileStatus
 from utils.file_utils import format_file_size
 
 PREVIEW_SIZE = 320
+# 화질 개선 대상으로 안내할 기준 — 이보다 크면 이미 충분히 고화질이라 굳이
+# 4배로 더 키울 필요가 적고, 시간만 오래 걸린다(실측: core/quality_enhancer.py
+# 참고, 처리 시간이 출력 픽셀 수에 비례해서 고화질 사진일수록 더 오래 걸림).
+LOW_RES_HINT_THRESHOLD = 1_000_000  # 총 픽셀 수 100만(예: 1000x1000) 미만
 
 
 class DetailScreen(QWidget):
@@ -84,6 +90,11 @@ class DetailScreen(QWidget):
         self.recovery_note_label.setWordWrap(True)
         info_layout.addWidget(self.recovery_note_label)
 
+        self.enhance_hint_label = QLabel()
+        self.enhance_hint_label.setWordWrap(True)
+        self.enhance_hint_label.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 12px;")
+        info_layout.addWidget(self.enhance_hint_label)
+
         info_layout.addStretch(1)
 
         btn_row = QHBoxLayout()
@@ -92,8 +103,15 @@ class DetailScreen(QWidget):
         self.convert_btn = QPushButton("확장자 변환")
         self.convert_btn.setObjectName("Primary")
         self.convert_btn.clicked.connect(self._on_convert_clicked)
+        self.enhance_btn = QPushButton("화질 개선")
+        self.enhance_btn.setToolTip(
+            "사진을 더 선명하게 확대합니다. 사라진 디테일이 되살아나는 것은 아니고,\n"
+            "단순 확대보다 덜 뭉개지게 키워주는 기능입니다."
+        )
+        self.enhance_btn.clicked.connect(self._on_enhance_clicked)
         btn_row.addWidget(self.restore_btn)
         btn_row.addWidget(self.convert_btn)
+        btn_row.addWidget(self.enhance_btn)
         info_layout.addLayout(btn_row)
 
         content_col.addWidget(info_card)
@@ -149,6 +167,19 @@ class DetailScreen(QWidget):
         self.restore_btn.setText(
             f"{info.detected_format or '원본'} 형식으로 복구" if info.detected_format else "확장자 복구"
         )
+
+        # 화질 개선은 이 기기에 실행 파일이 준비돼 있고(is_available), 디코딩이
+        # 되는 파일에만 의미가 있다 — 폴더 일괄이 아니라 사진 한 장 단위로만
+        # 제공한다(core/quality_enhancer.py 참고, 처리 시간이 커서 일괄 처리엔 부적합).
+        enhance_ready = quality_enhancer.is_available() and info.readable
+        self.enhance_btn.setVisible(quality_enhancer.is_available())
+        self.enhance_btn.setEnabled(enhance_ready)
+        if enhance_ready and info.width and info.height and info.width * info.height < LOW_RES_HINT_THRESHOLD:
+            self.enhance_hint_label.setText(
+                "저해상도 사진이에요 — \"화질 개선\"으로 더 선명하게 확대해볼 수 있어요."
+            )
+        else:
+            self.enhance_hint_label.setText("")
 
         self._load_preview(info)
 
@@ -207,3 +238,9 @@ class DetailScreen(QWidget):
     def _on_convert_clicked(self):
         if self.current_info:
             self.recover_requested.emit([self.current_info], RecoveryMode.CONVERT)
+
+    def _on_enhance_clicked(self):
+        info = self.current_info
+        if not info:
+            return
+        run_quality_enhancement(self, info.path, info.width, info.height)

@@ -24,12 +24,10 @@ from PySide6.QtWidgets import (
     QComboBox,
     QFrame,
     QFileDialog,
-    QProgressBar,
-    QDialog,
 )
 
 from core.converter import RecoveryMode, recover_batch, CONVERT_TARGET_FORMATS, DEFAULT_CONVERT_FORMAT
-from gui.common_dialogs import confirm_dialog as _confirm_dialog
+from gui.common_dialogs import confirm_dialog as _confirm_dialog, ProgressDialog
 from gui.result_screen import SummaryChip
 from gui.theme import COLORS, STATUS_COLORS
 from models.file_info import FileInfo, FileStatus
@@ -92,100 +90,6 @@ def _convert_icon_pixmap(color: str, size: int = 26) -> QPixmap:
     return pixmap
 
 
-def _progress_icon_pixmap(accent: str, size: int = 22) -> QPixmap:
-    """진행 팝업 헤더 아이콘: 같은 색 원 + 흰색 점 3개("처리 중")로, 다른 팝업
-    아이콘(확인/안내 등)과 같은 스타일을 유지한다 — 회전 애니메이션 없이 정적인
-    아이콘이라 '스피너'보다는 '진행 중임을 나타내는 점'으로 단순화."""
-    icon_box = size * (13 / 24)
-    inner_scale = icon_box / 24.0
-    offset = (size - icon_box) / 2
-
-    def pt(x, y):
-        return QPointF(offset + x * inner_scale, offset + y * inner_scale)
-
-    pixmap = QPixmap(size, size)
-    pixmap.fill(Qt.transparent)
-    painter = QPainter(pixmap)
-    painter.setRenderHint(QPainter.Antialiasing)
-    painter.setPen(Qt.NoPen)
-    painter.setBrush(QColor(accent))
-    painter.drawEllipse(0, 0, size, size)
-
-    painter.setBrush(QColor("white"))
-    for x in (6.5, 12, 17.5):
-        painter.drawEllipse(pt(x, 12), 1.6 * inner_scale, 1.6 * inner_scale)
-
-    painter.end()
-    return pixmap
-
-
-class _ProgressDialog(QDialog):
-    """복구/변환 진행 중 뜨는 모달 팝업. 배치 작업이 끝날 때까지 화면(설정/뒤로가기
-    등)을 건드릴 수 없게 막는다 — PRD_MVP우선순위.md 갭 #9(진행 중 설정 잠금 필요)를
-    "모든 컨트롤을 개별적으로 비활성화" 대신 모달 팝업 하나로 해결한다. 창 자체의
-    닫기(X) 버튼은 없앤다 — 취소는 반드시 아래 "취소" 버튼(cancel_requested)을 거쳐서
-    RecoveryWorker.cancel()로 이어지게 하기 위함."""
-
-    cancel_requested = Signal()
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("PicMedic")
-        # ApplicationModal이 아니라 이 창(세션)만 막는다 — 다른 검사 세션 창은
-        # 계속 조작 가능해야 "다중 검사" 취지에 맞는다.
-        self.setWindowModality(Qt.WindowModal)
-        self.setWindowFlags(self.windowFlags() & ~Qt.WindowCloseButtonHint)
-        self.setFixedWidth(340)
-
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(24, 24, 24, 24)
-        layout.setSpacing(12)
-
-        header_row = QHBoxLayout()
-        header_row.setSpacing(8)
-        icon_label = QLabel()
-        icon_label.setPixmap(_progress_icon_pixmap(COLORS["primary"]))
-        header_row.addWidget(icon_label)
-        self.title_label = QLabel("")
-        self.title_label.setStyleSheet("font-weight: 700; font-size: 14px;")
-        header_row.addWidget(self.title_label)
-        header_row.addStretch(1)
-        layout.addLayout(header_row)
-
-        self.bar = QProgressBar()
-        layout.addWidget(self.bar)
-
-        self.status_label = QLabel("")
-        self.status_label.setWordWrap(True)
-        self.status_label.setStyleSheet(f"color: {COLORS['text_secondary']};")
-        layout.addWidget(self.status_label)
-
-        self.cancel_btn = QPushButton("취소")
-        self.cancel_btn.setObjectName("Danger")
-        self.cancel_btn.clicked.connect(self._on_cancel_clicked)
-        layout.addWidget(self.cancel_btn, alignment=Qt.AlignRight)
-
-    def start(self, title: str):
-        self.title_label.setText(title)
-        self.bar.setValue(0)
-        self.status_label.setText("준비 중...")
-        self.cancel_btn.setEnabled(True)
-        self.cancel_btn.setText("취소")
-
-    def update_progress(self, current: int, total: int, filename: str):
-        pct = int((current / total) * 100) if total else 0
-        self.bar.setValue(pct)
-        self.status_label.setText(f"{filename} 처리 중... ({current}/{total})")
-
-    def _on_cancel_clicked(self):
-        # 이미 처리 중인 파일은 끝까지 끝내야 하니 버튼을 바로 잠그고 진행 중임을 알린다
-        # — RecoveryWorker가 다음 파일로 넘어가기 전에 should_cancel을 체크해서 멈춘다.
-        self.cancel_btn.setEnabled(False)
-        self.cancel_btn.setText("취소하는 중...")
-        self.status_label.setText("현재 파일까지 마치고 중단합니다...")
-        self.cancel_requested.emit()
-
-
 class RecoveryWorker(QThread):
     progress = Signal(int, int, str)
     finished_batch = Signal(list)  # list[RecoveryOutcome]
@@ -236,7 +140,7 @@ class RecoveryScreen(QWidget):
         self.files: list[FileInfo] = []
         self.worker: RecoveryWorker | None = None
         self._cancel_requested = False
-        self.progress_dialog = _ProgressDialog(self)
+        self.progress_dialog = ProgressDialog(self)
         self.progress_dialog.cancel_requested.connect(self._on_cancel_requested)
 
         outer = QVBoxLayout(self)

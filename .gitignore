@@ -16,6 +16,17 @@ test_samples/
 # Local scratch/debug files
 _scratch/
 
+# 화질 개선 프로토타입(experiments/upscale_prototype) — 코드는 추적하되
+# 가상환경, 사전학습 모델 가중치, Real-ESRGAN 실행 파일(합쳐서 수십MB, 다운로드로
+# 다시 받을 수 있음)은 제외
+experiments/upscale_prototype/.venv/
+experiments/upscale_prototype/models/*.pb
+experiments/upscale_prototype/realesrgan/
+
+# 화질 개선 기능(core/quality_enhancer.py)용 Real-ESRGAN 실행 파일/모델(약 39MB) —
+# scripts/fetch_realesrgan_assets.py로 다시 받을 수 있어 git엔 커밋하지 않음
+assets/realesrgan/
+
 # OS
 Thumbs.db
 .DS_Store

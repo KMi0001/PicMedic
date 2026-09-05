@@ -10,9 +10,17 @@ gui/scan_session_window.py의 _info_dialog)을, 세 번째 화면(gui/duplicate_
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, QPointF
-from PySide6.QtGui import QPainter, QPixmap, QColor, QPen, QFont
-from PySide6.QtWidgets import QDialog, QHBoxLayout, QVBoxLayout, QLabel, QPushButton, QWidget
+from PySide6.QtCore import Qt, QPointF, QUrl, Signal
+from PySide6.QtGui import QDesktopServices, QPainter, QPixmap, QColor, QPen, QFont
+from PySide6.QtWidgets import (
+    QDialog,
+    QHBoxLayout,
+    QVBoxLayout,
+    QLabel,
+    QProgressBar,
+    QPushButton,
+    QWidget,
+)
 
 from gui.theme import COLORS
 
@@ -146,3 +154,141 @@ def info_dialog(parent: QWidget, message: str) -> None:
 
     ok_btn.clicked.connect(dialog.accept)
     dialog.exec()
+
+
+def info_dialog_with_folder(parent: QWidget, message: str, folder_path: str) -> None:
+    """info_dialog()에 "폴더 열기" 버튼을 하나 더 붙인 버전 — 결과가 파일로
+    저장됐을 때(날짜별 정리, 복구 등) 그 폴더를 바로 열어볼 수 있게 한다."""
+    dialog = QDialog(parent)
+    dialog.setWindowTitle("PicMedic")
+    dialog.setWindowModality(Qt.WindowModal)
+
+    layout = QHBoxLayout(dialog)
+    layout.setContentsMargins(20, 20, 20, 20)
+    layout.setSpacing(16)
+
+    icon_label = QLabel()
+    icon_label.setPixmap(info_icon_pixmap(COLORS["primary"]))
+    layout.addWidget(icon_label, alignment=Qt.AlignTop)
+
+    text_col = QVBoxLayout()
+    msg_label = QLabel(message)
+    msg_label.setWordWrap(True)
+    msg_label.setFixedWidth(260)
+    text_col.addWidget(msg_label)
+
+    text_col.addSpacing(12)
+    btn_row = QHBoxLayout()
+    btn_row.addStretch(1)
+    open_folder_btn = QPushButton("폴더 열기")
+    btn_row.addWidget(open_folder_btn)
+    ok_btn = QPushButton("확인")
+    ok_btn.setObjectName("Primary")
+    ok_btn.setDefault(True)
+    btn_row.addWidget(ok_btn)
+    text_col.addLayout(btn_row)
+
+    layout.addLayout(text_col)
+
+    def open_folder():
+        QDesktopServices.openUrl(QUrl.fromLocalFile(folder_path))
+
+    open_folder_btn.clicked.connect(open_folder)
+    ok_btn.clicked.connect(dialog.accept)
+    dialog.exec()
+
+
+def progress_icon_pixmap(accent: str, size: int = 22) -> QPixmap:
+    """진행 팝업 헤더 아이콘: 같은 색 원 + 흰색 점 3개("처리 중")로, 다른 팝업
+    아이콘(확인/안내 등)과 같은 스타일을 유지한다 — 회전 애니메이션 없이 정적인
+    아이콘이라 '스피너'보다는 '진행 중임을 나타내는 점'으로 단순화."""
+    icon_box = size * (13 / 24)
+    inner_scale = icon_box / 24.0
+    offset = (size - icon_box) / 2
+
+    def pt(x, y):
+        return QPointF(offset + x * inner_scale, offset + y * inner_scale)
+
+    pixmap = QPixmap(size, size)
+    pixmap.fill(Qt.transparent)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.Antialiasing)
+    painter.setPen(Qt.NoPen)
+    painter.setBrush(QColor(accent))
+    painter.drawEllipse(0, 0, size, size)
+
+    painter.setBrush(QColor("white"))
+    for x in (6.5, 12, 17.5):
+        painter.drawEllipse(pt(x, 12), 1.6 * inner_scale, 1.6 * inner_scale)
+
+    painter.end()
+    return pixmap
+
+
+class ProgressDialog(QDialog):
+    """오래 걸리는 작업(복구/변환/화질 개선 등) 진행 중 뜨는 모달 팝업. 작업이
+    끝날 때까지 화면(설정/뒤로가기 등)을 건드릴 수 없게 막는다 — PRD_MVP우선순위.md
+    갭 #9(진행 중 설정 잠금 필요)를 "모든 컨트롤을 개별적으로 비활성화" 대신
+    모달 팝업 하나로 해결한다. 창 자체의 닫기(X) 버튼은 없앤다 — 취소는 반드시
+    아래 "취소" 버튼(cancel_requested)을 거쳐서 워커 쪽 취소 로직으로 이어지게
+    하기 위함. 원래 gui/recovery_screen.py에만 있었는데, gui/detail_screen.py의
+    화질 개선에도 같은 게 필요해지면서 공용으로 옮김(DESIGN.md 원칙)."""
+
+    cancel_requested = Signal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("PicMedic")
+        # ApplicationModal이 아니라 이 창(세션)만 막는다 — 다른 검사 세션 창은
+        # 계속 조작 가능해야 "다중 검사" 취지에 맞는다.
+        self.setWindowModality(Qt.WindowModal)
+        self.setWindowFlags(self.windowFlags() & ~Qt.WindowCloseButtonHint)
+        self.setFixedWidth(340)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(24, 24, 24, 24)
+        layout.setSpacing(12)
+
+        header_row = QHBoxLayout()
+        header_row.setSpacing(8)
+        icon_label = QLabel()
+        icon_label.setPixmap(progress_icon_pixmap(COLORS["primary"]))
+        header_row.addWidget(icon_label)
+        self.title_label = QLabel("")
+        self.title_label.setStyleSheet("font-weight: 700; font-size: 14px;")
+        header_row.addWidget(self.title_label)
+        header_row.addStretch(1)
+        layout.addLayout(header_row)
+
+        self.bar = QProgressBar()
+        layout.addWidget(self.bar)
+
+        self.status_label = QLabel("")
+        self.status_label.setWordWrap(True)
+        self.status_label.setStyleSheet(f"color: {COLORS['text_secondary']};")
+        layout.addWidget(self.status_label)
+
+        self.cancel_btn = QPushButton("취소")
+        self.cancel_btn.setObjectName("Danger")
+        self.cancel_btn.clicked.connect(self._on_cancel_clicked)
+        layout.addWidget(self.cancel_btn, alignment=Qt.AlignRight)
+
+    def start(self, title: str):
+        self.title_label.setText(title)
+        self.bar.setValue(0)
+        self.status_label.setText("준비 중...")
+        self.cancel_btn.setEnabled(True)
+        self.cancel_btn.setText("취소")
+
+    def update_progress(self, current: int, total: int, filename: str):
+        pct = int((current / total) * 100) if total else 0
+        self.bar.setValue(pct)
+        self.status_label.setText(f"{filename} 처리 중... ({current}/{total})")
+
+    def _on_cancel_clicked(self):
+        # 이미 처리 중인 작업은 끝까지 끝내야 하니 버튼을 바로 잠그고 진행 중임을 알린다
+        # — 워커가 다음 단계로 넘어가기 전에 취소 여부를 체크해서 멈춘다.
+        self.cancel_btn.setEnabled(False)
+        self.cancel_btn.setText("취소하는 중...")
+        self.status_label.setText("현재 작업까지 마치고 중단합니다...")
+        self.cancel_requested.emit()
