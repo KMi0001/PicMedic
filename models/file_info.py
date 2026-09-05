@@ -6,6 +6,7 @@ PRD 27장 "데이터 모델" 기준으로 작성됨.
 """
 
 from dataclasses import dataclass, field
+from datetime import datetime
 from enum import Enum
 from typing import Optional
 
@@ -44,11 +45,13 @@ class FileInfo:
     mime_type: Optional[str] = None
     file_size: int = 0                       # bytes
     content_hash: Optional[str] = None       # 파일 내용 SHA-256 (Phase 2 '정확 중복' 탐지용)
+    perceptual_hash: Optional[str] = None    # 이미지 지문(pHash, Phase 2 '유사 중복' 탐지용)
 
     # --- 이미지 속성 (디코딩 성공 시에만 채워짐) ---
     width: Optional[int] = None
     height: Optional[int] = None
     metadata: dict = field(default_factory=dict)   # EXIF 등
+    captured_at: Optional[datetime] = None   # EXIF 촬영일(DateTimeOriginal, 없으면 DateTime) — Phase 2 '날짜별 정리'
 
     # --- 진단 결과 ---
     status: FileStatus = FileStatus.UNKNOWN

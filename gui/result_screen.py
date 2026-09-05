@@ -178,7 +178,9 @@ class SummaryChip(QFrame):
         layout.setContentsMargins(14, 10, 14, 10)
         self.value_label = QLabel("0")
         self.value_label.setAlignment(Qt.AlignCenter)
+        self.value_label.setWordWrap(True)
         self.value_label.setStyleSheet(f"font-size: 20px; font-weight: 700; color: {color};")
+        self._value_color = color
         name_label = QLabel(label)
         name_label.setWordWrap(True)
         name_label.setAlignment(Qt.AlignCenter)
@@ -194,6 +196,15 @@ class SummaryChip(QFrame):
     def set_value(self, value: int):
         self.value_label.setText(f"{value:,}")
 
+    def set_text(self, text: str):
+        """숫자 카운트 대신 자유 텍스트를 보여준다(예: gui/date_organize_screen.py의
+        "2023.11 ~ 2025.06" 같은 날짜 범위). 숫자보다 길어서 폭에 못 들어갈 수
+        있으니, 폰트를 줄이고 줄바꿈을 허용해서 절대 잘리지 않게 한다(2줄까지
+        자연스럽게 늘어남 — 카드 높이가 고정이 아니라 내용에 맞춰 늘어나므로
+        레이아웃이 깨지지 않는다)."""
+        self.value_label.setStyleSheet(f"font-size: 13px; font-weight: 700; color: {self._value_color};")
+        self.value_label.setText(text)
+
 
 class ResultScreen(QWidget):
     file_selected = Signal(object)       # FileInfo
@@ -201,6 +212,8 @@ class ResultScreen(QWidget):
     rescan_requested = Signal()
     resume_requested = Signal()          # 중단된 검사를 나머지 파일부터 이어서 진행
     duplicates_requested = Signal()      # "중복 파일 보기" — gui/duplicate_screen.py로 이동
+    similar_requested = Signal()         # "유사 사진 보기" — gui/similar_screen.py로 이동
+    date_organize_requested = Signal()   # "날짜별 정리" — gui/date_organize_screen.py로 이동
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -286,6 +299,14 @@ class ResultScreen(QWidget):
         self.duplicates_btn = QPushButton("중복 파일 보기")
         self.duplicates_btn.clicked.connect(self.duplicates_requested.emit)
         action_row.addWidget(self.duplicates_btn)
+
+        self.similar_btn = QPushButton("유사 사진 보기")
+        self.similar_btn.clicked.connect(self.similar_requested.emit)
+        action_row.addWidget(self.similar_btn)
+
+        self.date_organize_btn = QPushButton("날짜별 정리")
+        self.date_organize_btn.clicked.connect(self.date_organize_requested.emit)
+        action_row.addWidget(self.date_organize_btn)
 
         action_row.addStretch(1)
 

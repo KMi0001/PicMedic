@@ -13,10 +13,11 @@ detector.py 로 실제 파일 형식을 알아낸 뒤, Pillow로 실제 디코�
 from __future__ import annotations
 
 import hashlib
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-from PIL import Image, ImageFile
+from PIL import ExifTags, Image, ImageFile
 
 try:
     import pillow_heif
@@ -25,6 +26,13 @@ try:
     HEIF_SUPPORT = True
 except ImportError:  # pillow-heif 미설치 환경에서도 나머지 기능은 동작해야 함
     HEIF_SUPPORT = False
+
+try:
+    import imagehash
+
+    PHASH_SUPPORT = True
+except ImportError:  # imagehash 미설치 환경에서도 '유사 중복' 기능만 빠질 뿐 나머지는 동작
+    PHASH_SUPPORT = False
 
 from core import detector
 from models.file_info import FileInfo, FileStatus, RecoveryPossibility
@@ -60,7 +68,7 @@ def _compute_file_hash(path: Path) -> Optional[str]:
 
 
 class _DecodeResult:
-    __slots__ = ("readable", "partial", "width", "height", "metadata", "error")
+    __slots__ = ("readable", "partial", "width", "height", "metadata", "captured_at", "perceptual_hash", "error")
 
     def __init__(self):
         self.readable = False
@@ -68,6 +76,8 @@ class _DecodeResult:
         self.width: Optional[int] = None
         self.height: Optional[int] = None
         self.metadata: dict = {}
+        self.captured_at: Optional[datetime] = None
+        self.perceptual_hash: Optional[str] = None
         self.error: Optional[str] = None
 
 
@@ -82,6 +92,8 @@ def _try_decode(path: Path) -> _DecodeResult:
             result.readable = True
             result.width, result.height = img.size
             result.metadata = _extract_metadata(img)
+            result.captured_at = _extract_captured_at(img)
+            result.perceptual_hash = _extract_perceptual_hash(img)
             return result
     except Exception as first_error:
         result.error = str(first_error)
@@ -95,6 +107,8 @@ def _try_decode(path: Path) -> _DecodeResult:
             result.partial = True
             result.width, result.height = img.size
             result.metadata = _extract_metadata(img)
+            result.captured_at = _extract_captured_at(img)
+            result.perceptual_hash = _extract_perceptual_hash(img)
     except Exception as second_error:
         result.readable = False
         result.error = result.error or str(second_error)
@@ -118,6 +132,49 @@ def _extract_metadata(img: Image.Image) -> dict:
     except Exception:
         pass
     return metadata
+
+
+_TAG_DATE_TIME_ORIGINAL = 36867  # Exif 서브 IFD(34665) 안에 있음 — 실제 촬영 시각
+_TAG_DATE_TIME = 306  # 최상위 IFD0 — 파일 저장/수정 시각에 가까움, 촬영일이 없을 때만 대체로 씀
+
+
+def _extract_captured_at(img: Image.Image) -> Optional[datetime]:
+    """EXIF 촬영일을 datetime으로 파싱한다(Phase 2 '날짜별 정리'). Pillow의
+    Image.getexif()는 최상위 IFD0 태그만 평평하게 주고, DateTimeOriginal은
+    Exif 서브 IFD 안에 있어서 get_ifd()로 따로 꺼내야 한다 — 안 그러면 항상
+    None만 나온다."""
+    try:
+        exif = img.getexif()
+        if not exif:
+            return None
+
+        raw = None
+        try:
+            exif_ifd = exif.get_ifd(ExifTags.IFD.Exif)
+            raw = exif_ifd.get(_TAG_DATE_TIME_ORIGINAL)
+        except Exception:
+            raw = None
+        if not raw:
+            raw = exif.get(_TAG_DATE_TIME)
+        if not isinstance(raw, str):
+            return None
+
+        return datetime.strptime(raw.strip(), "%Y:%m:%d %H:%M:%S")
+    except Exception:
+        return None
+
+
+def _extract_perceptual_hash(img: Image.Image) -> Optional[str]:
+    """이미지 지문(pHash)을 16진 문자열로 계산한다(Phase 2 '유사 중복' 탐지용
+    — content_hash와 달리 리사이즈/재압축된 "거의 같은" 사진도 값이 비슷하게
+    나온다). imagehash 미설치 환경에서는 이 값 없이도 나머지 기능은 그대로
+    동작해야 하므로 조용히 None을 반환한다."""
+    if not PHASH_SUPPORT:
+        return None
+    try:
+        return str(imagehash.phash(img))
+    except Exception:
+        return None
 
 
 def _looks_like_non_image(head: bytes) -> bool:
@@ -198,6 +255,8 @@ def analyze_file(path: str | Path) -> FileInfo:
             info.status = FileStatus.PARTIAL_CORRUPTION
             info.width, info.height = decode.width, decode.height
             info.metadata = decode.metadata
+            info.captured_at = decode.captured_at
+            info.perceptual_hash = decode.perceptual_hash
             info.recoverable = RecoveryPossibility.PARTIALLY_RECOVERABLE
         else:
             info.status = FileStatus.CORRUPTED
@@ -230,6 +289,8 @@ def analyze_file(path: str | Path) -> FileInfo:
     info.readable = decode.readable
     info.width, info.height = decode.width, decode.height
     info.metadata = decode.metadata
+    info.captured_at = decode.captured_at
+    info.perceptual_hash = decode.perceptual_hash
     info.error_message = decode.error
 
     if decode.readable and not decode.partial:
