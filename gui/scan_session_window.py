@@ -167,14 +167,14 @@ class ScanSessionWindow(QWidget):
         self.result_screen.date_organize_requested.connect(self._open_date_organize)
 
         # 중복 사진 -> 결과 / 임시 휴지통 / 상세보기(사진 미리보기)
-        self.duplicate_screen.back_requested.connect(lambda: self.stack.setCurrentWidget(self.result_screen))
+        self.duplicate_screen.back_requested.connect(self._back_from_duplicates)
         self.duplicate_screen.view_trash_requested.connect(lambda: self._open_trash(self.duplicate_screen))
         self.duplicate_screen.file_selected.connect(
             lambda info: self._open_detail(info, return_to=self.duplicate_screen)
         )
 
         # 유사 사진 -> 결과 / 임시 휴지통 / 상세보기(사진 미리보기)
-        self.similar_screen.back_requested.connect(lambda: self.stack.setCurrentWidget(self.result_screen))
+        self.similar_screen.back_requested.connect(self._back_from_similar)
         self.similar_screen.view_trash_requested.connect(lambda: self._open_trash(self.similar_screen))
         self.similar_screen.file_selected.connect(
             lambda info: self._open_detail(info, return_to=self.similar_screen)
@@ -271,6 +271,18 @@ class ScanSessionWindow(QWidget):
     def _open_recovery(self, files, mode):
         self.recovery_screen.set_files(files, preselected_mode=mode)
         self.stack.setCurrentWidget(self.recovery_screen)
+
+    def _back_from_duplicates(self):
+        # duplicate_screen이 "정리 실행"으로 이미 self.result_screen.result(같은
+        # ScanResult 객체)에서 파일을 뺐어도(ScanResult.remove), 검사 결과 화면의
+        # 표/칩은 따로 다시 그려주지 않으면 그대로 갱신 안 된 채 남는다 — 휴지통에
+        # 옮긴 사진이 검사 결과 목록에 계속 보이던 문제.
+        self.result_screen.refresh_current_result()
+        self.stack.setCurrentWidget(self.result_screen)
+
+    def _back_from_similar(self):
+        self.result_screen.refresh_current_result()
+        self.stack.setCurrentWidget(self.result_screen)
 
     def _open_duplicates(self):
         result = self.result_screen.result
@@ -397,6 +409,9 @@ class ScanSessionWindow(QWidget):
         elif self.duplicate_screen.has_pending():
             self.stack.setCurrentWidget(self.duplicate_screen)
         else:
+            # 더 처리할 그룹이 없어 검사 결과로 바로 돌아가는 경우 — 그동안
+            # 중복/유사 정리로 빠진 파일들이 표/칩에 반영되게 새로고침한다.
+            self.result_screen.refresh_current_result()
             self.stack.setCurrentWidget(self.result_screen)
 
     def _on_recovery_finished(self, outcomes, output_dir):

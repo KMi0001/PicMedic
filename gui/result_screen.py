@@ -390,8 +390,12 @@ class ResultScreen(QWidget):
         self._apply_filters()
 
     def refresh_current_result(self):
-        """복구 후 파일 상태가 갱신됐을 때 요약/테이블을 다시 그린다."""
+        """복구/중복·유사 정리 후 파일 상태나 개수가 갱신됐을 때 요약/테이블을
+        다시 그린다. 중복/유사 정리는 result.remove()로 total 자체가 줄어들 수
+        있어서(복구는 상태만 바뀌고 total은 그대로라 이 chip은 원래 안 건드려도
+        됐음) 총 파일 chip도 같이 갱신해야 한다."""
         if self.result:
+            self.chip_total.set_value(self.result.total)
             self.chip_normal.set_value(self.result.normal)
             self.chip_mismatch.set_value(self.result.mismatch)
             self.chip_partial.set_value(self.result.partial_corruption)
