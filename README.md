@@ -66,10 +66,19 @@ python tests/test_trash.py
 python tests/test_duplicate_resolver.py
 python tests/test_date_organizer.py
 python tests/test_scan_result.py
+python tests/test_ai_restoration.py
+python tests/test_quality_diagnosis.py
+python tests/test_photo_category.py
 ```
-모두 [PASS]로 통과해야 합니다 (총 95개 케이스, 심볼릭 링크 생성 권한이 있는 환경에서는 99개).
-`test_scanner.py`는 심볼릭 링크를 만들 권한이 없는 환경(예: 개발자 모드가 꺼진 Windows)에서는
-순환 테스트 일부가 [SKIP]으로 표시됩니다.
+모두 [PASS]로 통과해야 합니다 (총 212개 케이스 — 실측 확인, 심볼릭 링크 생성
+권한이 없는 환경 기준). `test_scanner.py`는 심볼릭 링크를 만들 권한이 없는
+환경(예: 개발자 모드가 꺼진 Windows)에서는 순환 테스트 일부가 [SKIP]으로
+표시되고, 권한이 있으면 그만큼 케이스 수가 더 늘어납니다.
+
+`test_ai_restoration.py`·`test_photo_category.py`는 화질 개선/얼굴 복원/디블러/
+디노이즈/사진 진단 카테고리 판단이 쓰는 모델 자산(`scripts/fetch_*_assets.py`로
+받음, 수백MB~1GB)이 없으면 실제 실행 검증만 [SKIP]으로 건너뜁니다(순수 로직
+검증은 자산 없이도 항상 통과해야 함).
 
 ## 사용 흐름
 
