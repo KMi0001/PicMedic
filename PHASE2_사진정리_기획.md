@@ -234,6 +234,34 @@ IFD 안에 있어서 `get_ifd()`로 따로 꺼내야 함(안 그러면 항상 No
   건너뛴 행은 남는 것까지 확인. 기존 스위트(10개 파일, 164개 케이스)도
   회귀 없음.
 
+## ✅ 검사 결과 새로고침 + 정리 실행 진행률 표시 (2026-09-06, 같은 날 후속)
+
+두 가지를 같은 날 이어서 고침 — 둘 다 사용자가 위 컴팩트 표로 대량 정리를
+실제로 써보면서 바로 알아챈 문제.
+
+- **검사 결과 목록 새로고침 버그**: `duplicate_screen`/`similar_screen`이
+  "정리 실행"으로 `ScanResult.remove()`를 호출해 같은 객체를 이미 고쳐도,
+  검사 결과 화면(표/칩)은 따로 다시 그려주지 않으면 갱신되지 않았다 —
+  휴지통으로 옮긴 사진이 검사 결과 목록에 계속 남아 보이던 버그. 두 화면에서
+  뒤로 나갈 때(직접 "뒤로", 휴지통 경유 포함) `result_screen.refresh_current_result()`
+  를 호출하도록 `gui/scan_session_window.py`에 연결. 겸사겸사
+  `refresh_current_result()`가 "총 파일" chip은 갱신 안 하던 것도 같이 고침
+  (복구는 total이 안 바뀌어서 안 보이던 문제였는데, 중복/유사 정리는 실제로
+  total이 줄어들어서 드러남).
+- **정리 실행 진행률 표시**: "795개를 처리해야 하는데 멈춘 건가 싶다"는
+  피드백 — `duplicate_screen`/`similar_screen`의 "정리 실행"이 파일 수백 개를
+  메인 스레드에서 그대로 옮겨서(진행 표시 없이) 대량일 때 응답 없음처럼
+  보였음. `gui/recovery_screen.py::RecoveryWorker`,
+  `gui/scan_session_window.py::_DateOrganizeWorker`와 같은 이유로
+  `gui/trash_worker.py::TrashMoveWorker`(QThread)로 옮기고, 두 화면 다
+  `gui/common_dialogs.py::ProgressDialog`로 진행률 표시. 취소는 "현재
+  그룹까지는 마치고 다음 그룹부터 멈춘다" 단위로 동작 — 취소로 아예 시도조차
+  안 된 카드/행은 화면에 그대로 남겨서 나중에 다시 시도할 수 있게 함
+  (`completed_entry_indices`로 "이 카드를 지워도 되는지" 정확히 판단).
+  실측 스모크 테스트: 정상 처리(진행률 콜백 횟수·체크 해제 행 보존 확인),
+  파일 이동을 인위적으로 늦춰서 취소가 실제로 중간에 멈추는 것까지 확인
+  (10그룹 중 4그룹만 처리되고 6그룹은 그대로 남음). 기존 스위트도 회귀 없음.
+
 ## 왜 이 순서인가
 
 [PicMedic_PRD_v2.md](PicMedic_PRD_v2.md) 1.2절이 PicMedic이 다루는 핵심 문제

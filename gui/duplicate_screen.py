@@ -54,10 +54,10 @@ from PySide6.QtWidgets import (
 )
 
 from core.duplicate_resolver import suggest_keep, suggest_keep_folder
-from gui.common_dialogs import confirm_dialog, info_dialog
+from gui.common_dialogs import confirm_dialog, info_dialog, ProgressDialog
 from gui.result_screen import CheckAllHeaderView, SummaryChip
 from gui.theme import COLORS
-from utils import trash
+from gui.trash_worker import TrashMoveWorker
 from utils.file_utils import format_file_size
 
 SKIP_LABEL = "이 조합은 정리하지 않음(건너뛰기)"
@@ -172,6 +172,17 @@ class DuplicateScreen(QWidget):
         self._cluster_section: QLabel | None = None
         self._auto_section: QLabel | None = None
         self._manual_section: QLabel | None = None
+
+        # "정리 실행"으로 파일을 옮기는 동안(수백 개면 눈에 띄게 걸림) UI가 멈춘
+        # 것처럼 보이지 않게 gui/trash_worker.py::TrashMoveWorker로 백그라운드
+        # 처리한다(gui/recovery_screen.py::RecoveryWorker와 같은 이유).
+        self.progress_dialog = ProgressDialog(self)
+        self.progress_dialog.cancel_requested.connect(self._on_cleanup_cancel_requested)
+        self._worker: TrashMoveWorker | None = None
+        # 워커가 끝난 뒤(_on_cleanup_finished) "이 카드/행을 지워도 되는지"
+        # 판단하려면 to_process의 각 항목이 어느 카드/행에서 왔는지 알아야 한다 —
+        # ("cluster", _ClusterEntry) | ("auto", row_index) | ("manual", _ManualEntry)
+        self._pending_entry_refs: list[tuple[str, object]] | None = None
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(48, 32, 48, 32)
@@ -575,11 +586,11 @@ class DuplicateScreen(QWidget):
         # 그룹 단위로 모아둔다(파일별 flat 목록이 아니라) — 임시 휴지통에
         # 옮길 때 그룹마다 서브폴더 + "왜 옮겨졌는지" 사유를 남기기 위함
         # (utils/trash.py::create_trash_group). 튜플: (남길 파일 경로, 옮길
-        # FileInfo 목록, 사유 텍스트)
+        # FileInfo 목록, 사유 텍스트). entry_refs는 to_process와 인덱스가 1:1로
+        # 맞는 병렬 목록 — 워커가 끝난 뒤 "이 카드/행을 지워도 되는지"를
+        # 판단하는 데 쓴다(gui/trash_worker.py 참고).
         to_process: list[tuple[str, list, str]] = []
-        resolved_clusters: list[_ClusterEntry] = []
-        resolved_auto_rows: list[int] = []  # 체크된 표 행 인덱스 — 끝에서 역순으로 지움
-        resolved_manual: list[_ManualEntry] = []
+        entry_refs: list[tuple[str, object]] = []
 
         for entry in self._cluster_entries:
             if entry.skip_radio.isChecked():
@@ -600,7 +611,7 @@ class DuplicateScreen(QWidget):
                     else:
                         reason = f"폴더 단위 정리 — '{keep_folder}' 폴더를 남기기로 선택해서 이 파일들이 이동됨"
                     to_process.append((keep_info.path, remove_infos, reason))
-            resolved_clusters.append(entry)
+                    entry_refs.append(("cluster", entry))
 
         if self._auto_table:
             for row, (group, keep_info, reason) in enumerate(self._auto_rows):
@@ -610,7 +621,7 @@ class DuplicateScreen(QWidget):
                 remove_infos = [info for info in group if info is not keep_info]
                 if remove_infos:
                     to_process.append((keep_info.path, remove_infos, f"자동 추천 적용 — {reason}"))
-                resolved_auto_rows.append(row)
+                    entry_refs.append(("auto", row))
 
         for entry in self._manual_entries:
             if entry.skip_radio.isChecked():
@@ -629,7 +640,7 @@ class DuplicateScreen(QWidget):
                 else:
                     reason = f"개별 그룹 정리 — '{Path(keep_info.path).name}' 파일을 남기고 이 파일들이 이동됨"
                 to_process.append((keep_info.path, remove_infos, reason))
-            resolved_manual.append(entry)
+                entry_refs.append(("manual", entry))
 
         total_to_remove = sum(len(infos) for _, infos, _ in to_process)
         if not total_to_remove:
@@ -647,21 +658,33 @@ class DuplicateScreen(QWidget):
         if not confirmed:
             return
 
-        session_ts = trash.new_session_timestamp()
-        moved = 0
-        failed: list[str] = []
-        for group_idx, (keep_path, remove_infos, reason) in enumerate(to_process, start=1):
-            group_dir = trash.create_trash_group(session_ts, group_idx, keep_path, reason)
-            for info in remove_infos:
-                try:
-                    trash.move_to_trash(info.path, group_dir=group_dir)
-                    moved += 1
-                    # 검사 결과에서도 빼야 다음에 "중복 파일 보기"를 다시 눌렀을 때
-                    # 이미 옮긴 파일이 또 중복으로 잡혀 되살아나 보이지 않는다.
-                    if self._result is not None:
-                        self._result.remove(info)
-                except OSError as exc:
-                    failed.append(f"{Path(info.path).name} ({exc})")
+        self._pending_entry_refs = entry_refs
+        self._worker = TrashMoveWorker(to_process, self)
+        self._worker.progress.connect(self._on_cleanup_progress)
+        self._worker.finished_batch.connect(self._on_cleanup_finished)
+        self.progress_dialog.start("임시 휴지통으로 옮기는 중")
+        self._worker.start()
+        self.progress_dialog.exec()
+
+    def _on_cleanup_progress(self, current: int, total: int, filename: str) -> None:
+        self.progress_dialog.update_progress(current, total, filename)
+
+    def _on_cleanup_cancel_requested(self) -> None:
+        if self._worker is not None:
+            self._worker.cancel()
+
+    def _on_cleanup_finished(self, moved: int, failed: list, moved_infos: list, completed_entry_indices: list) -> None:
+        self.progress_dialog.accept()
+        worker = self._worker
+        self._worker = None
+        if worker is not None:
+            worker.wait()
+
+        # 검사 결과에서도 빼야 다음에 "중복 파일 보기"를 다시 눌렀을 때 이미
+        # 옮긴 파일이 또 중복으로 잡혀 되살아나 보이지 않는다.
+        if self._result is not None:
+            for info in moved_infos:
+                self._result.remove(info)
 
         if failed:
             info_dialog(
@@ -672,14 +695,28 @@ class DuplicateScreen(QWidget):
         else:
             info_dialog(self, f"{moved}개 파일을 임시 휴지통으로 옮겼습니다.\n확인해주세요.")
 
-        # 실제로 처리된 카드/행만 화면에서 지우고, 건너뛴 카드/행은 다시 볼 수
-        # 있게 남긴다.
+        # 취소로 인해 아예 시도조차 안 된 카드/행은 다음에 다시 볼 수 있게
+        # 화면에 그대로 남긴다 — completed_entry_indices에 있는 것만 지운다.
+        entry_refs = self._pending_entry_refs or []
+        self._pending_entry_refs = None
+        resolved_clusters: set = set()
+        resolved_auto_rows: list[int] = []
+        resolved_manual: set = set()
+        for idx in completed_entry_indices:
+            kind, ref = entry_refs[idx]
+            if kind == "cluster":
+                resolved_clusters.add(ref)
+            elif kind == "auto":
+                resolved_auto_rows.append(ref)
+            elif kind == "manual":
+                resolved_manual.add(ref)
+
         for entry in resolved_clusters:
             self._cluster_entries.remove(entry)
             entry.card.deleteLater()
         if self._auto_table and resolved_auto_rows:
             self._auto_table.blockSignals(True)
-            for row in sorted(resolved_auto_rows, reverse=True):
+            for row in sorted(set(resolved_auto_rows), reverse=True):
                 self._auto_table.removeRow(row)
                 del self._auto_rows[row]
             self._auto_table.blockSignals(False)
@@ -689,4 +726,5 @@ class DuplicateScreen(QWidget):
             entry.card.deleteLater()
         self._refresh_summary()
 
-        self.view_trash_requested.emit()
+        if moved:
+            self.view_trash_requested.emit()

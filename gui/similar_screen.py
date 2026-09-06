@@ -37,7 +37,7 @@ from gui.common_dialogs import confirm_dialog, info_dialog, ProgressDialog
 from gui.result_screen import SummaryChip
 from gui.theme import COLORS
 from gui.thumbnail import ClickableThumbnail, load_thumbnail_qimage
-from utils import trash
+from gui.trash_worker import TrashMoveWorker
 
 THUMB_SIZE = 90
 DEFAULT_THRESHOLD = 10
@@ -199,6 +199,15 @@ class SimilarScreen(QWidget):
         self._progress_dialog = ProgressDialog(self)
         self._progress_dialog.cancel_requested.connect(self._on_preload_cancel_requested)
 
+        # "정리 실행"으로 파일을 옮기는 동안 보여줄 별도 진행률 팝업 — 위 미리보기
+        # 계산용(self._progress_dialog/self._worker)과 겹치지 않게 이름을 다르게
+        # 둔다(gui/duplicate_screen.py와 같은 gui/trash_worker.py::TrashMoveWorker
+        # 재사용).
+        self.cleanup_progress_dialog = ProgressDialog(self)
+        self.cleanup_progress_dialog.cancel_requested.connect(self._on_cleanup_cancel_requested)
+        self._cleanup_worker: TrashMoveWorker | None = None
+        self._pending_entry_refs: list[_GroupEntry] | None = None
+
     def set_result(self, result) -> None:
         """검사 결과를 받아 similar_groups()를 백그라운드로 계산하고 화면을
         새로 그린다."""
@@ -318,8 +327,10 @@ class SimilarScreen(QWidget):
     def _on_cleanup_clicked(self):
         # gui/duplicate_screen.py::_on_cleanup_clicked와 같은 방식 — 그룹마다
         # 임시휴지통 서브폴더 + 사유를 남긴다(utils/trash.py::create_trash_group).
+        # entry_refs는 to_process와 인덱스가 1:1로 맞는 병렬 목록 — 워커가 끝난
+        # 뒤 "이 카드를 지워도 되는지"를 판단하는 데 쓴다(gui/trash_worker.py).
         to_process: list[tuple[str, list, str]] = []
-        resolved: list[_GroupEntry] = []
+        entry_refs: list[_GroupEntry] = []
 
         for entry in self._entries:
             if entry.skip_radio.isChecked():
@@ -337,7 +348,7 @@ class SimilarScreen(QWidget):
                     f"({_group_similarity_note(entry.group)})"
                 )
                 to_process.append((keep_info.path, remove_infos, reason))
-            resolved.append(entry)
+                entry_refs.append(entry)
 
         total_to_remove = sum(len(infos) for _, infos, _ in to_process)
         if not total_to_remove:
@@ -354,19 +365,31 @@ class SimilarScreen(QWidget):
         if not confirmed:
             return
 
-        session_ts = trash.new_session_timestamp()
-        moved = 0
-        failed: list[str] = []
-        for group_idx, (keep_path, remove_infos, reason) in enumerate(to_process, start=1):
-            group_dir = trash.create_trash_group(session_ts, group_idx, keep_path, reason)
-            for info in remove_infos:
-                try:
-                    trash.move_to_trash(info.path, group_dir=group_dir)
-                    moved += 1
-                    if self._result is not None:
-                        self._result.remove(info)
-                except OSError as exc:
-                    failed.append(f"{Path(info.path).name} ({exc})")
+        self._pending_entry_refs = entry_refs
+        self._cleanup_worker = TrashMoveWorker(to_process, self)
+        self._cleanup_worker.progress.connect(self._on_cleanup_progress)
+        self._cleanup_worker.finished_batch.connect(self._on_cleanup_finished)
+        self.cleanup_progress_dialog.start("임시 휴지통으로 옮기는 중")
+        self._cleanup_worker.start()
+        self.cleanup_progress_dialog.exec()
+
+    def _on_cleanup_progress(self, current: int, total: int, filename: str) -> None:
+        self.cleanup_progress_dialog.update_progress(current, total, filename)
+
+    def _on_cleanup_cancel_requested(self) -> None:
+        if self._cleanup_worker is not None:
+            self._cleanup_worker.cancel()
+
+    def _on_cleanup_finished(self, moved: int, failed: list, moved_infos: list, completed_entry_indices: list) -> None:
+        self.cleanup_progress_dialog.accept()
+        worker = self._cleanup_worker
+        self._cleanup_worker = None
+        if worker is not None:
+            worker.wait()
+
+        if self._result is not None:
+            for info in moved_infos:
+                self._result.remove(info)
 
         if failed:
             info_dialog(
@@ -377,9 +400,16 @@ class SimilarScreen(QWidget):
         else:
             info_dialog(self, f"{moved}개 파일을 임시 휴지통으로 옮겼습니다.\n확인해주세요.")
 
-        for entry in resolved:
+        # 취소로 아예 시도조차 안 된 카드는 다음에 다시 볼 수 있게 남긴다.
+        entry_refs = self._pending_entry_refs or []
+        self._pending_entry_refs = None
+        for idx in completed_entry_indices:
+            entry = entry_refs[idx]
             self._entries.remove(entry)
             entry.card.deleteLater()
         self._refresh_summary()
+
+        if moved:
+            self.view_trash_requested.emit()
 
         self.view_trash_requested.emit()
