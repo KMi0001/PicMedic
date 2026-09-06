@@ -265,6 +265,10 @@ class ScanSessionWindow(QWidget):
 
     def _open_detail(self, info, return_to=None):
         self._detail_return_screen = return_to or self.result_screen
+        # 중복/유사 사진 화면에서는 "이게 정말 맞나" 확인하러 들어온 것이라
+        # 복구/변환/화질 개선 같은 편집 액션은 감춘다(gui/detail_screen.py::
+        # set_review_only 참고) — gui/date_group_detail_screen.py와 같은 원칙.
+        self.detail_screen.set_review_only(return_to in (self.duplicate_screen, self.similar_screen))
         self.detail_screen.set_file(info)
         self.stack.setCurrentWidget(self.detail_screen)
 

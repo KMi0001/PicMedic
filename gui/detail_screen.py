@@ -39,6 +39,9 @@ class DetailScreen(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.current_info: FileInfo | None = None
+        # 중복/유사 사진 화면에서 "미리보기"로 열렸을 때는 편집 액션(복구/
+        # 변환/화질 개선)을 감춘다 — set_review_only() 참고.
+        self._review_only = False
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(32, 24, 32, 24)
@@ -119,6 +122,14 @@ class DetailScreen(QWidget):
 
     # --- 외부에서 호출 --------------------------------------------------
 
+    def set_review_only(self, review_only: bool) -> None:
+        """중복/유사 사진 화면에서 사진을 클릭해 "이게 정말 맞나" 확인만 하러
+        들어왔을 때 True로 준다 — gui/date_group_detail_screen.py와 같은
+        원칙: 정리 대상을 확인하는 화면에 복구/변환/화질 개선 같은 편집
+        액션이 같이 있으면 오히려 헷갈린다(실사용 피드백). set_file() 호출
+        전후 아무 때나 불러도 되고, 다음 set_file()부터 반영된다."""
+        self._review_only = review_only
+
     def set_file(self, info: FileInfo):
         self.current_info = info
         self.filename_label.setText(info.filename)
@@ -148,12 +159,16 @@ class DetailScreen(QWidget):
 
         recoverable = info.status in (FileStatus.MISMATCH, FileStatus.PARTIAL_CORRUPTION)
         # "복구"는 문제가 있는 파일에만 의미가 있으므로 그런 파일에서만 보여준다.
-        self.restore_btn.setVisible(recoverable)
+        # (review_only면 어떤 상태든 액션 자체를 감춘다 — set_review_only() 참고.)
+        self.restore_btn.setVisible(recoverable and not self._review_only)
         self.restore_btn.setEnabled(recoverable and bool(info.detected_format))
         # "변환"은 복구와 무관하게, 디코딩만 된다면(readable) 정상 파일도 다른 형식으로
         # 바꿀 수 있어야 한다 (예: 정상 PNG를 웹 업로드용 WEBP로).
+        self.convert_btn.setVisible(not self._review_only)
         self.convert_btn.setEnabled(info.readable)
-        if recoverable:
+        if self._review_only:
+            self.recovery_note_label.setText("")
+        elif recoverable:
             self.recovery_note_label.setText(
                 "높은 확률로 복구할 수 있습니다."
                 if info.status == FileStatus.MISMATCH
@@ -171,8 +186,8 @@ class DetailScreen(QWidget):
         # 화질 개선은 이 기기에 실행 파일이 준비돼 있고(is_available), 디코딩이
         # 되는 파일에만 의미가 있다 — 폴더 일괄이 아니라 사진 한 장 단위로만
         # 제공한다(core/quality_enhancer.py 참고, 처리 시간이 커서 일괄 처리엔 부적합).
-        enhance_ready = quality_enhancer.is_available() and info.readable
-        self.enhance_btn.setVisible(quality_enhancer.is_available())
+        enhance_ready = quality_enhancer.is_available() and info.readable and not self._review_only
+        self.enhance_btn.setVisible(quality_enhancer.is_available() and not self._review_only)
         self.enhance_btn.setEnabled(enhance_ready)
         if enhance_ready and info.width and info.height and info.width * info.height < LOW_RES_HINT_THRESHOLD:
             self.enhance_hint_label.setText(
