@@ -2,13 +2,16 @@
 gui/trash_screen.py
 
 Phase 2 "사진 정리" — utils/trash.py::TRASH_DIR(임시 휴지통)에 옮겨진 파일을
-"적용 후 빠른 검수" 화면으로 보여준다. 정리 실행 1회(= 그룹 서브폴더 1개,
-utils/trash.py::create_trash_group)마다 카드 하나로 묶어서, "남긴 파일"과
-"이동된 파일"들을 썸네일로 나란히 놓고 훑어볼 수 있게 하고, 잘못 옮겨진
-파일은 그 자리에서 바로 "복원" 버튼으로 되돌릴 수 있다(선택 후 별도 버튼을
-누르는 방식이 아니라 파일마다 즉시 실행 — 검수 흐름을 빠르게 하기 위함).
-그룹 정보가 없는(평평하게 옮겨진) 옛 파일은 별도 카드로 모아서 보여준다.
-gui/duplicate_screen.py에서 파일을 휴지통으로 옮긴 직후 이 화면으로 넘어온다.
+"적용 후 빠른 검수" 화면으로 보여준다. 정리 실행 1회(= 매니페스트 안
+group_id 하나)마다 카드 하나로 묶어서, "남긴 파일"과 "이동된 파일"들을
+썸네일로 나란히 놓고 훑어볼 수 있게 하고, 잘못 옮겨진 파일은 그 자리에서
+바로 "복원" 버튼으로 되돌릴 수 있다(선택 후 별도 버튼을 누르는 방식이
+아니라 파일마다 즉시 실행 — 검수 흐름을 빠르게 하기 위함). 파일 자체는
+TRASH_DIR 바로 아래 평평하게 있고(폴더로 안 묶음), 어떤 정리로 왜
+옮겨졌는지는 여기서만(매니페스트를 통해) 보여준다 — 탐색기로 이 폴더를
+열어도 사유/그룹 폴더가 안 보인다. group_id가 없는(사유 기록이 없는) 옛
+파일은 별도 카드로 모아서 보여준다. gui/duplicate_screen.py에서 파일을
+휴지통으로 옮긴 직후 이 화면으로 넘어온다.
 
 실사용 중 발견된 버그: 휴지통에 파일이 수백 개 쌓이면(정리 실행을 몇 번만
 해도 쉽게 도달) __init__이 곧바로 refresh()를 부르면서 파일마다
@@ -181,23 +184,25 @@ class TrashScreen(QWidget):
                 if item.widget():
                     item.widget().deleteLater()
 
-            groups: dict[Path, list[Path]] = {}
-            flat: list[Path] = []
+            groups: dict[str, list[Path]] = {}
+            solo: list[Path] = []
             for path in files:
-                if path.parent == trash.trash_dir():
-                    flat.append(path)
+                entry = trash.entry_for(path) or {}
+                group_id = entry.get("group_id")
+                if group_id:
+                    groups.setdefault(group_id, []).append(path)
                 else:
-                    groups.setdefault(path.parent, []).append(path)
+                    solo.append(path)
 
             row = 0
-            # 그룹 폴더명이 타임스탬프로 시작해서, 이름 내림차순 = 최근 정리 먼저
-            for group_dir in sorted(groups, reverse=True):
-                card = self._build_group_card(group_dir, sorted(groups[group_dir], key=lambda p: p.name))
+            # group_id가 타임스탬프로 시작해서, 이름 내림차순 = 최근 정리 먼저
+            for group_id in sorted(groups, reverse=True):
+                card = self._build_group_card(group_id, sorted(groups[group_id], key=lambda p: p.name))
                 self._list_layout.insertWidget(row, card)
                 row += 1
 
-            if flat:
-                card = self._build_flat_card(sorted(flat, key=lambda p: p.name))
+            if solo:
+                card = self._build_flat_card(sorted(solo, key=lambda p: p.name))
                 self._list_layout.insertWidget(row, card)
                 row += 1
 
@@ -246,20 +251,21 @@ class TrashScreen(QWidget):
             else:
                 label.setText("?")
 
-    def _build_group_card(self, group_dir: Path, moved_files: list[Path]) -> QFrame:
+    def _build_group_card(self, group_id: str, moved_files: list[Path]) -> QFrame:
         card = QFrame()
         card.setObjectName("Card")
         layout = QVBoxLayout(card)
         layout.setContentsMargins(18, 14, 18, 14)
         layout.setSpacing(8)
 
-        reason = trash.group_reason_summary(moved_files[0]) if moved_files else None
+        first_entry = (trash.entry_for(moved_files[0]) or {}) if moved_files else {}
+        reason = first_entry.get("reason")
         header = QLabel(reason or "정리 그룹")
         header.setWordWrap(True)
         header.setStyleSheet("font-weight: 700;")
         layout.addWidget(header)
 
-        kept_path = trash.group_kept_path(moved_files[0]) if moved_files else None
+        kept_path = first_entry.get("kept_path")
         if kept_path:
             layout.addLayout(self._build_file_row(Path(kept_path), kept=True))
 
@@ -275,7 +281,7 @@ class TrashScreen(QWidget):
         layout.setContentsMargins(18, 14, 18, 14)
         layout.setSpacing(8)
 
-        header = QLabel("그룹 정보 없음 (이 기능이 생기기 전에 옮겨진 파일)")
+        header = QLabel("사유 기록 없음 (이 기능이 생기기 전에 옮겨진 파일)")
         header.setWordWrap(True)
         header.setStyleSheet(f"font-weight: 700; color: {COLORS['text_secondary']};")
         layout.addWidget(header)

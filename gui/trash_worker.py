@@ -46,7 +46,6 @@ class TrashMoveWorker(QThread):
         self._cancel_requested = True
 
     def run(self):
-        session_ts = trash.new_session_timestamp()
         total = sum(len(infos) for _, infos, _ in self.to_process)
         done = 0
         moved = 0
@@ -57,10 +56,10 @@ class TrashMoveWorker(QThread):
         for entry_idx, (keep_path, remove_infos, reason) in enumerate(self.to_process):
             if self._cancel_requested:
                 break
-            group_dir = trash.create_trash_group(session_ts, entry_idx + 1, keep_path, reason)
+            group_id = trash.new_group_id()
             for info in remove_infos:
                 try:
-                    trash.move_to_trash(info.path, group_dir=group_dir)
+                    trash.move_to_trash(info.path, group_id=group_id, reason=reason, kept_path=keep_path)
                     moved += 1
                     moved_infos.append(info)
                 except OSError as exc:
