@@ -513,6 +513,7 @@ class DuplicateScreen(QWidget):
         table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Fixed)
         table.setColumnWidth(0, 32)
         table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        table.setColumnWidth(3, 260)  # 사유가 기본 폭으로는 많이 잘려서 넉넉하게(그래도 다 안 보이면 툴팁)
         table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         table.setSelectionMode(QAbstractItemView.NoSelection)
         table.verticalHeader().setVisible(False)
@@ -536,6 +537,10 @@ class DuplicateScreen(QWidget):
                 table.setItem(row, 2, remove_item)
 
                 reason_item = QTableWidgetItem(reason)
+                # 열 폭이 좁아 사유가 잘려 보일 수 있어서(표를 컴팩트하게
+                # 유지하려고 줄바꿈 대신 이 방식을 택함), 마우스를 올리면
+                # 전체 사유를 툴팁으로 볼 수 있게 한다.
+                reason_item.setToolTip(reason)
                 table.setItem(row, 3, reason_item)
         finally:
             table.setUpdatesEnabled(True)
