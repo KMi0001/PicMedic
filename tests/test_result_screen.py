@@ -15,7 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication
 
-from gui.result_screen import ResultScreen
+from gui.result_screen import ResultScreen, FILTER_OPTIONS
 from models.file_info import FileInfo, FileStatus, RecoveryPossibility
 from models.scan_result import ScanResult
 
@@ -119,6 +119,47 @@ def run():
         deselect_elapsed < 3.0,
     )
     check("5,000행 전체해제 결과 전부 해제됨", len(big_screen._selected_files()) == 0)
+
+    # 실사용 재현 — "복구 가능한 파일만"(소수)으로 필터해 전체 선택한 뒤 다시
+    # "전체"(대량)로 필터를 돌리면 몇 분씩 응답 없음이 뜨던 문제(실측 총
+    # 15,591장 중 20장 필터 -> 전체선택 -> "전체"로 복귀 시 약 1,100초).
+    # 원인: _populate_table()이 self.table.blockSignals(True)만 걸었는데, 이건
+    # QTableWidget 자신의 신호만 막을 뿐 테이블이 내부에 따로 갖는
+    # QItemSelectionModel의 selectionChanged는 별개 객체라 안 막힌다 — 선택된
+    # 상태에서 행을 다시 채우면 selectionChanged가 행이 늘어나는 동안 여러 번
+    # 발생하고, 그때마다 _on_selection_changed가 "전체 행을 훑는" O(행 수)
+    # 루프를 또 돌아서 전체적으로 O(행 수^2)가 됐다. _populate_table()에
+    # _syncing 재진입 가드를 추가해서 고쳤다.
+    N_TOTAL = 8000
+    N_MISMATCH = 20
+    mixed_files = [
+        _make_info(f"mismatch_{i}.jpg", FileStatus.MISMATCH, RecoveryPossibility.RECOVERABLE)
+        for i in range(N_MISMATCH)
+    ] + [
+        _make_info(f"normal_{i}.jpg", FileStatus.NORMAL, RecoveryPossibility.NOT_APPLICABLE)
+        for i in range(N_TOTAL - N_MISMATCH)
+    ]
+    mixed_result = ScanResult()
+    for f in mixed_files:
+        mixed_result.add(f)
+
+    mixed_screen = ResultScreen()
+    mixed_screen.set_result(mixed_result)
+    mixed_screen._show_recoverable_only()
+    check(f"필터 후 {N_MISMATCH}행만 보임", mixed_screen.table.rowCount() == N_MISMATCH)
+
+    mixed_screen._set_all_checked(Qt.Checked)
+    check("필터된 소수 전체선택 정상 동작", len(mixed_screen._selected_files()) == N_MISMATCH)
+
+    t0 = time.perf_counter()
+    idx = FILTER_OPTIONS.index("전체")
+    mixed_screen.filter_combo.setCurrentIndex(idx)
+    filter_back_elapsed = time.perf_counter() - t0
+    check(
+        f"소수 선택 후 '전체'({N_TOTAL}행)로 필터 복귀가 3초 안에 끝남 (실측 {filter_back_elapsed:.2f}초)",
+        filter_back_elapsed < 3.0,
+    )
+    check(f"필터 복귀 후 {N_TOTAL}행 전부 보임", mixed_screen.table.rowCount() == N_TOTAL)
 
     print(f"\n총 {passed + failed}개 중 {passed}개 통과, {failed}개 실패")
     return failed == 0

@@ -453,59 +453,75 @@ class ResultScreen(QWidget):
         self._populate_table(files)
 
     def _populate_table(self, files: list):
+        # 실사용 버그(15,591장 중 20장으로 필터했다가 다시 "전체"로 돌아오면
+        # 응답 없음이 몇 분씩 뜸): self.table.blockSignals(True)는 QTableWidget
+        # 자신이 내는 신호(itemChanged 등)만 막지, 테이블이 내부에 따로 들고
+        # 있는 QItemSelectionModel의 selectionChanged는 별개 객체라 안 막는다.
+        # 필터를 바꾸기 직전에 선택된 행이 있으면, setRowCount()로 행을 지우고
+        # 다시 채우는 동안 선택 모델이 selectionChanged를 여러 번(행이 느는
+        # 만큼) 쏘고, 그때마다 _on_selection_changed가 자기 나름대로
+        # "전체 행을 훑는" O(행 수) 루프를 또 실행해서 — 결과적으로 채우는
+        # 동안 O(행 수^2)로 느려졌다(15,591행이면 최악의 경우 수억 번 반복).
+        # _set_all_checked()가 이미 쓰던 것과 같은 _syncing 재진입 가드를
+        # 여기서도 씌워서, 재구성하는 동안엔 _on_selection_changed가 아무 일도
+        # 안 하게 막는다.
+        self._syncing = True
         was_sorting = self.table.isSortingEnabled()
         self.table.setSortingEnabled(False)  # 채우는 동안 정렬되면 행-데이터가 뒤섞일 수 있음
         self.table.setUpdatesEnabled(False)  # 수만 행일 때 매 setItem마다 다시 그리지 않도록
-        self.table.blockSignals(True)
-        self.table.setRowCount(0)
-        self.table.setRowCount(len(files))
-        for row, info in enumerate(files):
-            not_recoverable = info.recoverable == RecoveryPossibility.NOT_RECOVERABLE
+        try:
+            self.table.blockSignals(True)
+            self.table.setRowCount(0)
+            self.table.setRowCount(len(files))
+            for row, info in enumerate(files):
+                not_recoverable = info.recoverable == RecoveryPossibility.NOT_RECOVERABLE
 
-            check_item = QTableWidgetItem()
-            if not_recoverable:
-                # PRD_MVP우선순위.md '남은 갭 #5': 복구 불가능한(완전 손상) 파일은 애초에
-                # 선택해서 복구를 시도할 수 없게 체크박스 자체를 비활성화한다.
-                check_item.setFlags(Qt.ItemIsUserCheckable)
-                check_item.setToolTip("복구할 수 없는 파일입니다.")
-            else:
-                check_item.setFlags(Qt.ItemIsUserCheckable | Qt.ItemIsEnabled)
-            check_item.setCheckState(Qt.Unchecked)
-            check_item.setData(Qt.UserRole, info)
+                check_item = QTableWidgetItem()
+                if not_recoverable:
+                    # PRD_MVP우선순위.md '남은 갭 #5': 복구 불가능한(완전 손상) 파일은 애초에
+                    # 선택해서 복구를 시도할 수 없게 체크박스 자체를 비활성화한다.
+                    check_item.setFlags(Qt.ItemIsUserCheckable)
+                    check_item.setToolTip("복구할 수 없는 파일입니다.")
+                else:
+                    check_item.setFlags(Qt.ItemIsUserCheckable | Qt.ItemIsEnabled)
+                check_item.setCheckState(Qt.Unchecked)
+                check_item.setData(Qt.UserRole, info)
 
-            status_value = info.status.value
-            dot = STATUS_DOT.get(status_value, "")
-            color = STATUS_COLORS.get(status_value, COLORS["text"])
+                status_value = info.status.value
+                dot = STATUS_DOT.get(status_value, "")
+                color = STATUS_COLORS.get(status_value, COLORS["text"])
 
-            status_item = QTableWidgetItem(f"{dot} {status_value.replace('_', ' ')}")
-            status_item.setForeground(_qcolor(color))
+                status_item = QTableWidgetItem(f"{dot} {status_value.replace('_', ' ')}")
+                status_item.setForeground(_qcolor(color))
 
-            name_item = QTableWidgetItem(info.filename)
-            format_item = QTableWidgetItem(info.detected_format or "-")
-            ext_item = QTableWidgetItem(info.extension)
+                name_item = QTableWidgetItem(info.filename)
+                format_item = QTableWidgetItem(info.detected_format or "-")
+                ext_item = QTableWidgetItem(info.extension)
 
-            size_item = _NumericSortItem(format_file_size(info.file_size))
-            size_item.setData(Qt.UserRole, info.file_size)
+                size_item = _NumericSortItem(format_file_size(info.file_size))
+                size_item.setData(Qt.UserRole, info.file_size)
 
-            mtime = _safe_mtime(info.path)
-            date_item = _NumericSortItem(_format_mtime(mtime))
-            date_item.setData(Qt.UserRole, mtime if mtime is not None else -1)
+                mtime = _safe_mtime(info.path)
+                date_item = _NumericSortItem(_format_mtime(mtime))
+                date_item.setData(Qt.UserRole, mtime if mtime is not None else -1)
 
-            if not_recoverable:
-                for cell in (status_item, name_item, format_item, ext_item, size_item, date_item):
-                    cell.setToolTip("복구할 수 없는 파일입니다.")
+                if not_recoverable:
+                    for cell in (status_item, name_item, format_item, ext_item, size_item, date_item):
+                        cell.setToolTip("복구할 수 없는 파일입니다.")
 
-            self.table.setItem(row, 0, check_item)
-            self.table.setItem(row, 1, status_item)
-            self.table.setItem(row, 2, name_item)
-            self.table.setItem(row, 3, format_item)
-            self.table.setItem(row, 4, ext_item)
-            self.table.setItem(row, 5, size_item)
-            self.table.setItem(row, 6, date_item)
+                self.table.setItem(row, 0, check_item)
+                self.table.setItem(row, 1, status_item)
+                self.table.setItem(row, 2, name_item)
+                self.table.setItem(row, 3, format_item)
+                self.table.setItem(row, 4, ext_item)
+                self.table.setItem(row, 5, size_item)
+                self.table.setItem(row, 6, date_item)
 
-        self.table.blockSignals(False)
-        self.table.setSortingEnabled(was_sorting)
-        self.table.setUpdatesEnabled(True)
+            self.table.blockSignals(False)
+        finally:
+            self._syncing = False
+            self.table.setSortingEnabled(was_sorting)
+            self.table.setUpdatesEnabled(True)
         self._update_selection_label()
 
     def _on_row_double_clicked(self, index):
