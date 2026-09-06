@@ -1,0 +1,22 @@
+This directory vendors a minimal subset of BasicSR — only what
+RestoreFormer++ (core/face_restorer.py) and NAFNet (core/deblur.py) actually
+need at inference time, not the training framework, dataset registry, or
+CUDA ops.
+
+basicsr/utils/{img_util,logger,dist_util}.py, basicsr/__init__.py:
+  Source: https://github.com/XPixelGroup/BasicSR (v1.4.2)
+  License: Apache License 2.0 (see UPSTREAM_LICENSE)
+
+basicsr/models/archs/{NAFNet_arch,arch_util}.py:
+  These two files are NOT from XPixelGroup/BasicSR upstream — they're from
+  megvii-research/NAFNet, which forked BasicSR and added them under this
+  same basicsr.models.archs namespace. Vendored as-is (NAFNet_arch.py trimmed
+  — see its own header comment).
+  Source: https://github.com/megvii-research/NAFNet
+  License: MIT License (see UPSTREAM_LICENSE_NAFNET)
+
+Vendored instead of pip-installed because the upstream basicsr PyPI sdist's
+setup.py fails on modern setuptools (KeyError: '__version__', an unfixed
+upstream packaging bug unrelated to this project) — this affects both the
+XPixelGroup and megvii-research forks identically, since they share the
+same broken setup.py.

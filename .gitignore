@@ -27,6 +27,33 @@ experiments/upscale_prototype/realesrgan/
 # scripts/fetch_realesrgan_assets.py로 다시 받을 수 있어 git엔 커밋하지 않음
 assets/realesrgan/
 
+# 얼굴 복원 기능(core/face_restorer.py)용 RestoreFormer++ 체크포인트 +
+# facexlib 가중치(약 465MB) — scripts/fetch_face_restore_assets.py로 다시
+# 받을 수 있어 git엔 커밋하지 않음
+assets/face_restore/
+
+# 디블러 기능(core/deblur.py)용 NAFNet-GoPro 체크포인트(약 68MB) —
+# scripts/fetch_deblur_assets.py로 다시 받을 수 있어 git엔 커밋하지 않음
+assets/deblur/
+
+# 디노이즈 기능(core/denoise.py)용 NAFNet-SIDD 체크포인트(약 117MB) —
+# scripts/fetch_denoise_assets.py로 다시 받을 수 있어 git엔 커밋하지 않음
+assets/denoise/
+
+# 사진 진단의 카테고리 판단(core/photo_category.py)용 CLIP 체크포인트(약 354MB) —
+# scripts/fetch_photo_category_assets.py로 다시 받을 수 있어 git엔 커밋하지 않음
+assets/photo_category/
+
+# 얼굴 복원 프로토타입(experiments/restore_prototype) — 가상환경과, 검증에만
+# 쓰고 vendor/로 필요한 부분만 옮겨온 원본 클론들은 추적 제외
+experiments/restore_prototype/.venv/
+experiments/restore_prototype/.venv_rf/
+experiments/restore_prototype/NAFNet_src/
+experiments/restore_prototype/RestoreFormerPP_src/
+experiments/restore_prototype/basicsr_src/
+experiments/restore_prototype/models/*.pth
+experiments/restore_prototype/test_images/out_*.png
+
 # OS
 Thumbs.db
 .DS_Store

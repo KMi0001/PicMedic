@@ -1,0 +1,10 @@
+This directory vendors the inference-path subset of RestoreFormer++
+(the RestoreFormer wrapper class, its VQVAE arch, and a download helper —
+not the training scripts or data loaders).
+
+Source: https://github.com/wzhouxiff/RestoreFormerPlusPlus
+License: Apache License 2.0 (see UPSTREAM_LICENSE)
+
+RestoreFormer.py is patched from upstream: added a face_model_rootpath
+parameter so facexlib loads PicMedic's bundled local weights instead of
+downloading them at runtime (see the comment at the top of that file).

@@ -10,8 +10,11 @@ Phase 2 "화질 개선"(실험적) — Real-ESRGAN(ncnn-vulkan)으로 사진 한
   "그럴듯하게" 확대하는 것 — experiments/upscale_prototype에서 실측 비교로
   확인됨(PicMedic-Web의 화질 판정과는 무관).
 - 처리 시간이 출력 픽셀 수(원본 × scale²)에 비례해서, 이미 고화질인 사진일수록
-  오래 걸리고 얻는 이득은 오히려 적다 — 그래서 폴더 일괄 처리가 아니라
-  gui/detail_screen.py에서 사진 한 장 단위로만 제공한다.
+  오래 걸리고 얻는 이득은 오히려 적다 — gui/detail_screen.py/gui/home_screen.py의
+  단일 파일 진입점은 여전히 한 장씩만 다루고, gui/batch_ai_screen.py에서 여러
+  장을 고르면 아래 enhance_batch()가 순서대로(동시에가 아니라) 처리하면서 매
+  장마다 진행률/취소를 보여준다 — "빨라진 게 아니라 여러 장을 순서대로 기다리는
+  것"임을 UI에서 예상 소요 시간으로 미리 안내한다(사용자 요청, 2026-09-06).
 
 필요 자산: assets/realesrgan/ 아래 실행 파일 + 모델(현재 Windows만 준비돼
 있음 — scripts/fetch_realesrgan_assets.py로 받는다). 없으면 is_available()이
@@ -22,11 +25,13 @@ from __future__ import annotations
 
 import subprocess
 import tempfile
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Optional
 
 from PIL import Image
 
+from models.file_info import FileInfo
 from utils.file_utils import unique_recovered_path
 
 _ASSETS_DIR = Path(__file__).resolve().parent.parent / "assets" / "realesrgan"
@@ -64,6 +69,7 @@ def enhance_quality(
     input_path: str,
     output_dir: str,
     *,
+    suffix: str = "upscaled",
     progress_callback: Optional[Callable[[float], None]] = None,
     should_cancel: Optional[Callable[[], bool]] = None,
 ) -> str:
@@ -131,6 +137,57 @@ def enhance_quality(
             detail = stderr_lines[-1] if stderr_lines else f"exit code {proc.returncode}"
             raise RuntimeError(f"화질 개선 실행에 실패했습니다: {detail}")
 
-        dest = unique_recovered_path(Path(output_dir), src_path.name, ".png", suffix="upscaled")
+        dest = unique_recovered_path(Path(output_dir), src_path.name, ".png", suffix=suffix)
         dest.write_bytes(tmp_out.read_bytes())
         return str(dest)
+
+
+@dataclass
+class EnhanceOutcome:
+    """core/converter.py::RecoveryOutcome과 같은 모양(같은 필드명)으로 맞춰서
+    gui/recovery_result_screen.py를 그대로 재사용할 수 있게 한다."""
+
+    original: FileInfo
+    output_path: Optional[str] = None
+    success: bool = False
+    verified: bool = True  # 이 기능엔 별도 검증 단계가 없어 성공하면 그대로 참
+    error_message: Optional[str] = None
+    skipped: bool = False
+
+
+def estimate_batch_seconds(files: list[FileInfo]) -> float:
+    """여러 장을 순서대로 처리할 때의 총 예상 소요 시간(초) — 해상도를 아는
+    파일만 더한다(모르는 파일은 대략치를 못 구하니 안내에서 "이상"으로 표시)."""
+    return sum(
+        estimate_seconds(f.width, f.height) for f in files if f.width and f.height
+    )
+
+
+def enhance_batch(
+    files: list[FileInfo],
+    output_dir: str | Path,
+    *,
+    suffix: str = "upscaled",
+    progress_callback: Optional[Callable[[int, int, str], None]] = None,
+    should_cancel: Optional[Callable[[], bool]] = None,
+) -> list[EnhanceOutcome]:
+    """여러 장을 한 장씩 순서대로 화질 개선한다(동시 처리 아님 — core/converter.py::
+    recover_batch와 같은 순차 반복 + 파일 단위 진행률/취소 패턴). 파일 하나가
+    실패해도 나머지는 계속 진행한다."""
+    output_dir = Path(output_dir)
+    outcomes: list[EnhanceOutcome] = []
+    total = len(files)
+    for idx, info in enumerate(files, start=1):
+        if should_cancel and should_cancel():
+            break
+        try:
+            output_path = enhance_quality(info.path, str(output_dir), suffix=suffix, should_cancel=should_cancel)
+            outcome = EnhanceOutcome(original=info, output_path=output_path, success=True)
+        except EnhancementCancelled:
+            break
+        except Exception as exc:  # noqa: BLE001 - 개별 파일 실패가 전체 배치를 막지 않도록
+            outcome = EnhanceOutcome(original=info, error_message=str(exc))
+        outcomes.append(outcome)
+        if progress_callback:
+            progress_callback(idx, total, info.filename)
+    return outcomes
