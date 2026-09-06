@@ -281,9 +281,25 @@ class DuplicateScreen(QWidget):
                 else:
                     plain_manual.append(group)
 
+            # 개별로 확인이 필요한(신뢰도 낮은, 보통 소수) 카드를 맨 위에 둔다 —
+            # 중복이 많으면(실사용: 수백~수천 그룹) 일괄 처리 가능한 표/카드가
+            # 훨씬 길어서, 개별 확인 카드가 밑에 있으면 스크롤하다 놓치기 쉽다는
+            # 피드백을 반영했다. 일괄 처리 가능한 두 섹션(폴더 단위/자동 추천)은
+            # 그 아래로 옮김 — 이미 정답이 골라져 있어 스크롤로 지나쳐도
+            # "정리 실행" 한 번이면 알아서 처리되니 순서가 밀려도 문제없다.
             row = 0
+            self._manual_section = QLabel()
+            self._manual_section.setStyleSheet("font-weight: 700;")
+            self._list_layout.insertWidget(row, self._manual_section)
+            row += 1
+            for idx, group in enumerate(plain_manual, start=1):
+                card, radios, skip_radio, suggested_keep = self._build_group_card(idx, group)
+                self._manual_entries.append(_ManualEntry(card, group, radios, skip_radio, suggested_keep))
+                self._list_layout.insertWidget(row, card)
+                row += 1
+
             self._cluster_section = QLabel()
-            self._cluster_section.setStyleSheet("font-weight: 700;")
+            self._cluster_section.setStyleSheet("font-weight: 700; margin-top: 8px;")
             self._list_layout.insertWidget(row, self._cluster_section)
             row += 1
             # 그룹을 많이 해결해주는 조합을 위로
@@ -306,16 +322,6 @@ class DuplicateScreen(QWidget):
             self._auto_table = self._build_auto_table(auto_rows)
             self._list_layout.insertWidget(row, self._auto_table)
             row += 1
-
-            self._manual_section = QLabel()
-            self._manual_section.setStyleSheet("font-weight: 700; margin-top: 8px;")
-            self._list_layout.insertWidget(row, self._manual_section)
-            row += 1
-            for idx, group in enumerate(plain_manual, start=1):
-                card, radios, skip_radio, suggested_keep = self._build_group_card(idx, group)
-                self._manual_entries.append(_ManualEntry(card, group, radios, skip_radio, suggested_keep))
-                self._list_layout.insertWidget(row, card)
-                row += 1
 
             self._refresh_summary()
         finally:
