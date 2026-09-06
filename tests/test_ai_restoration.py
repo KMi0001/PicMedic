@@ -16,7 +16,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from PIL import Image, ImageFilter
 
 from core import deblur, denoise, face_restorer, quality_enhancer
-from models.file_info import FileInfo
 
 
 def _make_test_photo(path: Path, size=(300, 200)):
@@ -64,46 +63,6 @@ def run():
         )
         low, high = face_restorer.estimate_seconds_range()
         check("face_restorer.estimate_seconds_range는 (낮, 높음) 순서", low <= high)
-
-        info_a = FileInfo(path=str(photo_path), filename="test.png", extension=".png", width=300, height=200)
-        info_b = FileInfo(path=str(photo_path), filename="test2.png", extension=".png", width=300, height=200)
-        check(
-            "quality_enhancer.estimate_batch_seconds는 파일 수만큼 늘어남",
-            quality_enhancer.estimate_batch_seconds([info_a, info_b])
-            > quality_enhancer.estimate_batch_seconds([info_a]),
-        )
-        check(
-            "deblur.estimate_batch_seconds는 파일 수만큼 늘어남",
-            deblur.estimate_batch_seconds([info_a, info_b]) > deblur.estimate_batch_seconds([info_a]),
-        )
-        rlow2, rhigh2 = face_restorer.estimate_batch_seconds_range(2)
-        rlow1, rhigh1 = face_restorer.estimate_batch_seconds_range(1)
-        check("face_restorer.estimate_batch_seconds_range는 장수만큼 늘어남", rlow2 > rlow1 and rhigh2 > rhigh1)
-
-        # --- 배치 함수는 파일 하나가 실패해도 죽지 않고 나머지를 계속 처리해야 한다.
-        # 존재하지 않는 경로를 넣으면 is_available()이 False든 True든 항상 실패
-        # 케이스이므로, 자산 유무와 무관하게 항상 검증 가능하다. ---
-        missing_info = FileInfo(path=str(tmp / "없는파일.png"), filename="없는파일.png", extension=".png")
-        outcomes = quality_enhancer.enhance_batch([missing_info], str(output_dir))
-        check(
-            "enhance_batch: 없는 파일이어도 예외 없이 실패 결과를 돌려줌",
-            len(outcomes) == 1 and not outcomes[0].success and outcomes[0].error_message,
-        )
-        outcomes = deblur.deblur_batch([missing_info], str(output_dir))
-        check(
-            "deblur_batch: 없는 파일이어도 예외 없이 실패 결과를 돌려줌",
-            len(outcomes) == 1 and not outcomes[0].success and outcomes[0].error_message,
-        )
-        outcomes = denoise.denoise_batch([missing_info], str(output_dir))
-        check(
-            "denoise_batch: 없는 파일이어도 예외 없이 실패 결과를 돌려줌",
-            len(outcomes) == 1 and not outcomes[0].success and outcomes[0].error_message,
-        )
-        outcomes = face_restorer.restore_batch([missing_info], str(output_dir))
-        check(
-            "restore_batch: 없는 파일이어도 예외 없이 실패 결과를 돌려줌",
-            len(outcomes) == 1 and not outcomes[0].success and outcomes[0].error_message,
-        )
 
         # --- 실제 모델 실행(자산이 받아져 있어야 함 — 없으면 스킵) ---
         if quality_enhancer.is_available():

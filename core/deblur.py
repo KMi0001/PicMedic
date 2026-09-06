@@ -23,19 +23,14 @@ core/face_restorer.py와 같은 이유(앱 시작 속도).
 필요 자산: assets/deblur/ 아래 NAFNet-GoPro-width32.pth(scripts/
 fetch_deblur_assets.py로 받는다, 구글드라이브 호스팅이라 gdown 필요). 없으면
 is_available()이 False라 GUI 쪽에서 버튼을 감춘다.
-
-gui/batch_ai_screen.py에서 여러 장을 고르면 deblur_batch()가 한 장씩 순서대로
-처리한다(core/quality_enhancer.py::enhance_batch와 같은 패턴).
 """
 
 from __future__ import annotations
 
 import sys
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Optional
 
-from models.file_info import FileInfo
 from utils.file_utils import unique_recovered_path
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -61,12 +56,6 @@ def estimate_seconds(width: int, height: int) -> float:
     """대략적인 예상 소요 시간(초, CPU 기준) — 확인 팝업 안내용."""
     megapixels = (width * height) / 1_000_000
     return _ESTIMATE_FIXED_SECONDS + _ESTIMATE_SECONDS_PER_MEGAPIXEL * megapixels
-
-
-def estimate_batch_seconds(files: list[FileInfo]) -> float:
-    """여러 장을 순서대로 처리할 때의 총 예상 소요 시간(초) — 해상도를 아는
-    파일만 더한다."""
-    return sum(estimate_seconds(f.width, f.height) for f in files if f.width and f.height)
 
 
 class DeblurCancelled(Exception):
@@ -168,46 +157,3 @@ def deblur_image(
         raise RuntimeError("보정된 이미지를 저장하지 못했습니다.")
     buf.tofile(str(dest))
     return str(dest)
-
-
-@dataclass
-class DeblurOutcome:
-    """core/converter.py::RecoveryOutcome과 같은 모양(같은 필드명)으로 맞춰서
-    gui/recovery_result_screen.py를 그대로 재사용할 수 있게 한다."""
-
-    original: FileInfo
-    output_path: Optional[str] = None
-    success: bool = False
-    verified: bool = True  # 이 기능엔 별도 검증 단계가 없어 성공하면 그대로 참
-    error_message: Optional[str] = None
-    skipped: bool = False
-
-
-def deblur_batch(
-    files: list[FileInfo],
-    output_dir: str | Path,
-    *,
-    suffix: str = "deblurred",
-    progress_callback: Optional[Callable[[int, int, str], None]] = None,
-    should_cancel: Optional[Callable[[], bool]] = None,
-) -> list[DeblurOutcome]:
-    """여러 장을 한 장씩 순서대로 디블러/디노이즈한다(동시 처리 아님 —
-    core/converter.py::recover_batch와 같은 순차 반복 + 파일 단위 진행률/취소
-    패턴). 파일 하나가 실패해도 나머지는 계속 진행한다."""
-    output_dir = Path(output_dir)
-    outcomes: list[DeblurOutcome] = []
-    total = len(files)
-    for idx, info in enumerate(files, start=1):
-        if should_cancel and should_cancel():
-            break
-        try:
-            output_path = deblur_image(info.path, str(output_dir), suffix=suffix, should_cancel=should_cancel)
-            outcome = DeblurOutcome(original=info, output_path=output_path, success=True)
-        except DeblurCancelled:
-            break
-        except Exception as exc:  # noqa: BLE001 - 개별 파일 실패가 전체 배치를 막지 않도록
-            outcome = DeblurOutcome(original=info, error_message=str(exc))
-        outcomes.append(outcome)
-        if progress_callback:
-            progress_callback(idx, total, info.filename)
-    return outcomes

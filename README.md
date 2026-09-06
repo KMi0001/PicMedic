@@ -70,7 +70,7 @@ python tests/test_ai_restoration.py
 python tests/test_quality_diagnosis.py
 python tests/test_photo_category.py
 ```
-모두 [PASS]로 통과해야 합니다 (총 212개 케이스 — 실측 확인, 심볼릭 링크 생성
+모두 [PASS]로 통과해야 합니다 (총 205개 케이스 — 실측 확인, 심볼릭 링크 생성
 권한이 없는 환경 기준). `test_scanner.py`는 심볼릭 링크를 만들 권한이 없는
 환경(예: 개발자 모드가 꺼진 Windows)에서는 순환 테스트 일부가 [SKIP]으로
 표시되고, 권한이 있으면 그만큼 케이스 수가 더 늘어납니다.

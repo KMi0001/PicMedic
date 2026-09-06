@@ -18,20 +18,14 @@ torch/facexlib/vendor 모듈은 이 파일 최상단이 아니라 함수 안에�
 필요 자산: assets/face_restore/ 아래 RestoreFormer++.ckpt + facexlib 가중치
 2개(scripts/fetch_face_restore_assets.py로 받는다). 없으면 is_available()이
 False라 GUI 쪽에서 버튼을 감춘다.
-
-gui/batch_ai_screen.py에서 여러 장을 고르면 restore_batch()가 한 장씩 순서대로
-(동시에가 아니라) 처리한다 — 얼굴 수에 따라 장당 시간이 달라 정확한 총합은
-못 구하고, estimate_batch_seconds_range()로 범위만 안내한다.
 """
 
 from __future__ import annotations
 
 import sys
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Optional
 
-from models.file_info import FileInfo
 from utils.file_utils import unique_recovered_path
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -176,57 +170,3 @@ def restore_face(
         raise RuntimeError("복원된 이미지를 저장하지 못했습니다.")
     buf.tofile(str(dest))
     return str(dest)
-
-
-@dataclass
-class RestoreOutcome:
-    """core/converter.py::RecoveryOutcome과 같은 모양(같은 필드명)으로 맞춰서
-    gui/recovery_result_screen.py를 그대로 재사용할 수 있게 한다."""
-
-    original: FileInfo
-    output_path: Optional[str] = None
-    success: bool = False
-    verified: bool = True  # 이 기능엔 별도 검증 단계가 없어 성공하면 그대로 참
-    error_message: Optional[str] = None
-    skipped: bool = False
-
-
-def estimate_batch_seconds_range(file_count: int) -> tuple[float, float]:
-    """여러 장을 순서대로 처리할 때의 총 예상 소요 시간 범위(초) — 얼굴 수는
-    미리 알 수 없어 파일 1장 기준 범위(estimate_seconds_range())에 장 수를
-    곱한 대략치."""
-    low, high = estimate_seconds_range()
-    return low * file_count, high * file_count
-
-
-def restore_batch(
-    files: list[FileInfo],
-    output_dir: str | Path,
-    *,
-    suffix: str = "restored",
-    progress_callback: Optional[Callable[[int, int, str], None]] = None,
-    should_cancel: Optional[Callable[[], bool]] = None,
-) -> list[RestoreOutcome]:
-    """여러 장을 한 장씩 순서대로 얼굴 복원한다(동시 처리 아님 — core/converter.py::
-    recover_batch와 같은 순차 반복 + 파일 단위 진행률/취소 패턴). 얼굴을 못 찾은
-    사진은 실패가 아니라 건너뜀으로 기록하고, 파일 하나가 실패해도 나머지는
-    계속 진행한다."""
-    output_dir = Path(output_dir)
-    outcomes: list[RestoreOutcome] = []
-    total = len(files)
-    for idx, info in enumerate(files, start=1):
-        if should_cancel and should_cancel():
-            break
-        try:
-            output_path = restore_face(info.path, str(output_dir), suffix=suffix, should_cancel=should_cancel)
-            outcome = RestoreOutcome(original=info, output_path=output_path, success=True)
-        except FaceRestorationCancelled:
-            break
-        except NoFaceFoundError:
-            outcome = RestoreOutcome(original=info, skipped=True, error_message="얼굴을 찾지 못함")
-        except Exception as exc:  # noqa: BLE001 - 개별 파일 실패가 전체 배치를 막지 않도록
-            outcome = RestoreOutcome(original=info, error_message=str(exc))
-        outcomes.append(outcome)
-        if progress_callback:
-            progress_callback(idx, total, info.filename)
-    return outcomes
