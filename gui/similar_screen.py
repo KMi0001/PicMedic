@@ -39,8 +39,29 @@ from gui.theme import COLORS
 from gui.thumbnail import ClickableThumbnail, load_thumbnail_qimage
 from gui.trash_worker import TrashMoveWorker
 
-THUMB_SIZE = 90
+THUMB_SIZE = 150
 DEFAULT_THRESHOLD = 10
+
+# 그룹 안에서 서로 다른 폴더를 뱃지 색으로 구분하기 위한 팔레트 — 테마 색만
+# 재사용(새 색을 추가하지 않음). 그룹 하나에 폴더가 팔레트 크기보다 많으면
+# 순환해서 재사용한다(흔치 않은 경우라 색이 겹쳐도 큰 문제 없음).
+_FOLDER_BADGE_PALETTE = (COLORS["primary"], COLORS["warning"], COLORS["danger"], COLORS["success"])
+
+
+def _folder_badge_colors(group: list) -> dict:
+    """그룹 안 파일들의 부모 폴더별로 뱃지 색을 배정한다(같은 폴더는 같은 색).
+    dict[Path, str]."""
+    colors: dict = {}
+    for info in group:
+        folder = Path(info.path).parent
+        if folder not in colors:
+            colors[folder] = _FOLDER_BADGE_PALETTE[len(colors) % len(_FOLDER_BADGE_PALETTE)]
+    return colors
+
+
+def _hex_to_rgba(hex_color: str, alpha: float) -> str:
+    color = QColor(hex_color)
+    return f"rgba({color.red()}, {color.green()}, {color.blue()}, {alpha})"
 
 
 def _similar_icon_pixmap(color: str, size: int = 26) -> QPixmap:
@@ -296,16 +317,20 @@ class SimilarScreen(QWidget):
         button_group.addButton(skip_radio)
         layout.addWidget(skip_radio)
 
+        # 사진을 가로로 나란히 놓아야 서로 다른 점이 눈에 더 잘 들어온다는
+        # 피드백으로 세로 목록에서 바꿨다 — 사진도 더 키우고(THUMB_SIZE),
+        # 세로 목록일 때는 사진 옆 여백에 폴더 경로를 그대로 적어 넣을 수
+        # 있었지만 가로로 눕히면 그 자리가 없어져서, 대신 사진마다 작은
+        # "폴더" 뱃지를 붙여 어떤 게 같은 폴더 사진인지 색으로 표시한다.
+        photos_row = QHBoxLayout()
+        photos_row.setSpacing(18)
+        folder_colors = _folder_badge_colors(group)
+
         radios: list[QRadioButton] = []
         for info in group:
-            row = QHBoxLayout()
-            row.setSpacing(10)
-
-            radio = QRadioButton()
-            radio.setToolTip("이 파일을 남깁니다")
-            button_group.addButton(radio)
-            radios.append(radio)
-            row.addWidget(radio)
+            col = QVBoxLayout()
+            col.setSpacing(6)
+            col.setAlignment(Qt.AlignHCenter)
 
             pixmap = None
             image = self._thumb_cache.get(info.path)
@@ -313,14 +338,40 @@ class SimilarScreen(QWidget):
                 pixmap = QPixmap.fromImage(image)
             thumb = ClickableThumbnail(pixmap, info.filename, size=THUMB_SIZE)
             thumb.clicked.connect(lambda info=info: self.file_selected.emit(info))
-            row.addWidget(thumb)
+            col.addWidget(thumb)
 
-            path_label = QLabel(str(Path(info.path).parent))
-            path_label.setWordWrap(True)
-            path_label.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 11px;")
-            row.addWidget(path_label, stretch=1)
+            radio_row = QHBoxLayout()
+            radio_row.setAlignment(Qt.AlignHCenter)
+            radio = QRadioButton("이 파일 남기기")
+            radio.setToolTip("이 파일을 남깁니다")
+            radio.setStyleSheet("font-size: 11px;")
+            button_group.addButton(radio)
+            radios.append(radio)
+            radio_row.addWidget(radio)
+            col.addLayout(radio_row)
 
-            layout.addLayout(row)
+            folder = Path(info.path).parent
+            badge_color = folder_colors[folder]
+            # 폴더명 1단계만 보여주면(예: "08") 날짜별 정리 폴더처럼 상위
+            # 폴더(연도)까지 알아야 뜻이 통하는 경우 헷갈려서, 뒤에서 2단계까지
+            # 보여준다("2016/08"). 전체 경로는 툴팁으로.
+            short_folder = "/".join(folder.parts[-2:]) if len(folder.parts) >= 2 else folder.name
+            badge = QLabel(f"📁 {short_folder}")
+            badge.setAlignment(Qt.AlignCenter)
+            badge.setToolTip(str(folder))  # 뱃지엔 짧게, 전체 경로는 툴팁으로
+            badge.setStyleSheet(
+                f"background-color: {_hex_to_rgba(badge_color, 0.13)}; color: {badge_color}; "
+                f"border: 1px solid {_hex_to_rgba(badge_color, 0.4)}; border-radius: 9px; "
+                f"padding: 2px 8px; font-size: 10.5px; font-weight: 600;"
+            )
+            col.addWidget(badge, alignment=Qt.AlignHCenter)
+
+            col_widget = QWidget()
+            col_widget.setLayout(col)
+            photos_row.addWidget(col_widget)
+
+        photos_row.addStretch(1)
+        layout.addLayout(photos_row)
 
         return card, radios, skip_radio
 
