@@ -231,7 +231,13 @@ class TrashScreen(QWidget):
         finally:
             self.setUpdatesEnabled(True)
 
-        missing = [p for p in files if str(p) not in self._thumb_cache]
+        # _pending_labels는 카드를 만든 순서(=화면에 보이는 순서, 최근 그룹이
+        # 위) 그대로 채워졌으므로(dict는 삽입 순서 유지) 이 순서를 그대로
+        # 워커에 넘긴다 — 그냥 trash.list_trash() 순서(폴더 탐색 순서, 화면
+        # 순서와 무관)로 넘기면 방금 정리해서 맨 위에 보이는 카드보다 안 보이는
+        # 아래쪽 카드가 먼저 로딩돼서, 정작 보고 있는 썸네일은 계속 "···"로
+        # 남아있는 것처럼 보이는 문제가 있었다.
+        missing = [Path(p) for p in self._pending_labels.keys()]
         if missing:
             self._worker = _ThumbnailLoadWorker(missing, _THUMB_SIZE, self)
             self._worker.thumbnail_ready.connect(self._on_thumbnail_ready)
