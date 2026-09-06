@@ -9,14 +9,27 @@ utils/trash.py::create_trash_group)마다 카드 하나로 묶어서, "남긴 �
 누르는 방식이 아니라 파일마다 즉시 실행 — 검수 흐름을 빠르게 하기 위함).
 그룹 정보가 없는(평평하게 옮겨진) 옛 파일은 별도 카드로 모아서 보여준다.
 gui/duplicate_screen.py에서 파일을 휴지통으로 옮긴 직후 이 화면으로 넘어온다.
+
+실사용 중 발견된 버그: 휴지통에 파일이 수백 개 쌓이면(정리 실행을 몇 번만
+해도 쉽게 도달) __init__이 곧바로 refresh()를 부르면서 파일마다
+load_thumbnail()(동기 디코딩)을 다 돌려서, gui/scan_session_window.py::
+ScanSessionWindow를 새로 만들 때마다(스캔을 새로 할 때마다!) 몇 초~몇십 초씩
+메인 스레드가 멈췄다(실측: 850여 개에서 25초, "다시 검사"가 응답 없음처럼
+보이던 원인). 두 가지로 고쳤다:
+1. __init__에서 refresh()를 미리 부르지 않는다 — 실제로 화면을 열 때만
+   (gui/scan_session_window.py::_open_trash) 부른다. 스캔 세션을 새로 만들
+   때마다 휴지통 화면까지 미리 채울 필요가 없다.
+2. refresh() 자체도 썸네일 디코딩을 백그라운드 스레드(_ThumbnailLoadWorker)로
+   돌리고, 이미 불러온 썸네일은 self._thumb_cache에 남겨서(파일 삭제/복원으로
+   refresh()가 반복 호출돼도) 다시 디코딩하지 않는다.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import Qt, Signal, QUrl, QRectF
-from PySide6.QtGui import QPainter, QPixmap, QColor, QPen, QDesktopServices
+from PySide6.QtCore import Qt, QThread, Signal, QUrl, QRectF
+from PySide6.QtGui import QPainter, QPixmap, QColor, QPen, QDesktopServices, QImage
 from PySide6.QtWidgets import (
     QWidget,
     QVBoxLayout,
@@ -30,11 +43,36 @@ from PySide6.QtWidgets import (
 from gui.common_dialogs import info_dialog
 from gui.result_screen import SummaryChip
 from gui.theme import COLORS
-from gui.thumbnail import load_thumbnail
+from gui.thumbnail import load_thumbnail_qimage
 from utils import trash
 from utils.file_utils import format_file_size
 
 _THUMB_SIZE = 56
+
+
+class _ThumbnailLoadWorker(QThread):
+    """paths 중 아직 캐시에 없는 파일만 백그라운드에서 QImage로 미리 불러온다
+    (QImage는 스레드 세이프, QPixmap 변환은 메인 스레드에서 — gui/thumbnail.py
+    참고). 한 장씩 thumbnail_ready로 돌려줘서, 다 끝나길 기다리지 않고 로드되는
+    대로 화면에 바로 반영할 수 있게 한다."""
+
+    thumbnail_ready = Signal(str, object)  # path str, QImage | None
+
+    def __init__(self, paths: list[Path], size: int, parent=None):
+        super().__init__(parent)
+        self.paths = paths
+        self.size = size
+        self._cancel_requested = False
+
+    def cancel(self):
+        self._cancel_requested = True
+
+    def run(self):
+        for path in self.paths:
+            if self._cancel_requested:
+                break
+            image = load_thumbnail_qimage(str(path), self.size) if path.exists() else None
+            self.thumbnail_ready.emit(str(path), image)
 
 
 def _trash_icon_pixmap(color: str, size: int = 26) -> QPixmap:
@@ -78,6 +116,9 @@ class TrashScreen(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self._thumb_cache: dict[str, "QImage | None"] = {}
+        self._pending_labels: dict[str, list[QLabel]] = {}
+        self._worker: _ThumbnailLoadWorker | None = None
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(48, 32, 48, 32)
@@ -136,12 +177,26 @@ class TrashScreen(QWidget):
         btn_row.addWidget(open_folder_btn)
         outer.addLayout(btn_row)
 
-        self.refresh()
+        # 실제로 화면을 열 때만 채운다(gui/scan_session_window.py::_open_trash가
+        # 호출) — 여기서 미리 부르면 스캔 세션을 새로 만들 때마다(스캔을 새로
+        # 할 때마다!) 휴지통 파일이 많을 때 몇 초~몇십 초씩 멈춰 보인다.
 
     def refresh(self) -> None:
-        """utils/trash.py의 실제 폴더 내용을 다시 읽어와 그룹별 카드로 갱신한다."""
+        """utils/trash.py의 실제 폴더 내용을 다시 읽어와 그룹별 카드로 갱신한다.
+        썸네일은 캐시에 있으면 즉시, 없으면 자리만 잡아두고 백그라운드에서
+        불러와 도착하는 대로 채운다(파일이 수백 개여도 카드 자체는 바로 뜸)."""
         files = trash.list_trash()
         self.count_chip.set_value(len(files))
+
+        if self._worker is not None:
+            # 이전 로딩이 아직 안 끝났으면 취소만 하고 손을 뗀다 — 곧 스스로
+            # 멈추고(run() 안 취소 체크) 자기 자신을 정리한다(QThread를 실행
+            # 중에 강제로 없애면 크래시 나므로).
+            self._worker.cancel()
+            self._worker.finished.connect(self._worker.deleteLater)
+            self._worker = None
+
+        self._pending_labels = {}
 
         self.setUpdatesEnabled(False)
         try:
@@ -175,6 +230,25 @@ class TrashScreen(QWidget):
             self.scroll_area.setVisible(has_any)
         finally:
             self.setUpdatesEnabled(True)
+
+        missing = [p for p in files if str(p) not in self._thumb_cache]
+        if missing:
+            self._worker = _ThumbnailLoadWorker(missing, _THUMB_SIZE, self)
+            self._worker.thumbnail_ready.connect(self._on_thumbnail_ready)
+            self._worker.start()
+
+    def _on_thumbnail_ready(self, path_str: str, image) -> None:
+        self._thumb_cache[path_str] = image
+        labels = self._pending_labels.get(path_str)
+        if not labels:
+            return  # 이미 다른 refresh()로 화면이 바뀌었거나, 이 파일이 더는 안 보임
+        pixmap = QPixmap.fromImage(image) if image is not None else None
+        for label in labels:
+            if pixmap is not None:
+                label.setPixmap(pixmap)
+                label.setStyleSheet("")
+            else:
+                label.setText("?")
 
     def _build_group_card(self, group_dir: Path, moved_files: list[Path]) -> QFrame:
         card = QFrame()
@@ -222,9 +296,20 @@ class TrashScreen(QWidget):
         thumb = QLabel()
         thumb.setFixedSize(_THUMB_SIZE, _THUMB_SIZE)
         thumb.setAlignment(Qt.AlignCenter)
-        pixmap = load_thumbnail(str(path), _THUMB_SIZE) if path.exists() else None
-        if pixmap is not None:
-            thumb.setPixmap(pixmap)
+        path_str = str(path)
+        if path_str in self._thumb_cache:
+            cached = self._thumb_cache[path_str]
+            if cached is not None:
+                thumb.setPixmap(QPixmap.fromImage(cached))
+            else:
+                thumb.setText("?")
+                thumb.setStyleSheet(f"color: {COLORS['text_secondary']}; border: 1px solid {COLORS['border']};")
+        elif path.exists():
+            # 아직 캐시에 없으면 자리만 잡아두고, _on_thumbnail_ready가 도착하는
+            # 대로 채운다 — refresh()가 이 파일을 백그라운드 로딩 대상에 넣었음.
+            thumb.setText("···")
+            thumb.setStyleSheet(f"color: {COLORS['text_secondary']}; border: 1px solid {COLORS['border']};")
+            self._pending_labels.setdefault(path_str, []).append(thumb)
         else:
             thumb.setText("?")
             thumb.setStyleSheet(f"color: {COLORS['text_secondary']}; border: 1px solid {COLORS['border']};")
