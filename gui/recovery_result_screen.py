@@ -94,9 +94,9 @@ class RecoveryResultScreen(QWidget):
         card_layout.setContentsMargins(32, 32, 32, 32)
         card_layout.setSpacing(14)
 
-        title = QLabel("복구 완료")
-        title.setObjectName("Title")
-        card_layout.addWidget(title)
+        self.title_label = QLabel("복구 완료")
+        self.title_label.setObjectName("Title")
+        card_layout.addWidget(self.title_label)
 
         # 상태별 개수 카드 = 동시에 버튼. SummaryChip을 clickable=True로 재사용해서
         # 누르면 해당 상태의 파일 목록을 보여준다(DESIGN.md "상태 요약 카드" 참고) —
@@ -141,9 +141,10 @@ class RecoveryResultScreen(QWidget):
 
         outer.addWidget(card)
 
-    def set_outcomes(self, outcomes: list, output_dir: str):
+    def set_outcomes(self, outcomes: list, output_dir: str, title: str = "복구 완료"):
         self.outcomes = outcomes
         self.output_dir = output_dir
+        self.title_label.setText(f"{title} 완료" if not title.endswith("완료") else title)
 
         success = sum(1 for o in outcomes if o.success and o.verified)
         partial = sum(1 for o in outcomes if o.success and not o.verified)

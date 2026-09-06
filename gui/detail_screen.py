@@ -19,17 +19,12 @@ from PySide6.QtWidgets import (
 )
 
 from core.converter import RecoveryMode
-from core import quality_enhancer
-from gui.quality_enhance_dialog import run_quality_enhancement
+from gui.quality_diagnosis_dialog import run_quality_diagnosis
 from gui.theme import COLORS, STATUS_COLORS
 from models.file_info import FileInfo, FileStatus
 from utils.file_utils import format_file_size
 
 PREVIEW_SIZE = 320
-# 화질 개선 대상으로 안내할 기준 — 이보다 크면 이미 충분히 고화질이라 굳이
-# 4배로 더 키울 필요가 적고, 시간만 오래 걸린다(실측: core/quality_enhancer.py
-# 참고, 처리 시간이 출력 픽셀 수에 비례해서 고화질 사진일수록 더 오래 걸림).
-LOW_RES_HINT_THRESHOLD = 1_000_000  # 총 픽셀 수 100만(예: 1000x1000) 미만
 
 
 class DetailScreen(QWidget):
@@ -93,28 +88,23 @@ class DetailScreen(QWidget):
         self.recovery_note_label.setWordWrap(True)
         info_layout.addWidget(self.recovery_note_label)
 
-        self.enhance_hint_label = QLabel()
-        self.enhance_hint_label.setWordWrap(True)
-        self.enhance_hint_label.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 12px;")
-        info_layout.addWidget(self.enhance_hint_label)
-
         info_layout.addStretch(1)
 
         btn_row = QHBoxLayout()
+        self.diagnose_btn = QPushButton("사진 진단")
+        self.diagnose_btn.setToolTip(
+            "블러/노이즈/얼굴 흐림 등을 실제로 분석해서\n"
+            "어떤 복원 기능이 맞는지 추천합니다."
+        )
+        self.diagnose_btn.clicked.connect(self._on_diagnose_clicked)
+        btn_row.addWidget(self.diagnose_btn)
         self.restore_btn = QPushButton("실제 형식으로 복구")
         self.restore_btn.clicked.connect(self._on_restore_clicked)
         self.convert_btn = QPushButton("확장자 변환")
         self.convert_btn.setObjectName("Primary")
         self.convert_btn.clicked.connect(self._on_convert_clicked)
-        self.enhance_btn = QPushButton("화질 개선")
-        self.enhance_btn.setToolTip(
-            "사진을 더 선명하게 확대합니다. 사라진 디테일이 되살아나는 것은 아니고,\n"
-            "단순 확대보다 덜 뭉개지게 키워주는 기능입니다."
-        )
-        self.enhance_btn.clicked.connect(self._on_enhance_clicked)
         btn_row.addWidget(self.restore_btn)
         btn_row.addWidget(self.convert_btn)
-        btn_row.addWidget(self.enhance_btn)
         info_layout.addLayout(btn_row)
 
         content_col.addWidget(info_card)
@@ -160,6 +150,11 @@ class DetailScreen(QWidget):
         recoverable = info.status in (FileStatus.MISMATCH, FileStatus.PARTIAL_CORRUPTION)
         # "복구"는 문제가 있는 파일에만 의미가 있으므로 그런 파일에서만 보여준다.
         # (review_only면 어떤 상태든 액션 자체를 감춘다 — set_review_only() 참고.)
+        # "사진 진단"은 is_available() 게이팅 없음 — Pillow 부분은 항상 되고,
+        # 얼굴 탐지 부분만 facexlib 자산 여부에 따라 결과에서 조용히 생략된다
+        # (core/quality_diagnosis.py::detect_faces).
+        self.diagnose_btn.setVisible(not self._review_only)
+        self.diagnose_btn.setEnabled(info.readable)
         self.restore_btn.setVisible(recoverable and not self._review_only)
         self.restore_btn.setEnabled(recoverable and bool(info.detected_format))
         # "변환"은 복구와 무관하게, 디코딩만 된다면(readable) 정상 파일도 다른 형식으로
@@ -182,19 +177,6 @@ class DetailScreen(QWidget):
         self.restore_btn.setText(
             f"{info.detected_format or '원본'} 형식으로 복구" if info.detected_format else "확장자 복구"
         )
-
-        # 화질 개선은 이 기기에 실행 파일이 준비돼 있고(is_available), 디코딩이
-        # 되는 파일에만 의미가 있다 — 폴더 일괄이 아니라 사진 한 장 단위로만
-        # 제공한다(core/quality_enhancer.py 참고, 처리 시간이 커서 일괄 처리엔 부적합).
-        enhance_ready = quality_enhancer.is_available() and info.readable and not self._review_only
-        self.enhance_btn.setVisible(quality_enhancer.is_available() and not self._review_only)
-        self.enhance_btn.setEnabled(enhance_ready)
-        if enhance_ready and info.width and info.height and info.width * info.height < LOW_RES_HINT_THRESHOLD:
-            self.enhance_hint_label.setText(
-                "저해상도 사진이에요 — \"화질 개선\"으로 더 선명하게 확대해볼 수 있어요."
-            )
-        else:
-            self.enhance_hint_label.setText("")
 
         self._load_preview(info)
 
@@ -254,8 +236,8 @@ class DetailScreen(QWidget):
         if self.current_info:
             self.recover_requested.emit([self.current_info], RecoveryMode.CONVERT)
 
-    def _on_enhance_clicked(self):
+    def _on_diagnose_clicked(self):
         info = self.current_info
         if not info:
             return
-        run_quality_enhancement(self, info.path, info.width, info.height)
+        run_quality_diagnosis(self, info.path, info.width, info.height)

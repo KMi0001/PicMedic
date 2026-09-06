@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
     QFrame,
 )
 
+from gui.quality_diagnosis_dialog import run_quality_diagnosis
 from gui.theme import COLORS, STATUS_COLORS, STATUS_DOT
 from models.file_info import FileStatus, RecoveryPossibility
 from models.scan_result import ScanResult
@@ -206,9 +207,18 @@ class SummaryChip(QFrame):
         self.value_label.setText(text)
 
 
+def _set_primary_active(button: QPushButton, active: bool) -> None:
+    """버튼을 지금 누를 수 있는(active) 상태면 메인 색상(objectName="Primary")
+    으로, 아니면 기본 스타일로 보이게 한다 — QSS는 objectName 기반이라
+    바뀔 때마다 unpolish/polish로 강제로 다시 그려야 반영된다."""
+    button.setObjectName("Primary" if active else "")
+    button.style().unpolish(button)
+    button.style().polish(button)
+
+
 class ResultScreen(QWidget):
     file_selected = Signal(object)       # FileInfo
-    recovery_requested = Signal(list)    # list[FileInfo]
+    recovery_requested = Signal(list)    # list[FileInfo] — 확장자 변환/복원
     rescan_requested = Signal()
     resume_requested = Signal()          # 중단된 검사를 나머지 파일부터 이어서 진행
     duplicates_requested = Signal()      # "중복 파일 보기" — gui/duplicate_screen.py로 이동
@@ -348,11 +358,24 @@ class ResultScreen(QWidget):
         self.selection_label.setStyleSheet(f"color: {COLORS['text_secondary']};")
         bottom_row.addWidget(self.selection_label)
         bottom_row.addStretch(1)
-        self.recover_selected_btn = QPushButton("Medic!")
-        self.recover_selected_btn.setObjectName("Primary")
+        # "Medic!"은 확장자 변환(빠른 파일 I/O)만 계속 배치로 묶는다. 화질
+        # 개선/얼굴 복원/디블러/디노이즈는 개별 버튼을 다 빼고 "사진 진단"
+        # 하나로 통일했다 — 어떤 복원이 맞는지는 진단 결과에서 추천받아
+        # 실행하는 흐름(2026-09-07, 사용자 요청). 진단은 한 장 단위 기능이라
+        # 정확히 1개 선택했을 때만 활성화한다(배치 아님).
+        self.recover_selected_btn = QPushButton("확장자 변환")
         self.recover_selected_btn.setEnabled(False)
         self.recover_selected_btn.clicked.connect(self._on_recover_selected)
         bottom_row.addWidget(self.recover_selected_btn)
+
+        self.diagnose_selected_btn = QPushButton("사진 진단")
+        self.diagnose_selected_btn.setEnabled(False)
+        self.diagnose_selected_btn.clicked.connect(self._on_diagnose_selected)
+        bottom_row.addWidget(self.diagnose_selected_btn)
+        # 처음엔 둘 다 비활성 상태라 기본(회색) 스타일로 시작 — 선택 상태가
+        # 바뀔 때마다 _update_selection_label()이 활성 여부에 맞춰 다시 칠한다.
+        _set_primary_active(self.recover_selected_btn, False)
+        _set_primary_active(self.diagnose_selected_btn, False)
         outer.addLayout(bottom_row)
 
         self.table.itemChanged.connect(self._on_item_changed)
@@ -619,8 +642,22 @@ class ResultScreen(QWidget):
             self.selection_label.setText(f"{len(selected)}개 파일 선택됨")
         else:
             self.selection_label.setText("선택된 파일 없음")
-        self.recover_selected_btn.setEnabled(len(selected) > 0)
+        can_recover = len(selected) > 0
+        self.recover_selected_btn.setEnabled(can_recover)
+        _set_primary_active(self.recover_selected_btn, can_recover)
+
+        can_diagnose = len(selected) == 1
+        self.diagnose_selected_btn.setEnabled(can_diagnose)
+        _set_primary_active(self.diagnose_selected_btn, can_diagnose)
+
         self._header.set_checked(total_rows > 0 and len(selected) == total_rows)
+
+    def _on_diagnose_selected(self):
+        selected = self._selected_files()
+        if len(selected) != 1:
+            return
+        info = selected[0]
+        run_quality_diagnosis(self, info.path, info.width, info.height)
 
     def _on_recover_selected(self):
         selected = self._selected_files()
