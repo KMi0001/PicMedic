@@ -432,9 +432,10 @@ class ScanSessionWindow(QWidget):
     # --- 창 종료 ---------------------------------------------------------
 
     def closeEvent(self, event):
-        # 검사/복구가 백그라운드 스레드로 아직 도는 중에 창을 지워버리면
-        # ("QThread: Destroyed while thread is still running") 죽는다 — 각 화면의
-        # 취소 버튼으로 스레드가 실제로 끝난 뒤에만 닫히게 막는다.
+        # 검사/복구/날짜별 정리처럼 "취소하면 안 되는" 진행 중 작업은 실제로
+        # 끝날 때까지 창을 못 닫게 막는다 — 스레드가 도는 중에 창(과 워커)이
+        # 같이 없어지면 ("QThread: Destroyed while thread is still running")
+        # 죽기도 하고, 파일 이동 같은 작업을 중간에 끊으면 상태가 애매해진다.
         scan_worker = getattr(self.scanning_screen, "worker", None)
         recovery_worker = getattr(self.recovery_screen, "worker", None)
         if (
@@ -444,5 +445,14 @@ class ScanSessionWindow(QWidget):
         ):
             event.ignore()
             return
+
+        # 썸네일 미리보기 로딩은(휴지통/날짜 그룹 상세) 다시 만들면 그만인
+        # 순수 화면용 데이터라 막을 필요는 없고, 그냥 안전하게 멈추기만 한다
+        # (gui/trash_screen.py::stop_pending_work 참고) — 이걸 안 하면 이
+        # 창을 닫는 순간 백그라운드 로딩이 아직 돌고 있을 때 같은 크래시
+        # 위험이 있다.
+        self.trash_screen.stop_pending_work()
+        self.date_group_detail_screen.stop_pending_work()
+
         self.closed.emit(self)
         super().closeEvent(event)

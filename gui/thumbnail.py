@@ -13,7 +13,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Optional
 
-from PySide6.QtCore import QSize, Qt, Signal
+from PySide6.QtCore import QSize, Qt, QThread, Signal
 from PySide6.QtGui import QImage, QImageReader, QPixmap
 from PySide6.QtWidgets import QFrame, QLabel, QVBoxLayout
 
@@ -65,6 +65,39 @@ def load_thumbnail(path: str, size: int) -> Optional[QPixmap]:
     return QPixmap.fromImage(image)
 
 
+class ThumbnailLoadWorker(QThread):
+    """paths를 백그라운드에서 한 장씩 QImage로 불러와 thumbnail_ready로 돌려준다
+    (QImage는 스레드 세이프, QPixmap 변환은 메인 스레드에서 — 위 설명 참고).
+    다 끝나길 기다리지 않고 로드되는 대로 화면에 바로 반영할 수 있다.
+
+    호출부가 지키면 좋은 것: paths는 반드시 "화면에 보이는 순서"로 넘길 것 —
+    이 순서 그대로 로딩되므로, 아무 순서(예: 폴더 탐색 순서)로 넘기면 실제로
+    보이는 항목보다 안 보이는 항목이 먼저 채워져서 "안 불러와지는 것처럼"
+    보이는 문제가 있다(gui/trash_screen.py에서 실사용 중 발견됨).
+
+    gui/trash_screen.py, gui/date_group_detail_screen.py 둘 다 필요해져서
+    공용으로 옮김(DESIGN.md "두 번째로 같은 게 필요해지면 공용으로 옮긴다")."""
+
+    thumbnail_ready = Signal(str, object)  # path str, QImage | None
+
+    def __init__(self, paths: list, size: int, parent=None):
+        super().__init__(parent)
+        self.paths = paths
+        self.size = size
+        self._cancel_requested = False
+
+    def cancel(self):
+        self._cancel_requested = True
+
+    def run(self):
+        for path in self.paths:
+            if self._cancel_requested:
+                break
+            path = Path(path)
+            image = load_thumbnail_qimage(str(path), self.size) if path.exists() else None
+            self.thumbnail_ready.emit(str(path), image)
+
+
 class ClickableThumbnail(QFrame):
     """썸네일 + 파일명 한 칸. 눌리면 clicked를 쏜다(어떤 파일인지는 호출부가
     이미 알고 있으므로 인자 없음) — gui/duplicate_screen.py::_ClickableLabel과
@@ -106,6 +139,16 @@ class ClickableThumbnail(QFrame):
     def set_active(self, active: bool):
         self._active = active
         self._apply_style()
+
+    def set_pixmap(self, pixmap: Optional[QPixmap]) -> None:
+        """생성 시 None으로 뒀던(아직 배경 스레드 로딩 전) 자리에 나중에 실제
+        썸네일을 채워 넣는다 — gui/date_group_detail_screen.py처럼 카드를
+        먼저 보여주고 썸네일을 나중에 채우는 화면에서 쓴다."""
+        if pixmap is not None:
+            self.image_label.setPixmap(pixmap)
+            self.image_label.setStyleSheet("")
+        else:
+            self.image_label.setStyleSheet(f"background-color: {COLORS['border']};")
 
     def _apply_style(self):
         if self._active:

@@ -1,5 +1,5 @@
 """
-gui/date_group_detail_screen.py (설계 시안 — 아직 메인 화면에 연결 안 함)
+gui/date_group_detail_screen.py
 
 gui/date_organize_screen.py의 그룹 카드를 누르면 여는 화면. 위쪽엔 미리보기
 (사진 + 파일명/메타 정보만, 액션 버튼 없음), 아래쪽엔 그 그룹 사진 전체를
@@ -27,7 +27,7 @@ from PySide6.QtWidgets import (
 )
 
 from gui.theme import COLORS
-from gui.thumbnail import ClickableThumbnail, load_thumbnail
+from gui.thumbnail import ClickableThumbnail, ThumbnailLoadWorker, load_thumbnail
 from utils.file_utils import format_file_size
 
 THUMB_SIZE = 96
@@ -47,6 +47,14 @@ class DateGroupDetailScreen(QWidget):
         self._files: list = []
         self._cells: list[ClickableThumbnail] = []
         self._last_columns = -1
+        # 그룹 안 사진이 많으면(수백 장) 그리드 셀마다 동기 디코딩을 다 돌리면
+        # 화면 전환이 멈춘 것처럼 보인다(gui/trash_screen.py에서 같은 문제를
+        # 겪고 고친 것과 동일) — 셀은 자리부터 만들어두고 썸네일은 백그라운드
+        # 로딩으로 채운다. _thumb_cache는 그룹을 다시 열어도(뒤로 갔다가 다시
+        # 클릭) 재사용된다.
+        self._thumb_cache: dict[str, object] = {}  # path -> QImage | None
+        self._pending_cells: dict[str, list[ClickableThumbnail]] = {}
+        self._worker: ThumbnailLoadWorker | None = None
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(24, 20, 24, 16)
@@ -116,23 +124,64 @@ class DateGroupDetailScreen(QWidget):
         self.title_label.setText(f"{label} · {len(files)}장")
         self._files = files
 
+        if self._worker is not None:
+            # 이전 그룹 로딩이 아직 안 끝났으면 취소만 하고 손을 뗀다 —
+            # gui/trash_screen.py::refresh()와 같은 이유(QThread를 실행 중에
+            # 강제로 없애면 크래시).
+            self._worker.cancel()
+            self._worker.finished.connect(self._worker.deleteLater)
+            self._worker = None
+
         while self._grid.count():
             item = self._grid.takeAt(0)
             if item.widget():
                 item.widget().deleteLater()
         self._cells = []
+        self._pending_cells = {}
 
         for info in files:
-            pixmap = load_thumbnail(info.path, THUMB_SIZE)
+            path_str = info.path
+            cached = self._thumb_cache.get(path_str) if path_str in self._thumb_cache else None
+            pixmap = QPixmap.fromImage(cached) if cached is not None else None
             cell = ClickableThumbnail(pixmap, info.filename, size=THUMB_SIZE, margin=CELL_MARGIN)
             cell.clicked.connect(lambda info=info: self._on_thumbnail_clicked(info))
             self._cells.append(cell)
+            if path_str not in self._thumb_cache:
+                # _pending_cells는 여기서 채워지는 순서(=화면 그리드 순서)
+                # 그대로라, 그 순서를 백그라운드 워커에도 그대로 넘긴다 —
+                # 아무 순서로나 로딩하면 화면에 보이는 앞쪽 사진보다 뒤쪽이
+                # 먼저 채워져서 "안 불러와지는 것처럼" 보이는 문제가 있다.
+                self._pending_cells.setdefault(path_str, []).append(cell)
 
         if files:
             self._on_thumbnail_clicked(files[0])
 
         self._last_columns = -1  # 새 그룹이니 강제로 다시 배치
         self._relayout_grid()
+
+        missing = list(self._pending_cells.keys())
+        if missing:
+            self._worker = ThumbnailLoadWorker(missing, THUMB_SIZE, self)
+            self._worker.thumbnail_ready.connect(self._on_thumbnail_ready)
+            self._worker.start()
+
+    def stop_pending_work(self) -> None:
+        """이 화면을 담은 창이 곧 닫히기 전에 불러서 백그라운드 썸네일 로딩을
+        안전하게 멈춘다 — gui/trash_screen.py::stop_pending_work()와 같은 이유
+        (QThread가 도는 중에 같이 없어지면 크래시 위험)."""
+        if self._worker is not None:
+            self._worker.cancel()
+            self._worker.wait()
+            self._worker = None
+
+    def _on_thumbnail_ready(self, path_str: str, image) -> None:
+        self._thumb_cache[path_str] = image
+        cells = self._pending_cells.get(path_str)
+        if not cells:
+            return
+        pixmap = QPixmap.fromImage(image) if image is not None else None
+        for cell in cells:
+            cell.set_pixmap(pixmap)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)

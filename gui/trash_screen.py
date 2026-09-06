@@ -19,7 +19,8 @@ ScanSessionWindow를 새로 만들 때마다(스캔을 새로 할 때마다!) �
 1. __init__에서 refresh()를 미리 부르지 않는다 — 실제로 화면을 열 때만
    (gui/scan_session_window.py::_open_trash) 부른다. 스캔 세션을 새로 만들
    때마다 휴지통 화면까지 미리 채울 필요가 없다.
-2. refresh() 자체도 썸네일 디코딩을 백그라운드 스레드(_ThumbnailLoadWorker)로
+2. refresh() 자체도 썸네일 디코딩을 백그라운드 스레드(gui/thumbnail.py::
+   ThumbnailLoadWorker)로
    돌리고, 이미 불러온 썸네일은 self._thumb_cache에 남겨서(파일 삭제/복원으로
    refresh()가 반복 호출돼도) 다시 디코딩하지 않는다.
 """
@@ -28,8 +29,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QThread, Signal, QUrl, QRectF
-from PySide6.QtGui import QPainter, QPixmap, QColor, QPen, QDesktopServices, QImage
+from PySide6.QtCore import Qt, Signal, QUrl, QRectF
+from PySide6.QtGui import QPainter, QPixmap, QColor, QPen, QDesktopServices
 from PySide6.QtWidgets import (
     QWidget,
     QVBoxLayout,
@@ -43,36 +44,11 @@ from PySide6.QtWidgets import (
 from gui.common_dialogs import info_dialog
 from gui.result_screen import SummaryChip
 from gui.theme import COLORS
-from gui.thumbnail import load_thumbnail_qimage
+from gui.thumbnail import ThumbnailLoadWorker
 from utils import trash
 from utils.file_utils import format_file_size
 
 _THUMB_SIZE = 56
-
-
-class _ThumbnailLoadWorker(QThread):
-    """paths 중 아직 캐시에 없는 파일만 백그라운드에서 QImage로 미리 불러온다
-    (QImage는 스레드 세이프, QPixmap 변환은 메인 스레드에서 — gui/thumbnail.py
-    참고). 한 장씩 thumbnail_ready로 돌려줘서, 다 끝나길 기다리지 않고 로드되는
-    대로 화면에 바로 반영할 수 있게 한다."""
-
-    thumbnail_ready = Signal(str, object)  # path str, QImage | None
-
-    def __init__(self, paths: list[Path], size: int, parent=None):
-        super().__init__(parent)
-        self.paths = paths
-        self.size = size
-        self._cancel_requested = False
-
-    def cancel(self):
-        self._cancel_requested = True
-
-    def run(self):
-        for path in self.paths:
-            if self._cancel_requested:
-                break
-            image = load_thumbnail_qimage(str(path), self.size) if path.exists() else None
-            self.thumbnail_ready.emit(str(path), image)
 
 
 def _trash_icon_pixmap(color: str, size: int = 26) -> QPixmap:
@@ -116,9 +92,9 @@ class TrashScreen(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._thumb_cache: dict[str, "QImage | None"] = {}
+        self._thumb_cache: dict[str, object] = {}  # path -> QImage | None
         self._pending_labels: dict[str, list[QLabel]] = {}
-        self._worker: _ThumbnailLoadWorker | None = None
+        self._worker: ThumbnailLoadWorker | None = None
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(48, 32, 48, 32)
@@ -239,9 +215,23 @@ class TrashScreen(QWidget):
         # 남아있는 것처럼 보이는 문제가 있었다.
         missing = [Path(p) for p in self._pending_labels.keys()]
         if missing:
-            self._worker = _ThumbnailLoadWorker(missing, _THUMB_SIZE, self)
+            self._worker = ThumbnailLoadWorker(missing, _THUMB_SIZE, self)
             self._worker.thumbnail_ready.connect(self._on_thumbnail_ready)
             self._worker.start()
+
+    def stop_pending_work(self) -> None:
+        """이 화면(또는 이 화면을 담은 다이얼로그/창)이 곧 사라지기 전에 불러서
+        아직 도는 중인 백그라운드 썸네일 로딩을 안전하게 멈춘다 — 그냥 두고
+        화면이 없어지면 "QThread: Destroyed while thread is still running"
+        (스레드가 도는 중에 같이 없어짐) 위험이 있다. 여기서는 화면을 정말
+        닫는 시점에만 부르므로 잠깐 기다리는(wait) 게 체감상 문제없다 —
+        cancel() 체크가 파일 하나 단위라 보통 즉시 멈춘다.
+        gui/home_screen.py::_open_trash(다이얼로그 닫힐 때)와
+        gui/scan_session_window.py::closeEvent(세션 창 닫힐 때) 둘 다에서 호출."""
+        if self._worker is not None:
+            self._worker.cancel()
+            self._worker.wait()
+            self._worker = None
 
     def _on_thumbnail_ready(self, path_str: str, image) -> None:
         self._thumb_cache[path_str] = image

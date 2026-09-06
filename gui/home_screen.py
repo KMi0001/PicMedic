@@ -425,10 +425,15 @@ class HomeScreen(QWidget):
         layout = QVBoxLayout(dialog)
         layout.setContentsMargins(0, 0, 0, 0)
         screen = TrashScreen()
+        screen.refresh()
         screen.back_requested.connect(dialog.accept)
         layout.addWidget(screen)
         dialog.resize(560, 520)
         dialog.exec()
+        # 다이얼로그가 닫히면 screen도 곧 없어지는데, 백그라운드 썸네일 로딩이
+        # 아직 도는 중일 수 있다 — 스레드가 실행 중인 채로 같이 없어지면
+        # 크래시 위험이 있어서 여기서 안전하게 멈춘다.
+        screen.stop_pending_work()
 
     def _open_quality_enhance(self):
         """스캔 없이 사진 한 장만 바로 골라서 화질 개선을 실행하는 진입점 —
