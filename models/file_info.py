@@ -52,6 +52,8 @@ class FileInfo:
     height: Optional[int] = None
     metadata: dict = field(default_factory=dict)   # EXIF 등
     captured_at: Optional[datetime] = None   # EXIF 촬영일(DateTimeOriginal, 없으면 DateTime) — Phase 2 '날짜별 정리'
+    latitude: Optional[float] = None         # EXIF GPSInfo — Phase 2 '도시별 정리' (core/geocoder.py)
+    longitude: Optional[float] = None
 
     # --- 진단 결과 ---
     status: FileStatus = FileStatus.UNKNOWN

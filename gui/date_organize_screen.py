@@ -126,6 +126,10 @@ class DateOrganizeScreen(QWidget):
         super().__init__(parent)
         self._result = None  # models.scan_result.ScanResult
         self._groups: list[tuple[str, list]] = []  # (라벨, FileInfo 목록)
+        # 그룹 상세 화면(gui/date_group_detail_screen.py)에서 체크 해제한 사진들 —
+        # label -> 제외된 파일 경로 집합. groups()가 "정리하기" 실행 대상을
+        # 넘길 때 여기 있는 경로는 걸러낸다.
+        self._group_exclusions: dict[str, set[str]] = {}
         self._output_root: str = ""
         self._thumb_cache: dict[str, object] = {}  # path -> QImage | None, 그룹 재계산에도 재사용
         self._thumb_worker: _ThumbnailPreloadWorker | None = None
@@ -262,7 +266,12 @@ class DateOrganizeScreen(QWidget):
     # --- 외부에서 호출 --------------------------------------------------
 
     def set_result(self, result) -> None:
-        """검사 결과를 받아서 현재 "묶는 단위"로 그룹을 계산하고 다시 그린다."""
+        """검사 결과를 받아서 현재 "묶는 단위"로 그룹을 계산하고 다시 그린다.
+        정리 허브를 오가며 같은 스캔 결과로 이 화면에 다시 들어올 때도 이
+        메서드가 매번 불리므로, 정말 다른 결과(새 스캔/이어서 검사로 병합된
+        결과)일 때만 그룹 상세에서 체크 해제해둔 제외 목록을 초기화한다."""
+        if result is not self._result:
+            self._group_exclusions = {}
         self._result = result
         self._load_groups()
 
@@ -274,10 +283,33 @@ class DateOrganizeScreen(QWidget):
         return self._output_root
 
     def groups(self) -> list[tuple[str, list]]:
-        """현재 화면에 표시된 (라벨, FileInfo 목록) 그대로 — "정리하기"를 실제로
-        실행할 호출부(gui/scan_session_window.py)가
-        core/date_organizer.py::organize_by_date()에 그대로 넘길 수 있게."""
-        return self._groups
+        """현재 화면에 표시된 (라벨, FileInfo 목록)에서, 그룹 상세 화면에서 체크
+        해제된 사진들을 뺀 뒤 반환한다 — "정리하기"를 실제로 실행할 호출부
+        (gui/scan_session_window.py)가 core/date_organizer.py::organize_by_date()에
+        그대로 넘길 수 있게."""
+        if not self._group_exclusions:
+            return self._groups
+        result = []
+        for label, files in self._groups:
+            excluded = self._group_exclusions.get(label)
+            if excluded:
+                files = [f for f in files if f.path not in excluded]
+            result.append((label, files))
+        return result
+
+    def group_excluded(self, label: str) -> set[str]:
+        """label 그룹을 다시 열 때(gui/date_group_detail_screen.py) 이전에
+        체크 해제해둔 경로를 그대로 복원하기 위함."""
+        return set(self._group_exclusions.get(label, ()))
+
+    def set_group_excluded(self, label: str, excluded_paths: set[str]) -> None:
+        if excluded_paths:
+            self._group_exclusions[label] = set(excluded_paths)
+        else:
+            self._group_exclusions.pop(label, None)
+        # 그룹 상세에서 방금 체크 해제하고 돌아온 참일 수 있으니, 카드
+        # 헤더의 "N장/N장" 표시도 바로 갱신한다.
+        self._render_groups()
 
     def granularity(self) -> str:
         return "year" if self.year_radio.isChecked() else "month"
@@ -390,7 +422,12 @@ class DateOrganizeScreen(QWidget):
         layout.setSpacing(8)
 
         is_no_date = label == NO_DATE_LABEL
-        header = QLabel(f"{label} · {len(files)}장")
+        excluded = self._group_exclusions.get(label)
+        if excluded:
+            count_text = f"{len(files) - len(excluded)}장/{len(files)}장 (제외 {len(excluded)}장)"
+        else:
+            count_text = f"{len(files)}장"
+        header = QLabel(f"{label} · {count_text}")
         header.setStyleSheet(
             f"font-weight: 700; color: {COLORS['text_secondary']};" if is_no_date else "font-weight: 700;"
         )

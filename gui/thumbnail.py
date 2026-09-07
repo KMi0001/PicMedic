@@ -15,7 +15,7 @@ from typing import Optional
 
 from PySide6.QtCore import QSize, Qt, QThread, Signal
 from PySide6.QtGui import QImage, QImageReader, QPixmap
-from PySide6.QtWidgets import QFrame, QLabel, QVBoxLayout
+from PySide6.QtWidgets import QCheckBox, QFrame, QLabel, QVBoxLayout
 
 from gui.theme import COLORS
 
@@ -106,8 +106,17 @@ class ClickableThumbnail(QFrame):
     미리보기에 떠 있는 사진 표시 등 — 안 쓰면 그냥 무시해도 됨)."""
 
     clicked = Signal()
+    inclusion_changed = Signal(bool)  # checkable=True일 때만 의미 있음
 
-    def __init__(self, pixmap: Optional[QPixmap], filename: str, size: int = 96, margin: int = 8, parent=None):
+    def __init__(
+        self,
+        pixmap: Optional[QPixmap],
+        filename: str,
+        size: int = 96,
+        margin: int = 8,
+        parent=None,
+        checkable: bool = False,
+    ):
         super().__init__(parent)
         self.setCursor(Qt.PointingHandCursor)
         self._size = size
@@ -119,13 +128,22 @@ class ClickableThumbnail(QFrame):
         layout.setContentsMargins(margin, margin, margin, margin)
         layout.setSpacing(4)
 
+        # 정리 대상에서 사진 하나만 빼고 싶을 때(gui/date_group_detail_screen.py)만
+        # 켠다 — 기본값 False라 gui/similar_screen.py 등 기존 사용처는 그대로.
+        self.include_checkbox: Optional[QCheckBox] = None
+        if checkable:
+            self.include_checkbox = QCheckBox()
+            self.include_checkbox.setChecked(True)
+            self.include_checkbox.setStyleSheet("font-size: 10px;")
+            self.include_checkbox.toggled.connect(self.inclusion_changed.emit)
+            layout.addWidget(self.include_checkbox, alignment=Qt.AlignHCenter)
+
         self.image_label = QLabel()
         self.image_label.setFixedSize(size, size)
         self.image_label.setAlignment(Qt.AlignCenter)
+        self._has_pixmap = pixmap is not None
         if pixmap is not None:
             self.image_label.setPixmap(pixmap)
-        else:
-            self.image_label.setStyleSheet(f"background-color: {COLORS['border']};")
         layout.addWidget(self.image_label)
 
         name_label = QLabel(filename)
@@ -140,24 +158,39 @@ class ClickableThumbnail(QFrame):
         self._active = active
         self._apply_style()
 
+    def is_included(self) -> bool:
+        """checkable=False로 만들었으면 항상 True(제외 개념 자체가 없음)."""
+        return self.include_checkbox is None or self.include_checkbox.isChecked()
+
+    def set_included(self, included: bool) -> None:
+        if self.include_checkbox is not None:
+            self.include_checkbox.setChecked(included)
+
     def set_pixmap(self, pixmap: Optional[QPixmap]) -> None:
         """생성 시 None으로 뒀던(아직 배경 스레드 로딩 전) 자리에 나중에 실제
         썸네일을 채워 넣는다 — gui/date_group_detail_screen.py처럼 카드를
         먼저 보여주고 썸네일을 나중에 채우는 화면에서 쓴다."""
+        self._has_pixmap = pixmap is not None
         if pixmap is not None:
             self.image_label.setPixmap(pixmap)
-            self.image_label.setStyleSheet("")
-        else:
-            self.image_label.setStyleSheet(f"background-color: {COLORS['border']};")
+        self._apply_style()
 
     def _apply_style(self):
+        # 선택/호버 테두리는 사진 영역(image_label)에만 준다 — 예전엔 셀
+        # 전체(체크박스+사진+파일명)를 감싸서 어색해 보였다(사용자 피드백).
+        # 사진이 아직 없으면(백그라운드 로딩 중) placeholder 배경도 같이
+        # 여기서 계산한다 — set_pixmap()이 별도로 스타일을 덮어쓰면 선택
+        # 상태가 지워지는 문제가 있어 하나로 합쳤다.
         if self._active:
-            self.setStyleSheet(
-                f"background-color: {COLORS['selection']}; border: 2px solid {COLORS['primary']}; "
-                f"border-radius: 8px;"
+            style = (
+                f"background-color: {COLORS['selection']}; "
+                f"border: 2px solid {COLORS['primary']}; border-radius: 8px;"
             )
+        elif not self._has_pixmap:
+            style = f"background-color: {COLORS['border']}; border: 2px solid transparent; border-radius: 8px;"
         else:
-            self.setStyleSheet("border: 2px solid transparent; border-radius: 8px;")
+            style = "border: 2px solid transparent; border-radius: 8px;"
+        self.image_label.setStyleSheet(style)
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
@@ -166,7 +199,9 @@ class ClickableThumbnail(QFrame):
 
     def enterEvent(self, event):
         if not self._active:
-            self.setStyleSheet(f"background-color: {COLORS['bg']}; border: 2px solid transparent; border-radius: 8px;")
+            self.image_label.setStyleSheet(
+                f"background-color: {COLORS['bg']}; border: 2px solid transparent; border-radius: 8px;"
+            )
         super().enterEvent(event)
 
     def leaveEvent(self, event):

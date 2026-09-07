@@ -11,3 +11,9 @@ facexlib>=0.3
 
 # core/photo_category.py ("사진 진단"의 카테고리 판단) — CLIP(open_clip) 추론에 필요.
 open_clip_torch>=2.20
+
+# core/geocoder.py ("도시별 정리") — GPS 좌표 -> 도시명 매칭. 오프라인(내장 CSV,
+# 인터넷 호출 없음). PyInstaller로 패키징할 때 reverse_geocoder/rg_cities1000.csv
+# 데이터 파일이 같이 포함되는지 .spec에서 확인 필요(실험용 검증:
+# experiments/city_organize_prototype).
+reverse_geocoder>=1.5.1

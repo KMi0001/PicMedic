@@ -1,15 +1,17 @@
 """
 gui/date_group_detail_screen.py
 
-gui/date_organize_screen.py의 그룹 카드를 누르면 여는 화면. 위쪽엔 미리보기
-(사진 + 파일명/메타 정보만, 액션 버튼 없음), 아래쪽엔 그 그룹 사진 전체를
-썸네일 그리드로 보여준다. 목록에서 사진을 누르면 페이지 이동 없이 위쪽
-미리보기가 그 사진으로 바로 바뀐다.
+gui/date_organize_screen.py의 그룹 카드를 누르면 여는 화면. 위쪽엔 뷰어
+(줌/회전/드래그 이동이 되는 gui/image_viewer.py, 파일명/메타 정보 포함),
+아래쪽엔 그 그룹 사진 전체를 썸네일 그리드로 보여준다. 목록에서 사진을
+누르면 페이지 이동 없이 위쪽 뷰어가 그 사진으로 바로 바뀐다.
 
-이 화면의 목적은 "정리"가 아니라 "확인"이다 — 사용자가 훑어보고 "아, 이런
-사진들이 이 폴더로 들어가겠구나"를 알면 끝이라, 화질 개선/확장자 변환 같은
-편집 액션은 일부러 넣지 않는다(그건 gui/detail_screen.py의 역할).
-"""
+이 화면의 목적은 "정리 실행"이 아니라 "확인 + 골라내기"다 — 뷰어로 사진을
+자세히 본 뒤, 이 그룹에서 빼고 싶은 사진은 썸네일의 "포함" 체크를 해제하면
+된다(2026-09-07, 사용자 요청 — 뷰어로 살펴본 뒤 일괄 처리). 실제 복사/이동은
+여전히 gui/date_organize_screen.py의 "정리하기"에서만 일어나고, 여기서
+체크 해제한 사진은 그 실행 대상에서 빠진다. 화질 개선/확장자 변환 같은
+편집 액션은 여기 넣지 않는다(그건 gui/detail_screen.py의 역할)."""
 
 from __future__ import annotations
 
@@ -26,8 +28,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from gui.image_viewer import ImageViewer
 from gui.theme import COLORS
-from gui.thumbnail import ClickableThumbnail, ThumbnailLoadWorker, load_thumbnail
+from gui.thumbnail import ClickableThumbnail, ThumbnailLoadWorker
 from utils.file_utils import format_file_size
 
 THUMB_SIZE = 96
@@ -38,13 +41,16 @@ PREVIEW_SIZE = 260
 
 class DateGroupDetailScreen(QWidget):
     """gui/date_organize_screen.py 그룹 카드 하나를 눌렀을 때 여는 화면 —
-    위: 미리보기(사진 + 이름/메타 정보만, 액션 없음), 아래: 그룹 전체 목록."""
+    위: 뷰어(줌/회전 + 이름/메타 정보), 아래: 그룹 전체 목록(포함 체크박스)."""
 
     back_requested = Signal()
+    exclusion_changed = Signal(str, set)  # (그룹 라벨, 제외된 파일 경로 집합)
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self._label = ""
         self._files: list = []
+        self._excluded: set[str] = set()
         self._cells: list[ClickableThumbnail] = []
         self._last_columns = -1
         # 그룹 안 사진이 많으면(수백 장) 그리드 셀마다 동기 디코딩을 다 돌리면
@@ -71,17 +77,15 @@ class DateGroupDetailScreen(QWidget):
         title_row.addWidget(back_btn)
         outer.addLayout(title_row)
 
-        # --- 위: 미리보기(사진 왼쪽 + 이름/메타 정보 오른쪽, 액션 버튼 없음) ---
+        # --- 위: 뷰어(사진 왼쪽 + 이름/메타 정보 오른쪽) ---
         preview_card = QFrame()
         preview_card.setObjectName("Card")
         preview_row = QHBoxLayout(preview_card)
         preview_row.setContentsMargins(20, 20, 20, 20)
         preview_row.setSpacing(20)
 
-        self.preview_image = QLabel()
-        self.preview_image.setFixedSize(PREVIEW_SIZE, PREVIEW_SIZE)
-        self.preview_image.setAlignment(Qt.AlignCenter)
-        self.preview_image.setStyleSheet(f"background-color: {COLORS['bg']}; border-radius: 8px;")
+        self.preview_image = ImageViewer(placeholder_text="미리보기를 생성할 수 없습니다.")
+        self.preview_image.setFixedSize(PREVIEW_SIZE, PREVIEW_SIZE + 28)
         preview_row.addWidget(self.preview_image)
 
         info_col = QVBoxLayout()
@@ -102,9 +106,24 @@ class DateGroupDetailScreen(QWidget):
         preview_row.addLayout(info_col, stretch=1)
         outer.addWidget(preview_card)
 
+        list_row = QHBoxLayout()
         list_label = QLabel("이 그룹의 사진")
         list_label.setStyleSheet("font-weight: 700;")
-        outer.addWidget(list_label)
+        list_row.addWidget(list_label)
+        list_row.addStretch(1)
+        self.exclude_hint_label = QLabel("")
+        self.exclude_hint_label.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 11.5px;")
+        list_row.addWidget(self.exclude_hint_label)
+        outer.addLayout(list_row)
+
+        self.checkbox_hint = QLabel("체크를 해제하면 이 사진은 \"정리하기\" 대상에서 빠져요.")
+        self.checkbox_hint.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 11px;")
+        outer.addWidget(self.checkbox_hint)
+
+        # 날짜별 정리처럼 "정리하기" 실행이 있는 화면에서만 체크박스가 의미가
+        # 있다 — gui/city_organize_screen.py처럼 훑어보기 전용으로 재사용할
+        # 때는 아무 동작도 안 하는 체크박스를 보여주면 오히려 헷갈린다.
+        self._show_checkboxes = True
 
         # --- 아래: 목록(세로 스크롤만 — 가로 스크롤은 절대 안 생기게 열 개수를
         # 창 너비에 맞춰 다시 계산한다) ---
@@ -120,9 +139,28 @@ class DateGroupDetailScreen(QWidget):
         self.scroll_area.setWidget(self._grid_container)
         outer.addWidget(self.scroll_area, stretch=1)
 
-    def set_group(self, label: str, files: list) -> None:
-        self.title_label.setText(f"{label} · {len(files)}장")
+    def set_group(
+        self,
+        label: str,
+        files: list,
+        excluded_paths: set[str] | None = None,
+        show_checkboxes: bool = True,
+        initial_file=None,
+    ) -> None:
+        """label/files는 호출부의 그룹 그대로(날짜별 정리 또는 도시별 정리
+        화면의 현재 목록). excluded_paths는 이전에 이 그룹을 열었을 때 체크
+        해제해둔 경로들 — 다시 열어도 유지되도록 호출부가 조회해 넘겨준다.
+        initial_file을 주면(도시별 정리처럼 목록에서 특정 사진을 눌러 들어올
+        때) 그 사진부터 미리보기에 띄운다 — 생략하면 기존처럼 첫 번째 사진.
+        show_checkboxes=False면 체크박스와 안내 문구를 아예 숨긴다(현재는
+        날짜별/도시별 둘 다 "정리하기"가 있어 기본값 True로 쓰지만, 훑어보기
+        전용 화면이 나중에 생기면 이 옵션을 그대로 쓸 수 있다)."""
+        self._label = label
         self._files = files
+        self._excluded = set(excluded_paths) if excluded_paths else set()
+        self._show_checkboxes = show_checkboxes
+        self.checkbox_hint.setVisible(show_checkboxes)
+        self._update_title()
 
         if self._worker is not None:
             # 이전 그룹 로딩이 아직 안 끝났으면 취소만 하고 손을 뗀다 —
@@ -143,7 +181,14 @@ class DateGroupDetailScreen(QWidget):
             path_str = info.path
             cached = self._thumb_cache.get(path_str) if path_str in self._thumb_cache else None
             pixmap = QPixmap.fromImage(cached) if cached is not None else None
-            cell = ClickableThumbnail(pixmap, info.filename, size=THUMB_SIZE, margin=CELL_MARGIN)
+            cell = ClickableThumbnail(
+                pixmap, info.filename, size=THUMB_SIZE, margin=CELL_MARGIN, checkable=show_checkboxes
+            )
+            if show_checkboxes:
+                cell.set_included(path_str not in self._excluded)
+                cell.inclusion_changed.connect(
+                    lambda included, path=path_str: self._on_inclusion_changed(path, included)
+                )
             cell.clicked.connect(lambda info=info: self._on_thumbnail_clicked(info))
             self._cells.append(cell)
             if path_str not in self._thumb_cache:
@@ -154,8 +199,9 @@ class DateGroupDetailScreen(QWidget):
                 self._pending_cells.setdefault(path_str, []).append(cell)
 
         if files:
-            self._on_thumbnail_clicked(files[0])
+            self._on_thumbnail_clicked(initial_file if initial_file is not None else files[0])
 
+        self._update_exclude_hint()
         self._last_columns = -1  # 새 그룹이니 강제로 다시 배치
         self._relayout_grid()
 
@@ -203,14 +249,32 @@ class DateGroupDetailScreen(QWidget):
         for idx, cell in enumerate(self._cells):
             self._grid.addWidget(cell, idx // columns, idx % columns)
 
-    def _on_thumbnail_clicked(self, info) -> None:
-        pixmap = load_thumbnail(info.path, PREVIEW_SIZE)
-        if pixmap is not None:
-            self.preview_image.setPixmap(pixmap)
-            self.preview_image.setText("")
+    def _on_inclusion_changed(self, path: str, included: bool) -> None:
+        if included:
+            self._excluded.discard(path)
         else:
-            self.preview_image.setPixmap(QPixmap())
-            self.preview_image.setText("미리보기를 생성할 수 없습니다.")
+            self._excluded.add(path)
+        self._update_exclude_hint()
+        self._update_title()
+        self.exclusion_changed.emit(self._label, set(self._excluded))
+
+    def _update_title(self) -> None:
+        total = len(self._files)
+        excluded = len(self._excluded)
+        if excluded:
+            count_text = f"{total - excluded}장/{total}장 (제외 {excluded}장)"
+        else:
+            count_text = f"{total}장"
+        self.title_label.setText(f"{self._label} · {count_text}")
+
+    def _update_exclude_hint(self) -> None:
+        if self._excluded:
+            self.exclude_hint_label.setText(f"{len(self._excluded)}장 제외됨")
+        else:
+            self.exclude_hint_label.setText("")
+
+    def _on_thumbnail_clicked(self, info) -> None:
+        self.preview_image.set_image_path(info.path)
 
         self.filename_label.setText(info.filename)
         self._set_info_rows(info)

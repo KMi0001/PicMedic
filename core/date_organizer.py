@@ -1,10 +1,12 @@
 """
 core/date_organizer.py
 
-Phase 2-2 "날짜별 정리" 실행 로직 — gui/date_organize_screen.py가 미리보기로
-보여준 그룹(models/scan_result.py::ScanResult.date_groups())을 실제로
-"YYYY/MM"(또는 연 단위만 쓰면 "YYYY") 폴더 구조로 복사(기본)하거나 이동한다.
-"날짜 정보 없음" 그룹은 별도의 NO_DATE_FOLDER_NAME 폴더로 모은다.
+Phase 2-2 "날짜별 정리" / "도시별 정리" 실행 로직 — gui/date_organize_screen.py·
+gui/city_organize_screen.py가 미리보기로 보여준 그룹(models/scan_result.py::
+ScanResult.date_groups()/city_groups())을 실제로 폴더 구조로 복사(기본)하거나
+이동한다. 날짜별은 "YYYY/MM"(또는 연 단위만 쓰면 "YYYY") 폴더, 도시별은
+도시명 폴더 하나. 그룹을 못 정한 파일("날짜 정보 없음"/"위치 정보 없음")은
+별도 폴더로 모은다.
 
 원칙(core/converter.py와 동일): 기본은 원본을 건드리지 않는 복사이고, 이동은
 호출부가 명시적으로 선택해야만 한다.
@@ -13,6 +15,7 @@ Phase 2-2 "날짜별 정리" 실행 로직 — gui/date_organize_screen.py가 �
 from __future__ import annotations
 
 import errno
+import re
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
@@ -22,11 +25,17 @@ from models.file_info import FileInfo
 
 NO_DATE_LABEL = "날짜 정보 없음"
 NO_DATE_FOLDER_NAME = "날짜없음"
+NO_CITY_LABEL = "위치 정보 없음"
+NO_CITY_FOLDER_NAME = "위치없음"
 
 # core/converter.py::_classify_os_error와 같은 근거 — 파일 잠금/저장 공간
 # 부족은 Windows에서 이 winerror들로 온다.
 _WINERROR_FILE_LOCKED = 32
 _WINERROR_DISK_FULL = 112
+
+# Windows/macOS 폴더명에 못 쓰는 문자 — 도시 라벨("서울, 일본"처럼 쉼표가
+# 들어갈 수 있음)을 그대로 폴더명으로 쓰면 안 되는 경우를 방지.
+_INVALID_FOLDER_CHARS = re.compile(r'[<>:"/\\|?*]')
 
 
 def _classify_os_error(exc: OSError) -> tuple[str, bool]:
@@ -41,10 +50,17 @@ def _classify_os_error(exc: OSError) -> tuple[str, bool]:
     return str(exc), False
 
 
+def sanitize_folder_name(name: str) -> str:
+    """그룹 라벨을 폴더명으로 안전하게 바꾼다 — 쉼표/괄호 등은 밑줄로,
+    Windows/macOS에서 못 쓰는 문자는 제거. 결과가 비면 대체 이름을 쓴다."""
+    cleaned = _INVALID_FOLDER_CHARS.sub("_", name).replace(", ", "_").strip().strip(".")
+    return cleaned or "폴더"
+
+
 @dataclass
 class OrganizeOutcome:
     original: FileInfo
-    label: str  # 소속 그룹 라벨(예: "2024년 3월")
+    label: str  # 소속 그룹 라벨(예: "2024년 3월", "서울")
     output_path: Optional[str] = None
     success: bool = False
     skipped: bool = False  # 이미 정리돼 있어서 다시 복사/이동하지 않음(아래 _already_organized)
@@ -75,20 +91,16 @@ def _unique_destination(dest_dir: Path, filename: str) -> Path:
     return dest
 
 
-def organize_by_date(
+def _run_organize(
     groups: list[tuple[str, list[FileInfo]]],
     mode: str,  # "copy" | "move"
-    output_root: str | Path,
-    granularity: str = "month",  # "month" | "year" — 목적지 폴더 깊이(YYYY/MM vs YYYY)
+    dest_dir_for: Callable[[str, list[FileInfo]], Path],
     progress_callback: Optional[Callable[[int, int, str], None]] = None,
     should_cancel: Optional[Callable[[], bool]] = None,
 ) -> list[OrganizeOutcome]:
-    """groups를 output_root 아래 날짜 폴더로 복사/이동한다. 각 그룹의 연/월은
-    파일명 문자열을 다시 파싱하는 대신, 그 그룹에 속한 파일들이 이미 공유하는
-    FileInfo.captured_at에서 그대로 가져온다(그룹핑 기준과 실행 기준을 하나로
-    유지 — ScanResult.date_groups() 참고). "날짜 정보 없음" 그룹은
-    NO_DATE_FOLDER_NAME 폴더 하나로 모은다."""
-    output_root = Path(output_root)
+    """groups를 dest_dir_for(label, files)가 정해주는 폴더로 복사/이동하는
+    공통 실행 루프 — organize_by_date()/organize_by_city() 둘 다 이걸 쓰고
+    "그룹당 목적지 폴더를 어떻게 정할지"만 다르게 넘긴다."""
     total = sum(len(files) for _, files in groups)
 
     outcomes: list[OrganizeOutcome] = []
@@ -98,14 +110,7 @@ def organize_by_date(
         if not files:
             continue
 
-        if label == NO_DATE_LABEL:
-            dest_dir = output_root / NO_DATE_FOLDER_NAME
-        else:
-            captured = files[0].captured_at
-            if granularity == "year":
-                dest_dir = output_root / f"{captured.year:04d}"
-            else:
-                dest_dir = output_root / f"{captured.year:04d}" / f"{captured.month:02d}"
+        dest_dir = dest_dir_for(label, files)
 
         for info in files:
             processed += 1
@@ -147,3 +152,49 @@ def organize_by_date(
             outcomes.append(outcome)
 
     return outcomes
+
+
+def organize_by_date(
+    groups: list[tuple[str, list[FileInfo]]],
+    mode: str,  # "copy" | "move"
+    output_root: str | Path,
+    granularity: str = "month",  # "month" | "year" — 목적지 폴더 깊이(YYYY/MM vs YYYY)
+    progress_callback: Optional[Callable[[int, int, str], None]] = None,
+    should_cancel: Optional[Callable[[], bool]] = None,
+) -> list[OrganizeOutcome]:
+    """groups를 output_root 아래 날짜 폴더로 복사/이동한다. 각 그룹의 연/월은
+    파일명 문자열을 다시 파싱하는 대신, 그 그룹에 속한 파일들이 이미 공유하는
+    FileInfo.captured_at에서 그대로 가져온다(그룹핑 기준과 실행 기준을 하나로
+    유지 — ScanResult.date_groups() 참고). "날짜 정보 없음" 그룹은
+    NO_DATE_FOLDER_NAME 폴더 하나로 모은다."""
+    output_root = Path(output_root)
+
+    def dest_dir_for(label: str, files: list[FileInfo]) -> Path:
+        if label == NO_DATE_LABEL:
+            return output_root / NO_DATE_FOLDER_NAME
+        captured = files[0].captured_at
+        if granularity == "year":
+            return output_root / f"{captured.year:04d}"
+        return output_root / f"{captured.year:04d}" / f"{captured.month:02d}"
+
+    return _run_organize(groups, mode, dest_dir_for, progress_callback, should_cancel)
+
+
+def organize_by_city(
+    groups: list[tuple[str, list[FileInfo]]],
+    mode: str,  # "copy" | "move"
+    output_root: str | Path,
+    progress_callback: Optional[Callable[[int, int, str], None]] = None,
+    should_cancel: Optional[Callable[[], bool]] = None,
+) -> list[OrganizeOutcome]:
+    """groups(ScanResult.city_groups())를 output_root 아래 도시명 폴더로
+    복사/이동한다. "위치 정보 없음" 그룹은 NO_CITY_FOLDER_NAME 폴더 하나로
+    모은다."""
+    output_root = Path(output_root)
+
+    def dest_dir_for(label: str, files: list[FileInfo]) -> Path:
+        if label == NO_CITY_LABEL:
+            return output_root / NO_CITY_FOLDER_NAME
+        return output_root / sanitize_folder_name(label)
+
+    return _run_organize(groups, mode, dest_dir_for, progress_callback, should_cancel)

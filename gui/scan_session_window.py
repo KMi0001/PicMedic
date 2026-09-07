@@ -18,7 +18,7 @@ from pathlib import Path
 from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtWidgets import QWidget, QStackedWidget, QVBoxLayout
 
-from core.date_organizer import organize_by_date
+from core.date_organizer import organize_by_city, organize_by_date
 from gui.common_dialogs import (
     confirm_dialog as _confirm_dialog,
     info_dialog as _info_dialog,
@@ -33,36 +33,36 @@ from gui.recovery_result_screen import RecoveryResultScreen
 from gui.duplicate_screen import DuplicateScreen
 from gui.similar_screen import SimilarScreen
 from gui.date_organize_screen import DateOrganizeScreen
+from gui.organize_hub_screen import OrganizeHubScreen
+from gui.city_organize_screen import CityOrganizeScreen
 from gui.date_group_detail_screen import DateGroupDetailScreen
 from gui.trash_screen import TrashScreen
 from models.file_info import FileStatus
 
 
-class _DateOrganizeWorker(QThread):
-    """core/date_organizer.py::organize_by_date()는 사진이 많으면 수백 개 파일을
-    복사/이동하느라 시간이 걸릴 수 있어서, gui/recovery_screen.py::RecoveryWorker와
-    같은 이유로 별도 스레드에서 돌린다."""
+class _OrganizeWorker(QThread):
+    """core/date_organizer.py::organize_by_date()/organize_by_city()는 사진이
+    많으면 수백 개 파일을 복사/이동하느라 시간이 걸릴 수 있어서,
+    gui/recovery_screen.py::RecoveryWorker와 같은 이유로 별도 스레드에서
+    돌린다. 날짜별/도시별 둘 다 이 워커를 쓰고, 실제 실행 함수(run_fn)만
+    호출부(gui/scan_session_window.py의 _on_date_organize_requested/
+    _on_city_organize_requested)가 다르게 준비해 넘긴다."""
 
     progress = Signal(int, int, str)
     finished_batch = Signal(list)  # list[core.date_organizer.OrganizeOutcome]
 
-    def __init__(self, groups, mode: str, output_root: str, granularity: str, parent=None):
+    def __init__(self, run_fn, mode: str, output_root: str, parent=None):
         super().__init__(parent)
-        self.groups = groups
+        self._run_fn = run_fn
         self.mode = mode
         self.output_root = output_root
-        self.granularity = granularity
         self._cancel_requested = False
 
     def cancel(self):
         self._cancel_requested = True
 
     def run(self):
-        outcomes = organize_by_date(
-            self.groups,
-            self.mode,
-            self.output_root,
-            granularity=self.granularity,
+        outcomes = self._run_fn(
             progress_callback=lambda cur, total, name: self.progress.emit(cur, total, name),
             should_cancel=lambda: self._cancel_requested,
         )
@@ -117,14 +117,18 @@ class ScanSessionWindow(QWidget):
         self.detail_screen = DetailScreen()
         self.recovery_screen = RecoveryScreen()
         self.recovery_result_screen = RecoveryResultScreen()
+        self.organize_hub_screen = OrganizeHubScreen()
         self.duplicate_screen = DuplicateScreen()
         self.similar_screen = SimilarScreen()
         self.date_organize_screen = DateOrganizeScreen()
         self.date_group_detail_screen = DateGroupDetailScreen()
+        self.city_organize_screen = CityOrganizeScreen()
         self.trash_screen = TrashScreen()
-        self.date_organize_progress_dialog = ProgressDialog(self)
-        self.date_organize_progress_dialog.cancel_requested.connect(self._on_date_organize_cancel_requested)
-        self._date_organize_worker: _DateOrganizeWorker | None = None
+        # 날짜별/도시별 "정리하기" 둘 다 같은 진행률 팝업 + 워커를 공유한다
+        # (동시에 하나만 실행되므로 화면별로 따로 둘 필요 없음).
+        self.organize_progress_dialog = ProgressDialog(self)
+        self.organize_progress_dialog.cancel_requested.connect(self._on_organize_cancel_requested)
+        self._organize_worker: _OrganizeWorker | None = None
 
         for screen in (
             self.scanning_screen,
@@ -132,10 +136,12 @@ class ScanSessionWindow(QWidget):
             self.detail_screen,
             self.recovery_screen,
             self.recovery_result_screen,
+            self.organize_hub_screen,
             self.duplicate_screen,
             self.similar_screen,
             self.date_organize_screen,
             self.date_group_detail_screen,
+            self.city_organize_screen,
             self.trash_screen,
         ):
             self.stack.addWidget(screen)
@@ -148,6 +154,7 @@ class ScanSessionWindow(QWidget):
         self._pending_planned_total = 0
         self._detail_return_screen = self.result_screen  # 상세보기 뒤로가기 시 돌아갈 화면(연 곳에 따라 다름)
         self._trash_return_screen = self.result_screen  # 임시휴지통 뒤로가기 시 돌아갈 화면(연 곳에 따라 다름)
+        self._group_detail_return_screen = self.date_organize_screen  # 그룹 상세 뒤로가기 시 돌아갈 화면(날짜별/도시별)
 
         self._wire_signals()
         self.stack.setCurrentWidget(self.scanning_screen)
@@ -157,38 +164,49 @@ class ScanSessionWindow(QWidget):
         # Scanning -> Result / (홈으로)
         self.scanning_screen.scan_finished.connect(self._on_scan_finished)
 
-        # Result -> Detail / Recovery / 홈 / 중복 사진
+        # Result -> Detail / Recovery / 홈 / 정리 허브
         self.result_screen.file_selected.connect(self._open_detail)
         self.result_screen.recovery_requested.connect(lambda files: self._open_recovery(files, None))
         self.result_screen.rescan_requested.connect(self._go_home)
         self.result_screen.resume_requested.connect(self._on_resume_requested)
-        self.result_screen.duplicates_requested.connect(self._open_duplicates)
-        self.result_screen.similar_requested.connect(self._open_similar)
-        self.result_screen.date_organize_requested.connect(self._open_date_organize)
+        self.result_screen.organize_requested.connect(self._open_organize_hub)
 
-        # 중복 사진 -> 결과 / 임시 휴지통 / 상세보기(사진 미리보기)
+        # 정리 허브 -> 결과 / 중복·유사·날짜별·도시별 각 화면
+        self.organize_hub_screen.back_requested.connect(self._back_from_organize_hub)
+        self.organize_hub_screen.duplicates_requested.connect(self._open_duplicates)
+        self.organize_hub_screen.similar_requested.connect(self._open_similar)
+        self.organize_hub_screen.date_organize_requested.connect(self._open_date_organize)
+        self.organize_hub_screen.city_organize_requested.connect(self._open_city_organize)
+
+        # 중복 사진 -> 정리 허브 / 임시 휴지통 / 상세보기(사진 미리보기)
         self.duplicate_screen.back_requested.connect(self._back_from_duplicates)
         self.duplicate_screen.view_trash_requested.connect(lambda: self._open_trash(self.duplicate_screen))
         self.duplicate_screen.file_selected.connect(
             lambda info: self._open_detail(info, return_to=self.duplicate_screen)
         )
 
-        # 유사 사진 -> 결과 / 임시 휴지통 / 상세보기(사진 미리보기)
+        # 유사 사진 -> 정리 허브 / 임시 휴지통 / 상세보기(사진 미리보기)
         self.similar_screen.back_requested.connect(self._back_from_similar)
         self.similar_screen.view_trash_requested.connect(lambda: self._open_trash(self.similar_screen))
         self.similar_screen.file_selected.connect(
             lambda info: self._open_detail(info, return_to=self.similar_screen)
         )
 
-        # 날짜별 정리 -> 결과 / 그룹 상세(사진 확인)
+        # 날짜별 정리 -> 정리 허브 / 그룹 상세(사진 확인)
         self.date_organize_screen.back_requested.connect(self._back_from_date_organize)
         self.date_organize_screen.organize_requested.connect(self._on_date_organize_requested)
         self.date_organize_screen.group_opened.connect(self._open_date_group_detail)
 
-        # 그룹 상세 -> 날짜별 정리
+        # 도시별 정리 -> 정리 허브 / 그룹 상세(사진 확인)
+        self.city_organize_screen.back_requested.connect(self._back_from_city_organize)
+        self.city_organize_screen.photo_selected.connect(self._open_city_group_detail)
+        self.city_organize_screen.organize_requested.connect(self._on_city_organize_requested)
+
+        # 그룹 상세 -> 열었던 화면(날짜별/도시별) / 체크 해제한 제외 목록을 그 화면에 반영
         self.date_group_detail_screen.back_requested.connect(
-            lambda: self.stack.setCurrentWidget(self.date_organize_screen)
+            lambda: self.stack.setCurrentWidget(self._group_detail_return_screen)
         )
+        self.date_group_detail_screen.exclusion_changed.connect(self._on_group_detail_exclusion_changed)
 
         # 임시 휴지통 -> 중복 사진 (남은 중복이 없으면 빈 화면 대신 검사 결과로)
         self.trash_screen.back_requested.connect(self._back_from_trash)
@@ -276,17 +294,31 @@ class ScanSessionWindow(QWidget):
         self.recovery_screen.set_files(files, preselected_mode=mode)
         self.stack.setCurrentWidget(self.recovery_screen)
 
+    def _open_organize_hub(self):
+        self.organize_hub_screen.set_result(self.result_screen.result)
+        self.stack.setCurrentWidget(self.organize_hub_screen)
+
+    def _back_from_organize_hub(self):
+        self.stack.setCurrentWidget(self.result_screen)
+
+    def _refresh_after_organize_action(self):
+        """중복/유사 정리, 휴지통 복원 등으로 검사 결과가 바뀐 뒤 정리 허브로
+        돌아갈 때 표/칩(검사 결과 화면)과 카드 배지(정리 허브)를 같이
+        새로고침한다 — 둘 중 하나만 갱신하면 반대쪽에 옛 개수가 남는다."""
+        self.result_screen.refresh_current_result()
+        self.organize_hub_screen.set_result(self.result_screen.result)
+
     def _back_from_duplicates(self):
         # duplicate_screen이 "정리 실행"으로 이미 self.result_screen.result(같은
         # ScanResult 객체)에서 파일을 뺐어도(ScanResult.remove), 검사 결과 화면의
         # 표/칩은 따로 다시 그려주지 않으면 그대로 갱신 안 된 채 남는다 — 휴지통에
         # 옮긴 사진이 검사 결과 목록에 계속 보이던 문제.
-        self.result_screen.refresh_current_result()
-        self.stack.setCurrentWidget(self.result_screen)
+        self._refresh_after_organize_action()
+        self.stack.setCurrentWidget(self.organize_hub_screen)
 
     def _back_from_similar(self):
-        self.result_screen.refresh_current_result()
-        self.stack.setCurrentWidget(self.result_screen)
+        self._refresh_after_organize_action()
+        self.stack.setCurrentWidget(self.organize_hub_screen)
 
     def _open_duplicates(self):
         result = self.result_screen.result
@@ -325,52 +357,106 @@ class ScanSessionWindow(QWidget):
 
     def _back_from_date_organize(self):
         self.resize(*self._NORMAL_SIZE)
-        self.stack.setCurrentWidget(self.result_screen)
+        self.stack.setCurrentWidget(self.organize_hub_screen)
 
     def _open_date_group_detail(self, label: str, files: list):
-        self.date_group_detail_screen.set_group(label, files)
+        self._group_detail_return_screen = self.date_organize_screen
+        excluded = self.date_organize_screen.group_excluded(label)
+        self.date_group_detail_screen.set_group(label, files, excluded_paths=excluded)
         self.stack.setCurrentWidget(self.date_group_detail_screen)
 
-    def _on_date_organize_requested(self, mode: str):
-        if self._date_organize_worker is not None:
+    def _open_city_organize(self):
+        result = self.result_screen.result
+        if not result or not result.files:
+            _info_dialog(self, "정리할 사진이 없습니다.")
             return
 
-        if mode == "move":
-            confirmed = _confirm_dialog(
-                self,
-                "이동을 선택하셨어요.<br><br>"
-                "원본 파일이 새 폴더로 옮겨지고 원래 위치에는 남지 않아요.<br>"
-                "계속할까요?",
-                confirm_text="이동 시작",
-                cancel_text="취소",
-            )
-            if not confirmed:
-                return
+        origin = Path(self._scan_origin_paths[0]) if self._scan_origin_paths else Path.cwd()
+        base_dir = origin if origin.is_dir() else origin.parent
+
+        self.city_organize_screen.set_result(result)
+        self.city_organize_screen.set_output_root(str(base_dir / "도시별_정리"))
+        self.resize(*self._DATE_ORGANIZE_SIZE)
+        self.stack.setCurrentWidget(self.city_organize_screen)
+
+    def _back_from_city_organize(self):
+        self.resize(*self._NORMAL_SIZE)
+        self.stack.setCurrentWidget(self.organize_hub_screen)
+
+    def _open_city_group_detail(self, label: str, info, files: list):
+        self._group_detail_return_screen = self.city_organize_screen
+        excluded = self.city_organize_screen.group_excluded(label)
+        self.date_group_detail_screen.set_group(label, files, excluded_paths=excluded, initial_file=info)
+        self.stack.setCurrentWidget(self.date_group_detail_screen)
+
+    def _on_group_detail_exclusion_changed(self, label: str, excluded: set):
+        # _group_detail_return_screen은 항상 date_organize_screen 또는
+        # city_organize_screen 중 하나이고, 둘 다 같은 시그니처의
+        # set_group_excluded(label, excluded_paths)를 갖고 있다.
+        self._group_detail_return_screen.set_group_excluded(label, excluded)
+
+    def _confirm_move_if_needed(self, mode: str) -> bool:
+        if mode != "move":
+            return True
+        return _confirm_dialog(
+            self,
+            "이동을 선택하셨어요.<br><br>"
+            "원본 파일이 새 폴더로 옮겨지고 원래 위치에는 남지 않아요.<br>"
+            "계속할까요?",
+            confirm_text="이동 시작",
+            cancel_text="취소",
+        )
+
+    def _start_organize_worker(self, run_fn, mode: str, output_root: str):
+        self._organize_worker = _OrganizeWorker(run_fn, mode, output_root, self)
+        self._organize_worker.progress.connect(self._on_organize_progress)
+        self._organize_worker.finished_batch.connect(self._on_organize_finished)
+
+        title = "이동하는 중" if mode == "move" else "복사하는 중"
+        self.organize_progress_dialog.start(title)
+        self._organize_worker.start()
+        self.organize_progress_dialog.exec()
+
+    def _on_date_organize_requested(self, mode: str):
+        if self._organize_worker is not None:
+            return
+        if not self._confirm_move_if_needed(mode):
+            return
 
         groups = self.date_organize_screen.groups()
         output_root = self.date_organize_screen.output_root()
         granularity = self.date_organize_screen.granularity()
+        run_fn = lambda progress_callback, should_cancel: organize_by_date(
+            groups, mode, output_root, granularity=granularity,
+            progress_callback=progress_callback, should_cancel=should_cancel,
+        )
+        self._start_organize_worker(run_fn, mode, output_root)
 
-        self._date_organize_worker = _DateOrganizeWorker(groups, mode, output_root, granularity, self)
-        self._date_organize_worker.progress.connect(self._on_date_organize_progress)
-        self._date_organize_worker.finished_batch.connect(self._on_date_organize_finished)
+    def _on_city_organize_requested(self, mode: str):
+        if self._organize_worker is not None:
+            return
+        if not self._confirm_move_if_needed(mode):
+            return
 
-        title = "이동하는 중" if mode == "move" else "복사하는 중"
-        self.date_organize_progress_dialog.start(title)
-        self._date_organize_worker.start()
-        self.date_organize_progress_dialog.exec()
+        groups = self.city_organize_screen.groups()
+        output_root = self.city_organize_screen.output_root()
+        run_fn = lambda progress_callback, should_cancel: organize_by_city(
+            groups, mode, output_root,
+            progress_callback=progress_callback, should_cancel=should_cancel,
+        )
+        self._start_organize_worker(run_fn, mode, output_root)
 
-    def _on_date_organize_progress(self, current: int, total: int, filename: str):
-        self.date_organize_progress_dialog.update_progress(current, total, filename)
+    def _on_organize_progress(self, current: int, total: int, filename: str):
+        self.organize_progress_dialog.update_progress(current, total, filename)
 
-    def _on_date_organize_cancel_requested(self):
-        if self._date_organize_worker is not None:
-            self._date_organize_worker.cancel()
+    def _on_organize_cancel_requested(self):
+        if self._organize_worker is not None:
+            self._organize_worker.cancel()
 
-    def _on_date_organize_finished(self, outcomes):
-        self.date_organize_progress_dialog.accept()
-        worker = self._date_organize_worker
-        self._date_organize_worker = None
+    def _on_organize_finished(self, outcomes):
+        self.organize_progress_dialog.accept()
+        worker = self._organize_worker
+        self._organize_worker = None
         if worker is not None:
             worker.wait()
 
@@ -386,9 +472,9 @@ class ScanSessionWindow(QWidget):
         if worker is not None and worker.mode == "move" and self.result_screen.result is not None:
             for outcome in newly_done:
                 self.result_screen.result.remove(outcome.original)
-            self.result_screen.refresh_current_result()
+            self._refresh_after_organize_action()
 
-        output_root = worker.output_root if worker is not None else self.date_organize_screen.output_root()
+        output_root = worker.output_root if worker is not None else ""
 
         lines = [f"{len(newly_done)}개 정리했습니다."]
         if skipped:
@@ -400,7 +486,7 @@ class ScanSessionWindow(QWidget):
         _info_dialog_with_folder(self, "\n".join(lines), output_root)
 
         self.resize(*self._NORMAL_SIZE)
-        self.stack.setCurrentWidget(self.result_screen)
+        self.stack.setCurrentWidget(self.organize_hub_screen)
 
     def _open_trash(self, return_to=None):
         self._trash_return_screen = return_to or self.result_screen
@@ -413,10 +499,10 @@ class ScanSessionWindow(QWidget):
         elif self.duplicate_screen.has_pending():
             self.stack.setCurrentWidget(self.duplicate_screen)
         else:
-            # 더 처리할 그룹이 없어 검사 결과로 바로 돌아가는 경우 — 그동안
-            # 중복/유사 정리로 빠진 파일들이 표/칩에 반영되게 새로고침한다.
-            self.result_screen.refresh_current_result()
-            self.stack.setCurrentWidget(self.result_screen)
+            # 더 처리할 그룹이 없어 정리 허브로 바로 돌아가는 경우 — 그동안
+            # 중복/유사 정리로 빠진 파일들이 표/칩/카드 배지에 반영되게 새로고침한다.
+            self._refresh_after_organize_action()
+            self.stack.setCurrentWidget(self.organize_hub_screen)
 
     def _on_recovery_finished(self, outcomes, output_dir):
         if self.result_screen.result is not None:
@@ -445,7 +531,7 @@ class ScanSessionWindow(QWidget):
         if (
             (scan_worker is not None and scan_worker.isRunning())
             or (recovery_worker is not None and recovery_worker.isRunning())
-            or (self._date_organize_worker is not None and self._date_organize_worker.isRunning())
+            or (self._organize_worker is not None and self._organize_worker.isRunning())
         ):
             event.ignore()
             return

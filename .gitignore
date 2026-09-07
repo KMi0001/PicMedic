@@ -54,6 +54,12 @@ experiments/restore_prototype/basicsr_src/
 experiments/restore_prototype/models/*.pth
 experiments/restore_prototype/test_images/out_*.png
 
+# 도시별 정리 프로토타입(experiments/city_organize_prototype) — 가상환경과
+# 실행 중 생성되는 합성 테스트 사진/스크린샷은 추적 제외
+experiments/city_organize_prototype/.venv/
+experiments/city_organize_prototype/sample_photos/
+experiments/city_organize_prototype/screenshot*.png
+
 # OS
 Thumbs.db
 .DS_Store

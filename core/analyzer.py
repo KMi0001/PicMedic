@@ -68,7 +68,17 @@ def _compute_file_hash(path: Path) -> Optional[str]:
 
 
 class _DecodeResult:
-    __slots__ = ("readable", "partial", "width", "height", "metadata", "captured_at", "perceptual_hash", "error")
+    __slots__ = (
+        "readable",
+        "partial",
+        "width",
+        "height",
+        "metadata",
+        "captured_at",
+        "perceptual_hash",
+        "gps",
+        "error",
+    )
 
     def __init__(self):
         self.readable = False
@@ -78,6 +88,7 @@ class _DecodeResult:
         self.metadata: dict = {}
         self.captured_at: Optional[datetime] = None
         self.perceptual_hash: Optional[str] = None
+        self.gps: Optional[tuple[float, float]] = None
         self.error: Optional[str] = None
 
 
@@ -94,6 +105,7 @@ def _try_decode(path: Path) -> _DecodeResult:
             result.metadata = _extract_metadata(img)
             result.captured_at = _extract_captured_at(img)
             result.perceptual_hash = _extract_perceptual_hash(img)
+            result.gps = _extract_gps(img)
             return result
     except Exception as first_error:
         result.error = str(first_error)
@@ -109,6 +121,7 @@ def _try_decode(path: Path) -> _DecodeResult:
             result.metadata = _extract_metadata(img)
             result.captured_at = _extract_captured_at(img)
             result.perceptual_hash = _extract_perceptual_hash(img)
+            result.gps = _extract_gps(img)
     except Exception as second_error:
         result.readable = False
         result.error = result.error or str(second_error)
@@ -160,6 +173,44 @@ def _extract_captured_at(img: Image.Image) -> Optional[datetime]:
             return None
 
         return datetime.strptime(raw.strip(), "%Y:%m:%d %H:%M:%S")
+    except Exception:
+        return None
+
+
+def _gps_dms_to_decimal(dms, ref: str) -> float:
+    """Pillow의 exif.get_ifd(GPSInfo)는 (분자, 분모) 유리수 쌍이 아니라 이미
+    계산된 (도, 분, 초) 실수 3개를 그대로 준다 — 유리수 쌍으로 착각해서 처음엔
+    전부 None이 나왔었다(experiments/city_organize_prototype에서 확인)."""
+    degrees, minutes, seconds = dms
+    value = float(degrees) + float(minutes) / 60 + float(seconds) / 3600
+    if ref in ("S", "W"):
+        value = -value
+    return value
+
+
+def _extract_gps(img: Image.Image) -> Optional[tuple[float, float]]:
+    """EXIF GPSInfo에서 (위도, 경도)를 뽑는다(Phase 2 '도시별 정리'용).
+    _extract_captured_at와 같은 이유로 get_ifd(GPSInfo)를 따로 꺼내야 한다.
+    위치 정보는 민감한 개인정보이므로 여기서 뽑은 값은 core/geocoder.py를
+    거쳐 화면에 도시명으로만 쓰이고, 어디로도 전송되지 않는다."""
+    try:
+        exif = img.getexif()
+        if not exif:
+            return None
+        gps_ifd = exif.get_ifd(ExifTags.IFD.GPSInfo)
+        if not gps_ifd:
+            return None
+
+        lat_dms = gps_ifd.get(2)  # GPSLatitude
+        lat_ref = gps_ifd.get(1)  # GPSLatitudeRef
+        lon_dms = gps_ifd.get(4)  # GPSLongitude
+        lon_ref = gps_ifd.get(3)  # GPSLongitudeRef
+        if not (lat_dms and lat_ref and lon_dms and lon_ref):
+            return None
+
+        lat = _gps_dms_to_decimal(lat_dms, lat_ref)
+        lon = _gps_dms_to_decimal(lon_dms, lon_ref)
+        return (lat, lon)
     except Exception:
         return None
 
@@ -257,6 +308,8 @@ def analyze_file(path: str | Path) -> FileInfo:
             info.metadata = decode.metadata
             info.captured_at = decode.captured_at
             info.perceptual_hash = decode.perceptual_hash
+            if decode.gps:
+                info.latitude, info.longitude = decode.gps
             info.recoverable = RecoveryPossibility.PARTIALLY_RECOVERABLE
         else:
             info.status = FileStatus.CORRUPTED
@@ -291,6 +344,8 @@ def analyze_file(path: str | Path) -> FileInfo:
     info.metadata = decode.metadata
     info.captured_at = decode.captured_at
     info.perceptual_hash = decode.perceptual_hash
+    if decode.gps:
+        info.latitude, info.longitude = decode.gps
     info.error_message = decode.error
 
     if decode.readable and not decode.partial:

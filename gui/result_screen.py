@@ -221,9 +221,9 @@ class ResultScreen(QWidget):
     recovery_requested = Signal(list)    # list[FileInfo] — 확장자 변환/복원
     rescan_requested = Signal()
     resume_requested = Signal()          # 중단된 검사를 나머지 파일부터 이어서 진행
-    duplicates_requested = Signal()      # "중복 파일 보기" — gui/duplicate_screen.py로 이동
-    similar_requested = Signal()         # "유사 사진 보기" — gui/similar_screen.py로 이동
-    date_organize_requested = Signal()   # "날짜별 정리" — gui/date_organize_screen.py로 이동
+    organize_requested = Signal()        # "정리" — gui/organize_hub_screen.py로 이동
+    # 중복/유사/날짜별 각각으로 바로 이동하던 시그널 3개는 정리 허브 화면
+    # 하나로 합쳐졌다(2026-09-07, 사용자 요청) — gui/organize_hub_screen.py 참고.
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -254,19 +254,6 @@ class ResultScreen(QWidget):
         home_btn.clicked.connect(self.rescan_requested.emit)
         header_row.addWidget(home_btn)
 
-        # 다른 화면으로 이동하는 기능(중복/유사/정리)을 "홈" 옆에 묶어 우측
-        # 정렬한다 — "홈"이 이 묶음의 맨 앞(제일 왼쪽)에 오도록 순서를 유지.
-        self.duplicates_btn = QPushButton("중복 파일 보기")
-        self.duplicates_btn.clicked.connect(self.duplicates_requested.emit)
-        header_row.addWidget(self.duplicates_btn)
-
-        self.similar_btn = QPushButton("유사 사진 보기")
-        self.similar_btn.clicked.connect(self.similar_requested.emit)
-        header_row.addWidget(self.similar_btn)
-
-        self.date_organize_btn = QPushButton("날짜별 정리")
-        self.date_organize_btn.clicked.connect(self.date_organize_requested.emit)
-        header_row.addWidget(self.date_organize_btn)
         outer.addLayout(header_row)
 
         self.cancelled_banner_frame = QFrame()
@@ -354,6 +341,13 @@ class ResultScreen(QWidget):
         outer.addWidget(self.table, stretch=1)
 
         bottom_row = QHBoxLayout()
+        # "정리"는 선택한 파일이 아니라 검사 결과 전체에 대한 동작이라(중복/유사/
+        # 날짜별 등 여러 렌즈로 훑어보는 gui/organize_hub_screen.py로 이동),
+        # 선택 여부에 따라 활성화되는 오른쪽 버튼들과 분리해 왼쪽에 둔다.
+        self.organize_btn = QPushButton("정리")
+        self.organize_btn.clicked.connect(self.organize_requested.emit)
+        bottom_row.addWidget(self.organize_btn)
+
         self.selection_label = QLabel("선택된 파일 없음")
         self.selection_label.setStyleSheet(f"color: {COLORS['text_secondary']};")
         bottom_row.addWidget(self.selection_label)

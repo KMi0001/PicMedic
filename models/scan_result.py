@@ -179,6 +179,28 @@ class ScanResult:
             groups.append(("날짜 정보 없음", no_date))
         return groups
 
+    def city_groups(self) -> list[tuple[str, list[FileInfo]]]:
+        """GPS 위경도(FileInfo.latitude/longitude) 기준으로 도시별로 묶어
+        반환한다(Phase 2 '도시별 정리', 뷰어 전용 — 실제 파일은 안 건드림).
+        date_groups()와 같은 원칙이지만, 도시 매칭 자체가 core/geocoder.py
+        호출(reverse_geocoder)이 필요해서 매번 계산한다 — GPS 없는 파일은
+        "위치 정보 없음"으로 묶어 맨 뒤에 둔다."""
+        from core.geocoder import resolve_cities
+
+        with_gps = [f for f in self.files if f.latitude is not None and f.longitude is not None]
+        no_gps = [f for f in self.files if f.latitude is None or f.longitude is None]
+
+        cities = resolve_cities([(f.latitude, f.longitude) for f in with_gps])
+
+        buckets: dict[str, list[FileInfo]] = {}
+        for info, city in zip(with_gps, cities):
+            buckets.setdefault(city, []).append(info)
+
+        groups = [(city, files) for city, files in sorted(buckets.items(), key=lambda kv: -len(kv[1]))]
+        if no_gps:
+            groups.append(("위치 정보 없음", no_gps))
+        return groups
+
     def merge(self, other: "ScanResult") -> "ScanResult":
         """이어서 검사한 결과(other)를 이 결과 뒤에 합친 새 ScanResult를 반환한다."""
         return ScanResult(
