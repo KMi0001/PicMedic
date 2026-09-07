@@ -35,10 +35,17 @@ _CKPT_PATH = _PROJECT_ROOT / "assets" / "photo_category" / "ViT-B-32.pt"
 
 # 영어 프롬프트로 정의 — CLIP 텍스트 인코더가 주로 영어로 학습돼 한국어
 # 문장보다 정확도가 높다(실측 확인). 화면에는 왼쪽 한국어 라벨만 보여준다.
+# 2026-09-07: 동물/야경/셀카 3개 추가(5→8개) — 카테고리가 늘수록 서로 헷갈리는
+# 경우가 늘어 CONFIDENCE_THRESHOLD를 못 넘기는 사진이 많아질 수 있음(트레이드오프
+# 안내 후 사용자가 추가를 선택). 특히 "셀카"는 "인물 사진"과 개념이 겹쳐서
+# 경계가 애매할 수 있음 — 실사용 확인 후 프롬프트/임계값 조정 필요할 수 있음.
 _CATEGORIES: dict[str, str] = {
     "인물 사진": "a photo of a person",
+    "셀카": "a selfie photo taken by the person in it, arm's length or front camera",
     "풍경 사진": "a photo of a landscape or scenery",
+    "야경 사진": "a nighttime photo, such as a night cityscape or fireworks",
     "음식 사진": "a photo of food",
+    "동물 사진": "a photo of an animal or pet",
     "문서/스크린샷": "a screenshot or a photo of a document with text",
     "사물 사진": "a photo of an object or item",
 }
@@ -64,19 +71,26 @@ def _get_model():
     import open_clip
     import torch
 
+    # core/deblur.py·denoise.py·face_restorer.py와 동일한 GPU 자동 감지 —
+    # 이 함수만 빠져 있어서 GPU가 있는 기기에서도 항상 CPU로 돌고 있었다
+    # (실측: 4032x3024 기준 CPU 215ms/장, 사진 진단의 카테고리 판단도 이
+    # 경로를 타므로 같이 빨라진다).
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
     model, _, preprocess = open_clip.create_model_and_transforms(
         "ViT-B-32", pretrained=str(_CKPT_PATH), force_quick_gelu=True, weights_only=False
     )
     model.eval()
+    model = model.to(device)
     tokenizer = open_clip.get_tokenizer("ViT-B-32")
 
     labels = list(_CATEGORIES.keys())
-    text = tokenizer(list(_CATEGORIES.values()))
+    text = tokenizer(list(_CATEGORIES.values())).to(device)
     with torch.no_grad():
         text_features = model.encode_text(text)
         text_features /= text_features.norm(dim=-1, keepdim=True)
 
-    _model_cache = (model, preprocess, labels, text_features)
+    _model_cache = (model, preprocess, labels, text_features, device)
     return _model_cache
 
 
@@ -96,10 +110,10 @@ def classify_photo(path: str) -> CategoryResult:
     import torch
     from PIL import Image
 
-    model, preprocess, labels, text_features = _get_model()
+    model, preprocess, labels, text_features, device = _get_model()
 
     with Image.open(path) as img:
-        tensor = preprocess(img.convert("RGB")).unsqueeze(0)
+        tensor = preprocess(img.convert("RGB")).unsqueeze(0).to(device)
 
     with torch.no_grad():
         image_features = model.encode_image(tensor)
