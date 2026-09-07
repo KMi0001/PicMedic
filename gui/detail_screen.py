@@ -7,7 +7,6 @@ PRD 19장 "Screen 04 — File Detail" 구현.
 from __future__ import annotations
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QPixmap, QImage
 from PySide6.QtWidgets import (
     QWidget,
     QVBoxLayout,
@@ -19,6 +18,7 @@ from PySide6.QtWidgets import (
 )
 
 from core.converter import RecoveryMode
+from gui.image_viewer import ImageViewer
 from gui.quality_diagnosis_dialog import run_quality_diagnosis
 from gui.theme import COLORS, STATUS_COLORS
 from models.file_info import FileInfo, FileStatus
@@ -54,11 +54,9 @@ class DetailScreen(QWidget):
         preview_card.setObjectName("Card")
         preview_layout = QVBoxLayout(preview_card)
         preview_layout.setAlignment(Qt.AlignCenter)
-        self.preview_label = QLabel("미리보기를 생성할 수 없습니다.")
-        self.preview_label.setAlignment(Qt.AlignCenter)
-        self.preview_label.setFixedSize(PREVIEW_SIZE, PREVIEW_SIZE)
-        self.preview_label.setStyleSheet(f"color: {COLORS['text_secondary']};")
-        preview_layout.addWidget(self.preview_label)
+        self.preview_viewer = ImageViewer(placeholder_text="미리보기를 생성할 수 없습니다.")
+        self.preview_viewer.setFixedSize(PREVIEW_SIZE, PREVIEW_SIZE + 28)
+        preview_layout.addWidget(self.preview_viewer)
         content_col.addWidget(preview_card, alignment=Qt.AlignHCenter)
 
         # --- 아래: 정보 + 액션 ---
@@ -201,32 +199,7 @@ class DetailScreen(QWidget):
         self._grid_row += 1
 
     def _load_preview(self, info: FileInfo):
-        pixmap = None
-        try:
-            if info.detected_format in ("HEIC", "HEIF"):
-                from PIL import Image
-                from PIL.ImageQt import ImageQt
-
-                with Image.open(info.path) as img:
-                    img.load()
-                    img.thumbnail((PREVIEW_SIZE, PREVIEW_SIZE))
-                    qimage = ImageQt(img.convert("RGBA"))
-                    pixmap = QPixmap.fromImage(QImage(qimage))
-            else:
-                candidate = QPixmap(info.path)
-                if not candidate.isNull():
-                    pixmap = candidate.scaled(
-                        PREVIEW_SIZE, PREVIEW_SIZE, Qt.KeepAspectRatio, Qt.SmoothTransformation
-                    )
-        except Exception:
-            pixmap = None
-
-        if pixmap and not pixmap.isNull():
-            self.preview_label.setPixmap(pixmap)
-            self.preview_label.setText("")
-        else:
-            self.preview_label.setPixmap(QPixmap())
-            self.preview_label.setText("미리보기를 생성할 수 없습니다.")
+        self.preview_viewer.set_image_path(info.path)
 
     def _on_restore_clicked(self):
         if self.current_info:

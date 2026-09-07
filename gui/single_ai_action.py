@@ -33,8 +33,8 @@ from PySide6.QtWidgets import (
 )
 
 from gui.common_dialogs import info_dialog, question_icon_pixmap, ProgressDialog
+from gui.image_viewer import ImageViewer
 from gui.theme import COLORS
-from gui.thumbnail import load_thumbnail
 
 _COMPARE_BOX_SIZE = 220
 
@@ -126,10 +126,8 @@ class _ResultDialog(QDialog):
 
         grid = QGridLayout()
         grid.setSpacing(12)
-        original_pixmap = load_thumbnail(original_path, _COMPARE_BOX_SIZE)
-        result_pixmap = load_thumbnail(result_path, _COMPARE_BOX_SIZE)
-        grid.addWidget(self._make_box("원본", original_pixmap), 0, 0)
-        grid.addWidget(self._make_box(config.result_box_label, result_pixmap), 0, 1)
+        grid.addWidget(self._make_box("원본", original_path), 0, 0)
+        grid.addWidget(self._make_box(config.result_box_label, result_path), 0, 1)
         layout.addLayout(grid)
 
         path_label = QLabel(f"저장 위치: {result_path}")
@@ -149,7 +147,7 @@ class _ResultDialog(QDialog):
         btn_row.addWidget(close_btn)
         layout.addLayout(btn_row)
 
-    def _make_box(self, title: str, pixmap) -> QFrame:
+    def _make_box(self, title: str, path: str) -> QFrame:
         frame = QFrame()
         frame.setFrameShape(QFrame.StyledPanel)
         box_layout = QVBoxLayout(frame)
@@ -158,15 +156,10 @@ class _ResultDialog(QDialog):
         caption.setAlignment(Qt.AlignCenter)
         box_layout.addWidget(caption)
 
-        image_label = QLabel()
-        image_label.setFixedSize(_COMPARE_BOX_SIZE, _COMPARE_BOX_SIZE)
-        image_label.setAlignment(Qt.AlignCenter)
-        if pixmap is not None:
-            image_label.setPixmap(pixmap)
-        else:
-            image_label.setText("미리보기 없음")
-            image_label.setStyleSheet(f"color: {COLORS['text_secondary']};")
-        box_layout.addWidget(image_label)
+        viewer = ImageViewer(placeholder_text="미리보기 없음")
+        viewer.setFixedSize(_COMPARE_BOX_SIZE, _COMPARE_BOX_SIZE + 28)
+        viewer.set_image_path(path)
+        box_layout.addWidget(viewer)
         return frame
 
 

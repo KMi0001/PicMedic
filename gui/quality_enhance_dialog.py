@@ -29,8 +29,8 @@ from PySide6.QtWidgets import (
 
 from core import quality_enhancer
 from gui.common_dialogs import info_dialog, question_icon_pixmap, ProgressDialog
+from gui.image_viewer import ImageViewer
 from gui.theme import COLORS
-from gui.thumbnail import load_thumbnail
 
 _COMPARE_BOX_SIZE = 200
 _COMPARE_CROP_SIZE = 128  # 원본 기준 크롭 한 변 길이(px) — 두 확대 방식을 공정하게 비교하기 위함
@@ -159,14 +159,12 @@ class _EnhanceResultDialog(QDialog):
         grid = QGridLayout()
         grid.setSpacing(12)
 
-        original_pixmap = load_thumbnail(original_path, _COMPARE_BOX_SIZE)
-        result_pixmap = load_thumbnail(result_path, _COMPARE_BOX_SIZE)
         baseline_crop_pixmap, result_crop_pixmap = _build_crop_comparison(original_path, result_path, scale)
 
-        grid.addWidget(self._make_box("원본 (전체)", original_pixmap), 0, 0)
-        grid.addWidget(self._make_box("업스케일 결과 (전체)", result_pixmap), 0, 1)
-        grid.addWidget(self._make_box("단순 확대 (같은 영역)", baseline_crop_pixmap), 1, 0)
-        grid.addWidget(self._make_box("AI 업스케일 (같은 영역)", result_crop_pixmap), 1, 1)
+        grid.addWidget(self._make_box("원본 (전체)", path=original_path), 0, 0)
+        grid.addWidget(self._make_box("업스케일 결과 (전체)", path=result_path), 0, 1)
+        grid.addWidget(self._make_box("단순 확대 (같은 영역)", pixmap=baseline_crop_pixmap), 1, 0)
+        grid.addWidget(self._make_box("AI 업스케일 (같은 영역)", pixmap=result_crop_pixmap), 1, 1)
         layout.addLayout(grid)
 
         path_label = QLabel(f"저장 위치: {result_path}")
@@ -186,7 +184,7 @@ class _EnhanceResultDialog(QDialog):
         btn_row.addWidget(close_btn)
         layout.addLayout(btn_row)
 
-    def _make_box(self, title: str, pixmap: QPixmap | None) -> QFrame:
+    def _make_box(self, title: str, *, path: str | None = None, pixmap: QPixmap | None = None) -> QFrame:
         frame = QFrame()
         frame.setFrameShape(QFrame.StyledPanel)
         box_layout = QVBoxLayout(frame)
@@ -195,15 +193,13 @@ class _EnhanceResultDialog(QDialog):
         caption.setAlignment(Qt.AlignCenter)
         box_layout.addWidget(caption)
 
-        image_label = QLabel()
-        image_label.setFixedSize(_COMPARE_BOX_SIZE, _COMPARE_BOX_SIZE)
-        image_label.setAlignment(Qt.AlignCenter)
-        if pixmap is not None:
-            image_label.setPixmap(pixmap)
-        else:
-            image_label.setText("미리보기 없음")
-            image_label.setStyleSheet(f"color: {COLORS['text_secondary']};")
-        box_layout.addWidget(image_label)
+        viewer = ImageViewer(placeholder_text="미리보기 없음")
+        viewer.setFixedSize(_COMPARE_BOX_SIZE, _COMPARE_BOX_SIZE + 28)
+        if path is not None:
+            viewer.set_image_path(path)
+        elif pixmap is not None:
+            viewer.set_pixmap(pixmap)
+        box_layout.addWidget(viewer)
         return frame
 
 
