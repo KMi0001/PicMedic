@@ -10,8 +10,8 @@ gui/scan_session_window.py의 _info_dialog)을, 세 번째 화면(gui/duplicate_
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, QPointF, QUrl, Signal
-from PySide6.QtGui import QDesktopServices, QPainter, QPixmap, QColor, QPen, QFont
+from PySide6.QtCore import Qt, QUrl, Signal
+from PySide6.QtGui import QDesktopServices, QPixmap
 from PySide6.QtWidgets import (
     QDialog,
     QHBoxLayout,
@@ -22,54 +22,21 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from gui.icons import status_icon_pixmap
 from gui.theme import COLORS
 
 
 def question_icon_pixmap(accent: str, size: int = 48) -> QPixmap:
-    """확인 필요 팝업 아이콘: 최근 검사 목록 아이콘(gui/home_screen.py::_status_icon_pixmap)과
-    같은 스타일(색 원 + 흰색 글리프, 이모지 폰트 미사용)로 맞춘 물음표 아이콘."""
-    pixmap = QPixmap(size, size)
-    pixmap.fill(Qt.transparent)
-    painter = QPainter(pixmap)
-    painter.setRenderHint(QPainter.Antialiasing)
-    painter.setPen(Qt.NoPen)
-    painter.setBrush(QColor(accent))
-    painter.drawEllipse(0, 0, size, size)
-    painter.setFont(QFont("Segoe UI", int(size * (13 / 24) * 0.55), QFont.Bold))
-    painter.setPen(QColor("white"))
-    painter.drawText(pixmap.rect(), Qt.AlignCenter, "?")
-    painter.end()
-    return pixmap
+    """확인 필요 팝업 아이콘 — gui/icons.py의 공용 아이콘("question")을 이 이름으로도
+    계속 쓸 수 있게 얇게 감싼 것. 다른 화면(quality_enhance_dialog.py 등)이
+    `from gui.common_dialogs import question_icon_pixmap`로 그대로 가져다 쓰고 있어
+    이름은 유지한다."""
+    return status_icon_pixmap("question", accent, size)
 
 
 def info_icon_pixmap(color: str, size: int = 32) -> QPixmap:
-    """안내(정보) 팝업 아이콘 — DESIGN.md 아이콘 시스템의 '안내'(i), 색 원 + 흰색
-    벡터 글리프. 확인 필요(?) 아이콘과 같은 비율로 그린다."""
-    icon_box = size * (13 / 24)
-    inner_scale = icon_box / 24.0
-    offset = (size - icon_box) / 2
-
-    def pt(x, y):
-        return QPointF(offset + x * inner_scale, offset + y * inner_scale)
-
-    pixmap = QPixmap(size, size)
-    pixmap.fill(Qt.transparent)
-    painter = QPainter(pixmap)
-    painter.setRenderHint(QPainter.Antialiasing)
-    painter.setPen(Qt.NoPen)
-    painter.setBrush(QColor(color))
-    painter.drawEllipse(0, 0, size, size)
-
-    painter.setBrush(QColor("white"))
-    painter.drawEllipse(pt(12, 6.3), 1.1 * inner_scale, 1.1 * inner_scale)
-    pen = QPen(QColor("white"))
-    pen.setWidthF(2.6 * inner_scale)
-    pen.setCapStyle(Qt.RoundCap)
-    painter.setPen(pen)
-    painter.drawLine(pt(12, 10.8), pt(12, 17.5))
-
-    painter.end()
-    return pixmap
+    """안내(정보) 팝업 아이콘 — gui/icons.py의 공용 아이콘("info")을 감싼 것."""
+    return status_icon_pixmap("info", color, size)
 
 
 def confirm_dialog(
@@ -199,30 +166,8 @@ def info_dialog_with_folder(parent: QWidget, message: str, folder_path: str) -> 
 
 
 def progress_icon_pixmap(accent: str, size: int = 22) -> QPixmap:
-    """진행 팝업 헤더 아이콘: 같은 색 원 + 흰색 점 3개("처리 중")로, 다른 팝업
-    아이콘(확인/안내 등)과 같은 스타일을 유지한다 — 회전 애니메이션 없이 정적인
-    아이콘이라 '스피너'보다는 '진행 중임을 나타내는 점'으로 단순화."""
-    icon_box = size * (13 / 24)
-    inner_scale = icon_box / 24.0
-    offset = (size - icon_box) / 2
-
-    def pt(x, y):
-        return QPointF(offset + x * inner_scale, offset + y * inner_scale)
-
-    pixmap = QPixmap(size, size)
-    pixmap.fill(Qt.transparent)
-    painter = QPainter(pixmap)
-    painter.setRenderHint(QPainter.Antialiasing)
-    painter.setPen(Qt.NoPen)
-    painter.setBrush(QColor(accent))
-    painter.drawEllipse(0, 0, size, size)
-
-    painter.setBrush(QColor("white"))
-    for x in (6.5, 12, 17.5):
-        painter.drawEllipse(pt(x, 12), 1.6 * inner_scale, 1.6 * inner_scale)
-
-    painter.end()
-    return pixmap
+    """진행 팝업 헤더 아이콘 — gui/icons.py의 공용 아이콘("progress")을 감싼 것."""
+    return status_icon_pixmap("progress", accent, size)
 
 
 class ProgressDialog(QDialog):

@@ -15,9 +15,11 @@ from __future__ import annotations
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QFrame,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QPushButton,
+    QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
@@ -54,7 +56,28 @@ class OrganizeHubScreen(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
 
-        outer = QVBoxLayout(self)
+        # 화면 전체를 쓰는 큰 창에서 카드 4개짜리 짧은 목록이 창 끝까지 늘어나면
+        # 카드마다 오른쪽에 텅 빈 공간만 남아 허전해 보인다 — 내용 폭을 한 번
+        # 고정(760px)하고 가운데 정렬해서, 창이 아무리 넓어도 실제 내용은
+        # 항상 읽기 좋은 폭으로 모여 있게 한다.
+        root = QHBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.addStretch(1)
+
+        content = QWidget()
+        content.setMaximumWidth(760)
+        # QHBoxLayout에서 stretch factor가 0인 위젯은 양옆 addStretch(1)에 밀려
+        # 그냥 자기 sizeHint(여기선 카드 grid가 요구하는 최소치)만큼만 차지하고
+        # 절대 커지지 않는다 — setMaximumWidth만으론 "커질 수 있는 상한"만
+        # 정해질 뿐, 실제로 그 상한까지 커지게 만드는 힘(Expanding 정책 +
+        # 양옆 스트레치보다 훨씬 큰 stretch factor)이 없으면 창을 넓혀도 내용이
+        # 항상 작게 눌려 보인다(2026-09-08, 사용자 리포트 — "정리 화면이
+        # 이상하게 좁다"). 아래 두 줄이 그 힘을 준다.
+        content.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        root.addWidget(content, 100)
+        root.addStretch(1)
+
+        outer = QVBoxLayout(content)
         outer.setContentsMargins(48, 32, 48, 32)
         outer.setAlignment(Qt.AlignTop)
         outer.setSpacing(16)
@@ -78,22 +101,25 @@ class OrganizeHubScreen(QWidget):
         self.duplicates_card = self._build_card(
             "중복 파일", "완전히 똑같은 사진을 찾아요.", self.duplicates_requested
         )
-        outer.addWidget(self.duplicates_card)
-
         self.similar_card = self._build_card(
             "유사 사진", "리사이즈·재저장으로 약간 다른, 비슷한 사진을 찾아요.", self.similar_requested
         )
-        outer.addWidget(self.similar_card)
-
         self.date_card = self._build_card(
             "날짜별", "촬영일 기준으로 묶어서 폴더 정리 미리보기를 보여줘요.", self.date_organize_requested
         )
-        outer.addWidget(self.date_card)
-
         self.city_card = self._build_card(
             "도시별", "GPS 위치가 있는 사진을 지도에서 도시별로 훑어봐요.", self.city_organize_requested
         )
-        outer.addWidget(self.city_card)
+
+        # 4개를 세로로 쭉 나열하는 대신 2x2 타일로 — 카드 하나가 창 끝까지
+        # 늘어나 텅 비어 보이는 것보다, 짧은 설명 문구엔 이 정도 폭이 더 맞는다.
+        cards_grid = QGridLayout()
+        cards_grid.setSpacing(14)
+        cards_grid.addWidget(self.duplicates_card, 0, 0)
+        cards_grid.addWidget(self.similar_card, 0, 1)
+        cards_grid.addWidget(self.date_card, 1, 0)
+        cards_grid.addWidget(self.city_card, 1, 1)
+        outer.addLayout(cards_grid)
 
         outer.addStretch(1)
 

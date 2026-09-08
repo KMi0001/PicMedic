@@ -73,8 +73,16 @@ def run():
             skip("enhance_quality 실제 실행 (assets/realesrgan/ 없음 — scripts/fetch_realesrgan_assets.py 필요)")
 
         if deblur.is_available():
-            result_path = deblur.deblur_image(str(photo_path), str(output_dir))
-            check("deblur_image: 결과 파일 생성됨", Path(result_path).exists())
+            # 테스트용 사진은 실제 모션 블러가 아니라 단색+가우시안 블러라
+            # NAFNet-GoPro 입장에선 도메인 밖 입력에 가깝다 — 안전장치
+            # (DeblurNotRecommendedError/DeblurResultUnstableError)가 걸러내는
+            # 것도 "실행 자체가 죽지 않음"이라는 이 테스트의 목적엔 정상 결과다
+            # (face_restorer의 NoFaceFoundError 처리와 같은 이유).
+            try:
+                result_path = deblur.deblur_image(str(photo_path), str(output_dir))
+                check("deblur_image: 결과 파일 생성됨", Path(result_path).exists())
+            except (deblur.DeblurNotRecommendedError, deblur.DeblurResultUnstableError):
+                check("deblur_image: 안전장치가 도메인 밖 입력을 정상적으로 걸러냄", True)
             check("deblur_image: 원본 파일은 그대로 남음", photo_path.exists())
         else:
             skip("deblur_image 실제 실행 (assets/deblur/ 없음 — scripts/fetch_deblur_assets.py 필요)")

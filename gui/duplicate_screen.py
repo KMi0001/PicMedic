@@ -35,25 +35,28 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import Qt, Signal, QPointF, QRectF
-from PySide6.QtGui import QPainter, QPixmap, QColor, QPen
+from PySide6.QtCore import Qt, Signal, QPointF, QRectF, QUrl
+from PySide6.QtGui import QDesktopServices, QPainter, QPixmap, QColor, QPen
 from PySide6.QtWidgets import (
     QWidget,
     QVBoxLayout,
     QHBoxLayout,
     QLabel,
+    QMenu,
     QPushButton,
     QRadioButton,
     QButtonGroup,
     QFrame,
     QScrollArea,
+    QSizePolicy,
     QTableWidget,
     QTableWidgetItem,
     QHeaderView,
     QAbstractItemView,
+    QToolButton,
 )
 
-from core.duplicate_resolver import suggest_keep, suggest_keep_folder
+from core.duplicate_resolver import explain_file, suggest_keep, suggest_keep_folder
 from gui.common_dialogs import confirm_dialog, info_dialog, ProgressDialog
 from gui.result_screen import CheckAllHeaderView, SummaryChip
 from gui.theme import COLORS
@@ -159,14 +162,20 @@ class DuplicateScreen(QWidget):
 
     back_requested = Signal()
     view_trash_requested = Signal()  # 정리(휴지통 이동) 완료 후 휴지통 화면으로 이동
-    file_selected = Signal(object)  # 파일 경로 클릭 -> 상세보기(사진 미리보기)
+    # 파일 클릭/미리보기 -> 상세보기(FileInfo, 그 파일이 속한 그룹 — 상세
+    # 화면에서 방향키로 같은 그룹의 다음/이전 사진을 넘나들 때 씀, 2026-09-08).
+    file_selected = Signal(object, list)
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self._result = None  # 정리(휴지통 이동) 후 옮긴 파일을 여기서도 빼야 재조회 시 다시 안 나타남
         self._cluster_entries: list[_ClusterEntry] = []
-        # (group, keep_info, reason) 병렬 목록 — self._auto_table의 행과 인덱스가 1:1로 맞는다.
+        # (group, keep_info, reason) 병렬 목록. self._auto_parent_rows[i]는
+        # self._auto_rows[i]에 해당하는 표의 실제 부모 행 번호 — "삭제될 파일"을
+        # 엑셀 행 그룹화처럼 부모 행 바로 아래 숨은 하위 행으로 펼치면서
+        # (2026-09-08) 더 이상 인덱스와 행 번호가 같지 않아졌다.
         self._auto_rows: list[tuple[list, object, str]] = []
+        self._auto_parent_rows: list[int] = []
         self._auto_table: QTableWidget | None = None
         self._manual_entries: list[_ManualEntry] = []
         self._cluster_section: QLabel | None = None
@@ -184,7 +193,27 @@ class DuplicateScreen(QWidget):
         # ("cluster", _ClusterEntry) | ("auto", row_index) | ("manual", _ManualEntry)
         self._pending_entry_refs: list[tuple[str, object]] | None = None
 
-        outer = QVBoxLayout(self)
+        # 화면 전체를 쓰는 큰 창에서 카드/표가 창 끝까지 늘어나면 오른쪽에 텅 빈
+        # 공간이 남아 허전해 보인다(gui/organize_hub_screen.py에서 고친 것과 같은
+        # 문제) — 내용 폭을 한 번 고정(900px)하고 가운데 정렬한다. 그룹 병합/추천
+        # 로직은 전혀 안 건드리고 바깥 컨테이너만 바꾼 것.
+        root = QHBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.addStretch(1)
+
+        content = QWidget()
+        content.setMaximumWidth(900)
+        # stretch factor 0인 위젯은 양옆 addStretch(1)에 밀려 sizeHint(라디오
+        # 버튼 라벨처럼 줄바꿈 안 되는 요소가 정하는 좁은 값)만큼만 차지하고
+        # 절대 안 커진다 — setMaximumWidth는 상한만 정할 뿐, 실제로 그 상한
+        # 까지 채우는 힘은 Expanding 정책 + 양옆보다 훨씬 큰 stretch factor가
+        # 있어야 생긴다(2026-09-08, 사용자 리포트 — "정리 화면이 이상하게
+        # 좁다", 실측: 900 의도 → 571만 사용).
+        content.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        root.addWidget(content, 100)
+        root.addStretch(1)
+
+        outer = QVBoxLayout(content)
         outer.setContentsMargins(48, 32, 48, 32)
         outer.setAlignment(Qt.AlignTop)
         outer.setSpacing(16)
@@ -232,6 +261,12 @@ class DuplicateScreen(QWidget):
         self.scroll_area = QScrollArea()
         self.scroll_area.setWidgetResizable(True)
         self.scroll_area.setFrameShape(QFrame.NoFrame)
+        # 카드는 항상 컨테이너 폭에 맞춰지므로 가로 스크롤은 필요 없다 — 세로
+        # 스크롤바가 나타나며 뷰포트 폭이 살짝 줄어드는 순간(피드백 루프)
+        # 불필요한 가로 스크롤바까지 같이 뜨는 문제가 있었다(2026-09-08,
+        # 사용자 리포트 — gui/date_group_detail_screen.py에는 이미 적용돼있던
+        # 설정이 여기엔 빠져있었음).
+        self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self._list_container = QWidget()
         self._list_layout = QVBoxLayout(self._list_container)
         self._list_layout.setContentsMargins(0, 0, 0, 0)
@@ -240,7 +275,12 @@ class DuplicateScreen(QWidget):
         self.scroll_area.setWidget(self._list_container)
         outer.addWidget(self.scroll_area, stretch=1)
 
-        self.cleanup_btn = QPushButton("선택한 파일 임시 휴지통으로 이동")
+        # "선택한 파일"이라고 하면 체크/라디오로 고른(=남길) 파일이 옮겨진다는
+        # 뜻으로 오해하기 쉽다(gui/similar_screen.py와 같은 문제,
+        # 2026-09-09, 사용자 리포트 — "반대 아니야?") — 이 화면은 섹션마다
+        # "선택"의 의미가 달라서(자동 추천 표는 체크=적용, 폴더/개별 카드는
+        # 라디오=남길 대상) 아예 "선택한"이라는 말을 빼고 실행 자체로 문구를 쓴다.
+        self.cleanup_btn = QPushButton("정리 실행 — 임시 휴지통으로 이동")
         self.cleanup_btn.setObjectName("Danger")
         self.cleanup_btn.clicked.connect(self._on_cleanup_clicked)
         outer.addWidget(self.cleanup_btn)
@@ -305,13 +345,13 @@ class DuplicateScreen(QWidget):
             # 그룹을 많이 해결해주는 조합을 위로
             for key in sorted(clusters, key=lambda k: len(clusters[k]), reverse=True):
                 group_list = clusters[key]
-                card, folder_options, radios, skip_radio, suggested_folder = self._build_cluster_card(
+                table, folder_options, radios, skip_radio, suggested_folder = self._build_cluster_table(
                     sorted(key), group_list
                 )
                 self._cluster_entries.append(
-                    _ClusterEntry(card, group_list, folder_options, radios, skip_radio, suggested_folder)
+                    _ClusterEntry(table, group_list, folder_options, radios, skip_radio, suggested_folder)
                 )
-                self._list_layout.insertWidget(row, card)
+                self._list_layout.insertWidget(row, table)
                 row += 1
 
             self._auto_section = QLabel()
@@ -371,66 +411,142 @@ class DuplicateScreen(QWidget):
                 f"개별로 확인 필요 · {len(self._manual_entries)}개 그룹 (추천 확신 없음)"
             )
 
-    def _build_cluster_card(
+    def _build_cluster_table(
         self, folders: list[Path], group_list: list[list]
-    ) -> tuple[QFrame, list[Path], list[QRadioButton], QRadioButton, tuple[Path, str] | None]:
-        card = QFrame()
-        card.setObjectName("Card")
-        layout = QVBoxLayout(card)
-        layout.setContentsMargins(18, 14, 18, 14)
-        layout.setSpacing(6)
+    ) -> tuple[QTableWidget, list[Path], list[QRadioButton], QRadioButton, tuple[Path, str] | None]:
+        """"폴더 단위로 정리 가능" 조합 하나를 표로 보여준다 — 자동 추천
+        표와 같은 "체크옵션 / 파일명(로컬주소) / 구분 / 사유" 4칸으로
+        통일했다(2026-09-08, 사용자 요청 — 카드마다 모양이 달라 헷갈린다는
+        피드백, experiments/cluster_grouping_prototype에서 검증받음). 폴더
+        후보마다 라디오 행 하나씩("건너뛰기"도 라디오 행)이고, 후보 행의
+        "파일명(로컬주소)" 칸 자체를 누르면(별도 버튼 없이) 그 폴더를
+        남겼을 때 그룹마다 정확히 어떤 파일이 지워지는지 바로 아래 펼쳐진다
+        (gui/duplicate_screen.py::_build_auto_table과 같은 엑셀 행 그룹화
+        방식)."""
+        table = QTableWidget(0, 4)
+        table.setHorizontalHeaderLabels(["", "파일명 (로컬주소)", "구분", "사유"])
+        table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Fixed)
+        table.setColumnWidth(0, 32)
+        table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        table.setColumnWidth(2, 60)
+        table.setColumnWidth(3, 260)
+        table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        table.setSelectionMode(QAbstractItemView.NoSelection)
+        table.verticalHeader().setVisible(False)
+        table.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        # col1이 Stretch라 표 자체는 가로 스크롤이 필요 없다 — 없으면 표
+        # 위젯이 실제 창 폭보다 좁게 배치될 때 "사유" 칸이 표 자체의 가로
+        # 스크롤 뒤로 밀려 숨어버릴 수 있다(2026-09-08, 사용자 리포트 —
+        # "사유가 안 보인다"의 진짜 원인 — 바깥 QScrollArea만 막아뒀지 표
+        # 자신의 가로 스크롤은 안 막아뒀었음).
+        table.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        table.setFocusPolicy(Qt.NoFocus)
+        table.setContextMenuPolicy(Qt.CustomContextMenu)
+        table.customContextMenuRequested.connect(lambda pos, t=table: self._on_cluster_context_menu(t, pos))
+        table.doubleClicked.connect(lambda index, t=table: self._on_cluster_row_double_clicked(t, index))
 
-        header = QLabel(f"폴더 {len(folders)}개 조합 · {len(group_list)}개 그룹에 적용")
-        header.setStyleSheet("font-weight: 700;")
-        layout.addWidget(header)
+        button_group = QButtonGroup(table)
+        summary_text = f"폴더 {len(folders)}개 조합 · {len(group_list)}개 그룹에 적용"
 
-        sub = QLabel("남길 폴더를 선택하세요 — 나머지 폴더의 파일들이 정리 대상이 됩니다.")
-        sub.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 11px;")
-        layout.addWidget(sub)
+        row = 0
+        table.insertRow(row)
+        skip_radio = QRadioButton()
+        skip_radio.setToolTip(summary_text)
+        button_group.addButton(skip_radio)
+        table.setCellWidget(row, 0, skip_radio)
+        skip_item = QTableWidgetItem(SKIP_LABEL)
+        skip_item.setToolTip(summary_text)
+        table.setItem(row, 1, skip_item)
+        for c in (2, 3):
+            dash_item = QTableWidgetItem("-")
+            dash_item.setFlags(Qt.NoItemFlags)
+            table.setItem(row, c, dash_item)
+        row += 1
 
         # 정확 중복 그룹 안 파일들은 바이트 단위로 동일해서 EXIF/용량으로는
         # 구분이 안 되므로(core/duplicate_resolver.py 참고), 이 조합에 속한
         # 모든 그룹이 같은 폴더를 추천할 때만 그 폴더를 기본 선택으로 미리
         # 골라준다 — 신뢰도 낮으면 지금처럼 "건너뛰기"가 기본값으로 남는다.
         suggested_folder = suggest_keep_folder(group_list)
-        if suggested_folder is not None:
-            hint = QLabel(f"추천: '{suggested_folder[0]}' 폴더 유지 — {suggested_folder[1]}")
-            hint.setWordWrap(True)
-            hint.setStyleSheet(f"color: {COLORS['primary']}; font-size: 11px;")
-            layout.addWidget(hint)
-
-        # 폴더 조합 전체를 미리 렌더링하면 수백 개 카드에서 다시 느려지므로,
-        # 대표로 첫 그룹의 파일 하나만 눌렀을 때 상세보기로 보여준다.
-        sample_info = group_list[0][0]
-        sample_link = _ClickableLabel("샘플 사진 보기")
-        sample_link.setStyleSheet(
-            f"color: {COLORS['primary']}; font-size: 11px; text-decoration: underline;"
-        )
-        sample_link.setToolTip("이 조합에 속한 사진 중 하나를 미리 봅니다")
-        sample_link.clicked.connect(lambda info=sample_info: self.file_selected.emit(info))
-        layout.addWidget(sample_link)
-
-        button_group = QButtonGroup(card)
-
-        skip_radio = QRadioButton(SKIP_LABEL)
-        skip_radio.setStyleSheet(f"color: {COLORS['text_secondary']};")
-        button_group.addButton(skip_radio)
-        layout.addWidget(skip_radio)
 
         radios: list[QRadioButton] = []
+        all_child_rows: list[int] = []  # 끝에서 한꺼번에 숨김 처리 — 아래 주석 참고
         for folder in folders:
-            row = QHBoxLayout()
+            table.insertRow(row)
+
             radio = QRadioButton()
             radio.setToolTip("이 폴더의 파일을 남깁니다")
             button_group.addButton(radio)
             radios.append(radio)
-            row.addWidget(radio)
+            table.setCellWidget(row, 0, radio)
 
-            path_label = QLabel(str(folder))
-            path_label.setWordWrap(True)
-            path_label.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 12px;")
-            row.addWidget(path_label, stretch=1)
-            layout.addLayout(row)
+            toggle_btn = QToolButton()
+            toggle_btn.setText(f"▸ {folder}")
+            toggle_btn.setCheckable(True)
+            toggle_btn.setAutoRaise(True)
+            toggle_btn.setCursor(Qt.PointingHandCursor)
+            toggle_btn.setToolTip(f"{folder}\n눌러서 이 폴더를 남겼을 때 지워질 파일을 확인하세요")
+            toggle_btn.setStyleSheet(
+                "QToolButton { border: none; background: transparent; text-align: left; }"
+            )
+            table.setCellWidget(row, 1, toggle_btn)
+
+            keep_status_item = QTableWidgetItem("유지")
+            table.setItem(row, 2, keep_status_item)
+
+            is_recommended = suggested_folder is not None and suggested_folder[0] == folder
+            reason_text = f"추천 — {suggested_folder[1]}" if is_recommended else ""
+            if reason_text:
+                table.setCellWidget(row, 3, self._reason_label(reason_text))
+            else:
+                table.setItem(row, 3, QTableWidgetItem(""))
+
+            row += 1
+            child_rows: list[int] = []
+            for idx, group in enumerate(group_list, start=1):
+                remove_infos = [info for info in group if Path(info.path).parent != folder]
+                for info in remove_infos:
+                    table.insertRow(row)
+                    # 잘리지 않고 다 보이게 아래에서 resizeRowsToContents()로
+                    # 실제 높이를 계산한 "뒤"에 숨긴다 — gui/duplicate_screen.py
+                    # ::_build_auto_table과 같은 이유(2026-09-08, 사용자 리포트
+                    # — "사유가 짤리는데 툴팁도 안 보여").
+                    all_child_rows.append(row)
+
+                    blank0 = QTableWidgetItem("")
+                    blank0.setFlags(Qt.NoItemFlags)
+                    table.setItem(row, 0, blank0)
+
+                    file_item = QTableWidgetItem(f"└ {info.filename}")
+                    file_item.setToolTip(f"{info.path}\n더블클릭: 미리보기 · 우클릭: 폴더 열기 등")
+                    # (info, group) 튜플로 저장 — 미리보기에서 방향키로 같은
+                    # 그룹의 다음/이전 사진으로 넘어갈 수 있게 group도 같이
+                    # 들고 있는다(2026-09-08, 사용자 요청).
+                    file_item.setData(Qt.UserRole, (info, group))
+                    table.setItem(row, 1, file_item)
+
+                    del_status_item = QTableWidgetItem("삭제")
+                    table.setItem(row, 2, del_status_item)
+
+                    group_item = QTableWidgetItem(f"그룹 {idx}")
+                    table.setItem(row, 3, group_item)
+
+                    for it in (file_item, del_status_item, group_item):
+                        it.setForeground(QColor(COLORS["text_secondary"]))
+
+                    child_rows.append(row)
+                    row += 1
+
+            def _make_toggle_handler(btn=toggle_btn, rows=child_rows, folder=folder, table=table):
+                def _handler(checked: bool) -> None:
+                    btn.setText(f"▾ {folder}" if checked else f"▸ {folder}")
+                    for r in rows:
+                        table.setRowHidden(r, not checked)
+                    self._resize_auto_table_height(table)
+
+                return _handler
+
+            toggle_btn.toggled.connect(_make_toggle_handler())
 
         # 기본값: 추천이 있으면 추천 폴더를, 없으면 여전히 "건너뛰기"를 선택
         if suggested_folder is not None:
@@ -443,7 +559,49 @@ class DuplicateScreen(QWidget):
         else:
             skip_radio.setChecked(True)
 
-        return card, folders, radios, skip_radio, suggested_folder
+        # 모든 행이 아직 "보이는" 상태일 때 실제 필요한 높이(줄바꿈 포함)를
+        # 계산한 뒤에야 하위 행을 숨긴다 — 순서를 바꾸면 숨긴 행의 높이가
+        # 0으로 계산돼 나중에 펼쳐도 계속 잘려 보인다.
+        table.resizeRowsToContents()
+        for r in all_child_rows:
+            table.setRowHidden(r, True)
+
+        self._resize_auto_table_height(table)  # 이름은 "auto"지만 어떤 QTableWidget에도 쓸 수 있는 범용 계산
+        return table, folders, radios, skip_radio, suggested_folder
+
+    def _cluster_row_file_info(self, table: QTableWidget, row: int):
+        """조합 표 하나 안에서 row가 가리키는 (FileInfo, group) 튜플 — 펼쳐진
+        하위(삭제될 파일) 행에만 실제 파일이 있다("건너뛰기"/폴더 후보 행
+        자체는 폴더를 나타낼 뿐 미리볼 사진 하나로 정해지지 않는다). group은
+        미리보기에서 방향키로 같은 그룹의 다음/이전 사진으로 넘어갈 때 쓴다."""
+        item = table.item(row, 1)
+        return item.data(Qt.UserRole) if item else None
+
+    def _on_cluster_row_double_clicked(self, table: QTableWidget, index) -> None:
+        if index.column() == 0:
+            return
+        found = self._cluster_row_file_info(table, index.row())
+        if found is not None:
+            info, group = found
+            self.file_selected.emit(info, group)
+
+    def _on_cluster_context_menu(self, table: QTableWidget, pos) -> None:
+        index = table.indexAt(pos)
+        if not index.isValid() or index.column() == 0:
+            return
+        found = self._cluster_row_file_info(table, index.row())
+        if found is None:
+            return
+        info, group = found
+
+        menu = QMenu(self)
+        preview_action = menu.addAction("미리보기")
+        open_folder_action = menu.addAction("로컬 폴더 위치 열기")
+        chosen = menu.exec(table.viewport().mapToGlobal(pos))
+        if chosen is preview_action:
+            self.file_selected.emit(info, group)
+        elif chosen is open_folder_action:
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(Path(info.path).parent)))
 
     def _build_group_card(
         self, idx: int, group: list
@@ -485,7 +643,7 @@ class DuplicateScreen(QWidget):
             path_label.setWordWrap(True)
             path_label.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 12px;")
             path_label.setToolTip("눌러서 사진 보기")
-            path_label.clicked.connect(lambda info=info: self.file_selected.emit(info))
+            path_label.clicked.connect(lambda info=info: self.file_selected.emit(info, group))
             row.addWidget(path_label, stretch=1)
             layout.addLayout(row)
 
@@ -509,45 +667,141 @@ class DuplicateScreen(QWidget):
         체크박스 테이블 패턴을 그대로 재사용했다(같은 원리로 이미 수천 행에서
         성능 검증됨). 표 자체는 스크롤바 없이 행 수만큼 정확히 늘어나서, 화면
         전체를 감싸는 바깥 QScrollArea 하나로만 스크롤된다(표 안/밖 이중
-        스크롤을 피하기 위함)."""
-        table = QTableWidget(len(auto_rows), 4)
+        스크롤을 피하기 위함).
+
+        "삭제될 파일"을 개수로만 보여주던 대신, 엑셀 "행 그룹화"처럼 부모
+        행 바로 아래 실제 표 행으로 펼쳐서 어떤 파일이 왜 지워지는지 확인할
+        수 있다(2026-09-08, 사용자 요청 — "삭제될 파일을 확인할 수가 없어",
+        "생성일이 빠르다고 삭제될 이유가 되는 게 아니잖아" — 자동 추천을
+        맹목적으로 믿지 않고 직접 확인하고 싶다는 피드백. 한 셀 안에 다
+        쌓아 보여주는 1차 시도는 "그게 아니야"로 거부당해서
+        experiments/auto_table_grouping_prototype에서 검증받았다). 칸 구성은
+        "체크옵션 / 파일명(로컬주소) / 구분 / 사유"로 통일했다(2차 피드백 —
+        "남길 파일"/"삭제될 파일"을 별도 칸으로 나누지 말고 "구분" 칸에
+        유지/삭제로만 표시, ▾는 파일명 칸 자체에 붙여서 그 칸을 누르면
+        펼쳐지게, experiments/cluster_grouping_prototype에서 검증받음 —
+        gui/duplicate_screen.py의 폴더 단위 표와 같은 모양). 하위 행은 기본
+        숨김(setRowHidden)이고 부모 행(파일명 칸)을 눌러야만 열리고 닫힌다 —
+        self._auto_parent_rows[auto_rows 인덱스] = 그 그룹의 부모 행이 표에서
+        실제로 위치한 행 번호(하위 행이 끼어들며 더 이상 인덱스와 행 번호가
+        같지 않다)."""
+        table = QTableWidget(0, 4)
         header = CheckAllHeaderView(table)
         header.set_checked(True)  # 기본 전체 선택 — 카드 하나였을 때도 추천이 있으면 기본 선택이었음
         header.toggled.connect(self._set_all_auto_checked)
         table.setHorizontalHeader(header)
-        table.setHorizontalHeaderLabels(["", "남길 파일 (폴더)", "삭제될 파일", "사유"])
+        table.setHorizontalHeaderLabels(["", "파일명 (로컬주소)", "구분", "사유"])
         table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Fixed)
         table.setColumnWidth(0, 32)
         table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        table.setColumnWidth(2, 60)
         table.setColumnWidth(3, 260)  # 사유가 기본 폭으로는 많이 잘려서 넉넉하게(그래도 다 안 보이면 툴팁)
         table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         table.setSelectionMode(QAbstractItemView.NoSelection)
         table.verticalHeader().setVisible(False)
         table.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        # col1이 Stretch라 표 자체는 가로 스크롤이 필요 없다 — 없으면 표
+        # 위젯이 실제 창 폭보다 좁게 배치될 때 "사유" 칸이 표 자체의 가로
+        # 스크롤 뒤로 밀려 숨어버릴 수 있다(2026-09-08, 사용자 리포트 —
+        # "사유가 안 보인다"의 진짜 원인 — 바깥 QScrollArea만 막아뒀지 표
+        # 자신의 가로 스크롤은 안 막아뒀었음).
+        table.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         table.setFocusPolicy(Qt.NoFocus)
         table.doubleClicked.connect(self._on_auto_row_double_clicked)
+        # 폴더 경로를 칸 안에 같이 적으면 좁은 폭에서 다 안 보였다(2026-09-08,
+        # 사용자 리포트) — 파일명만 보여주고, 폴더 경로가 필요하면 우클릭
+        # 메뉴로 확인하게 한다(gui/result_screen.py의 검사 결과 표와 같은
+        # 패턴 — "미리보기"/"로컬 폴더 위치 열기").
+        table.setContextMenuPolicy(Qt.CustomContextMenu)
+        table.customContextMenuRequested.connect(self._on_auto_context_menu)
+
+        self._auto_parent_rows = []
+        all_child_rows: list[int] = []  # 끝에서 한꺼번에 숨김 처리 — 이유는 아래 참고
 
         table.setUpdatesEnabled(False)
         try:
-            for row, (group, keep_info, reason) in enumerate(auto_rows):
+            row = 0
+            for group, keep_info, reason in auto_rows:
+                table.insertRow(row)
+                self._auto_parent_rows.append(row)
+
                 check_item = QTableWidgetItem()
                 check_item.setFlags(Qt.ItemIsUserCheckable | Qt.ItemIsEnabled)
                 check_item.setCheckState(Qt.Checked)
                 table.setItem(row, 0, check_item)
 
-                keep_item = QTableWidgetItem(f"{Path(keep_info.path).name}  ({Path(keep_info.path).parent})")
-                keep_item.setToolTip("더블클릭하면 미리 볼 수 있어요")
-                table.setItem(row, 1, keep_item)
+                removed = [info for info in group if info is not keep_info]
+                toggle_btn = QToolButton()
+                toggle_btn.setText(f"▸ {keep_info.filename}")
+                toggle_btn.setCheckable(True)
+                toggle_btn.setAutoRaise(True)
+                toggle_btn.setCursor(Qt.PointingHandCursor)
+                toggle_btn.setToolTip(f"{keep_info.path}\n눌러서 삭제될 파일을 확인하세요")
+                toggle_btn.setStyleSheet(
+                    "QToolButton { border: none; background: transparent; text-align: left; }"
+                )
+                table.setCellWidget(row, 1, toggle_btn)
 
-                remove_item = QTableWidgetItem(f"{len(group) - 1}개")
-                table.setItem(row, 2, remove_item)
+                keep_status_item = QTableWidgetItem("유지")
+                table.setItem(row, 2, keep_status_item)
 
-                reason_item = QTableWidgetItem(reason)
-                # 열 폭이 좁아 사유가 잘려 보일 수 있어서(표를 컴팩트하게
-                # 유지하려고 줄바꿈 대신 이 방식을 택함), 마우스를 올리면
-                # 전체 사유를 툴팁으로 볼 수 있게 한다.
-                reason_item.setToolTip(reason)
-                table.setItem(row, 3, reason_item)
+                table.setCellWidget(row, 3, self._reason_label(reason))
+
+                row += 1
+                child_rows: list[int] = []
+                for info in removed:
+                    table.insertRow(row)
+                    # 잘리지 않고 다 보이게(PicMedic 원칙 — 절대 자르지 않고
+                    # 줄바꿈/행 높이로 늘린다) 아래에서 resizeRowsToContents()로
+                    # 실제 높이를 계산한 "뒤"에 숨긴다 — 숨긴 상태로 계산하면
+                    # Qt가 높이를 0으로 취급해서 나중에 펼쳐도 줄바꿈된 내용이
+                    # 계속 잘려 보이는 문제가 있었다(2026-09-08, 사용자 리포트
+                    # — "사유가 짤리는데 툴팁도 안 보여").
+                    all_child_rows.append(row)
+
+                    blank0 = QTableWidgetItem("")
+                    blank0.setFlags(Qt.NoItemFlags)
+                    table.setItem(row, 0, blank0)
+
+                    file_item = QTableWidgetItem(f"└ {info.filename}")
+                    file_item.setToolTip(f"{info.path}\n더블클릭: 미리보기 · 우클릭: 폴더 열기 등")
+                    # (info, group) 튜플로 저장 — 미리보기에서 방향키로 같은
+                    # 그룹의 다음/이전 사진으로 넘어갈 수 있게 group도 같이
+                    # 들고 있는다(2026-09-08, 사용자 요청).
+                    file_item.setData(Qt.UserRole, (info, group))
+                    table.setItem(row, 1, file_item)
+
+                    del_status_item = QTableWidgetItem("삭제")
+                    table.setItem(row, 2, del_status_item)
+
+                    per_file_reason = explain_file(info, group)
+                    reason_label = self._reason_label(per_file_reason)
+                    reason_label.setStyleSheet(f"color: {COLORS['text_secondary']};")
+                    table.setCellWidget(row, 3, reason_label)
+
+                    for it in (file_item, del_status_item):
+                        it.setForeground(QColor(COLORS["text_secondary"]))
+
+                    child_rows.append(row)
+                    row += 1
+
+                def _make_toggle_handler(btn=toggle_btn, rows=child_rows, table=table, keep_info=keep_info):
+                    def _handler(checked: bool) -> None:
+                        btn.setText(f"▾ {keep_info.filename}" if checked else f"▸ {keep_info.filename}")
+                        for r in rows:
+                            table.setRowHidden(r, not checked)
+                        self._resize_auto_table_height(table)
+
+                    return _handler
+
+                toggle_btn.toggled.connect(_make_toggle_handler())
+
+            # 모든 행이 아직 "보이는" 상태일 때 실제 필요한 높이(줄바꿈 포함)를
+            # 계산한 뒤에야 하위 행을 숨긴다 — 순서를 바꾸면 숨긴 행의 높이가
+            # 0으로 계산돼 나중에 펼쳐도 계속 잘려 보인다.
+            table.resizeRowsToContents()
+            for r in all_child_rows:
+                table.setRowHidden(r, True)
         finally:
             table.setUpdatesEnabled(True)
 
@@ -555,18 +809,52 @@ class DuplicateScreen(QWidget):
         self._resize_auto_table_height(table)
         return table
 
+    def _rebuild_auto_table(self) -> None:
+        """자동 추천 표는 부모 행 + 숨겨진 하위(삭제될 파일) 행이 섞여 있어서
+        (엑셀 행 그룹화 스타일) 정리 실행 후 일부 행만 골라 지우면 부모/하위
+        행 번호가 뒤섞이기 쉽다 — 남은 self._auto_rows로 표를 통째로 다시
+        만드는 편이 훨씬 안전하다(set_result() 때처럼 업데이트를 잠그고
+        다시 그려서 수백 행이어도 충분히 빠르다)."""
+        if self._auto_table is None:
+            return
+        old_table = self._auto_table
+        index = self._list_layout.indexOf(old_table)
+        new_table = self._build_auto_table(self._auto_rows)
+        self._list_layout.insertWidget(index, new_table)
+        self._list_layout.removeWidget(old_table)
+        # removeWidget()은 레이아웃 관리에서만 뺄 뿐 위젯을 바로 숨기거나
+        # 없애지 않는다 — deleteLater()가 실제로 처리되기 전까지 마지막
+        # 위치에 그대로 남아 새 표 위에 겹쳐 보이는 문제가 있었다(2026-09-08).
+        # 명시적으로 숨겨서 그 틈에도 보이지 않게 한다.
+        old_table.hide()
+        old_table.deleteLater()
+        self._auto_table = new_table
+
     def _resize_auto_table_height(self, table: QTableWidget) -> None:
         """표가 자기 행 수만큼만 높이를 차지하게 고정한다(내부 스크롤 없이) —
         바깥 QScrollArea 하나로만 페이지 전체가 스크롤되게 하기 위함."""
         height = table.horizontalHeader().height() + table.verticalHeader().length() + 2 * table.frameWidth() + 2
         table.setFixedHeight(height)
 
+    def _reason_label(self, text: str) -> QLabel:
+        """"사유" 칸에 넣을 줄바꿈 라벨 — QTableWidgetItem의 wordWrap보다
+        QLabel(wordWrap=True) 위젯 칸이 resizeRowsToContents()와 훨씬
+        안정적으로 맞아떨어져서 이 방식을 쓴다(2026-09-08, 사용자 리포트 —
+        item 방식은 실사용 환경에서 한 줄로 "..." 잘려 보이는 경우가 있었음).
+        폭을 칼럼 폭(260px)에 맞춰 미리 고정해둬야 셀에 배치되기 전에도
+        줄바꿈 높이를 정확히 계산할 수 있다."""
+        label = QLabel(text)
+        label.setWordWrap(True)
+        label.setMaximumWidth(240)
+        label.setContentsMargins(4, 4, 4, 4)
+        return label
+
     def _set_all_auto_checked(self, checked: bool) -> None:
         if not self._auto_table:
             return
         state = Qt.Checked if checked else Qt.Unchecked
         self._auto_table.blockSignals(True)
-        for row in range(self._auto_table.rowCount()):
+        for row in self._auto_parent_rows:
             item = self._auto_table.item(row, 0)
             if item:
                 item.setCheckState(state)
@@ -575,23 +863,56 @@ class DuplicateScreen(QWidget):
     def _on_auto_item_changed(self, item: QTableWidgetItem) -> None:
         if item.column() != 0 or not self._auto_table:
             return
-        total = self._auto_table.rowCount()
+        total = len(self._auto_parent_rows)
         checked = sum(
             1
-            for r in range(total)
+            for r in self._auto_parent_rows
             if self._auto_table.item(r, 0) and self._auto_table.item(r, 0).checkState() == Qt.Checked
         )
         header = self._auto_table.horizontalHeader()
         if isinstance(header, CheckAllHeaderView):
             header.set_checked(total > 0 and checked == total)
 
+    def _auto_row_file_info(self, row: int):
+        """표의 행 번호(row) 하나가 가리키는 (FileInfo, group) 튜플을 찾는다
+        — 부모 행이면 "남길 파일"(keep_info) + 그 그룹, 펼쳐진 하위 행이면
+        그 "삭제될 파일" 자신 + 같은 그룹. 더블클릭 미리보기와 우클릭 메뉴
+        둘 다 이 조회를 그대로 쓴다. group은 미리보기에서 방향키로 같은
+        그룹의 다음/이전 사진으로 넘어갈 때 쓴다."""
+        if row in self._auto_parent_rows:
+            auto_idx = self._auto_parent_rows.index(row)
+            group, keep_info, _reason = self._auto_rows[auto_idx]
+            return keep_info, group
+        item = self._auto_table.item(row, 1) if self._auto_table else None
+        return item.data(Qt.UserRole) if item else None
+
     def _on_auto_row_double_clicked(self, index) -> None:
         if index.column() == 0:
             return  # 체크박스 칸은 미리보기로 넘기지 않는다
-        row = index.row()
-        if 0 <= row < len(self._auto_rows):
-            _group, keep_info, _reason = self._auto_rows[row]
-            self.file_selected.emit(keep_info)
+        found = self._auto_row_file_info(index.row())
+        if found is not None:
+            info, group = found
+            self.file_selected.emit(info, group)
+
+    def _on_auto_context_menu(self, pos) -> None:
+        if not self._auto_table:
+            return
+        index = self._auto_table.indexAt(pos)
+        if not index.isValid() or index.column() == 0:
+            return
+        found = self._auto_row_file_info(index.row())
+        if found is None:
+            return  # 체크박스 칸 등 — 이 지점에선 도달하지 않지만 방어적으로 둠
+        info, group = found
+
+        menu = QMenu(self)
+        preview_action = menu.addAction("미리보기")
+        open_folder_action = menu.addAction("로컬 폴더 위치 열기")
+        chosen = menu.exec(self._auto_table.viewport().mapToGlobal(pos))
+        if chosen is preview_action:
+            self.file_selected.emit(info, group)
+        elif chosen is open_folder_action:
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(Path(info.path).parent)))
 
     def _on_cleanup_clicked(self):
         # 그룹 단위로 모아둔다(파일별 flat 목록이 아니라) — 임시 휴지통에
@@ -625,14 +946,15 @@ class DuplicateScreen(QWidget):
                     entry_refs.append(("cluster", entry))
 
         if self._auto_table:
-            for row, (group, keep_info, reason) in enumerate(self._auto_rows):
-                item = self._auto_table.item(row, 0)
+            for auto_idx, (group, keep_info, reason) in enumerate(self._auto_rows):
+                table_row = self._auto_parent_rows[auto_idx]
+                item = self._auto_table.item(table_row, 0)
                 if not item or item.checkState() != Qt.Checked:
                     continue  # 체크 해제 = 이 행은 건너뛰기
                 remove_infos = [info for info in group if info is not keep_info]
                 if remove_infos:
                     to_process.append((keep_info.path, remove_infos, f"자동 추천 적용 — {reason}"))
-                    entry_refs.append(("auto", row))
+                    entry_refs.append(("auto", auto_idx))
 
         for entry in self._manual_entries:
             if entry.skip_radio.isChecked():
@@ -725,13 +1047,15 @@ class DuplicateScreen(QWidget):
         for entry in resolved_clusters:
             self._cluster_entries.remove(entry)
             entry.card.deleteLater()
-        if self._auto_table and resolved_auto_rows:
-            self._auto_table.blockSignals(True)
-            for row in sorted(set(resolved_auto_rows), reverse=True):
-                self._auto_table.removeRow(row)
-                del self._auto_rows[row]
-            self._auto_table.blockSignals(False)
-            self._resize_auto_table_height(self._auto_table)
+        if resolved_auto_rows:
+            # self._auto_parent_rows 인덱스 == self._auto_rows 인덱스이므로
+            # (표의 실제 행 번호와는 다름, _build_auto_table 참고) 여기서는
+            # 그대로 self._auto_rows에서 지우면 되지만, 표 자체는 부모/하위
+            # 행이 섞여 있어 일부만 removeRow()하면 번호가 꼬이기 쉬워
+            # 통째로 다시 만든다(_rebuild_auto_table 참고).
+            for idx in sorted(set(resolved_auto_rows), reverse=True):
+                del self._auto_rows[idx]
+            self._rebuild_auto_table()
         for entry in resolved_manual:
             self._manual_entries.remove(entry)
             entry.card.deleteLater()

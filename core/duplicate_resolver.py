@@ -132,6 +132,30 @@ def suggest_keep(
     return earliest_info, "파일시스템 생성일이 가장 이른 파일"
 
 
+def explain_file(
+    info: FileInfo,
+    group: list[FileInfo],
+    *,
+    creation_time_fn: Callable[[str], Optional[float]] = _default_creation_time,
+) -> str:
+    """suggest_keep()과 같은 판단 기준으로, 그룹 안 파일 하나(남길 파일이든
+    지워질 파일이든)에 대해 "왜 그렇게 보이는지"를 사람이 읽을 문장으로
+    설명한다. gui/duplicate_screen.py 자동 추천 표에서 "삭제될 파일"을 펼쳤을
+    때, 지워질 각 파일이 실제로 왜 복사본처럼 보이는지 사용자가 직접 확인할
+    수 있게 하기 위함(2026-09-08, 사용자 요청 — "삭제될 이유가 되는지 내가
+    확인할 수가 없어")."""
+    if _looks_like_copy(info.filename):
+        return "파일명에 복사본 표시가 있어요 (복사본/사본/카카오톡 등)"
+    if _stripped_name_exists_in_group(info, group):
+        return "파일명이 그룹 안 다른 파일의 복사본 패턴(번호 접미사)으로 보여요"
+    t = creation_time_fn(info.path)
+    if t is None:
+        return "파일시스템에서 생성일을 확인할 수 없어요"
+    from datetime import datetime
+
+    return f"파일시스템 생성일: {datetime.fromtimestamp(t).strftime('%Y-%m-%d %H:%M')}"
+
+
 def suggest_keep_folder(
     group_list: list[list[FileInfo]],
     *,

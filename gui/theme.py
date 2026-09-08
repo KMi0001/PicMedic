@@ -7,20 +7,20 @@ gui/theme.py
 from utils.assets import asset_path
 
 COLORS = {
-    # 민트 케어 테마
-    "bg": "#F1F8F5",
-    "surface": "#FFFFFF",
-    "border": "#DCEAE3",
-    "text": "#17332A",
-    "text_secondary": "#5E8677",
-    "primary": "#12B5A6",
-    "primary_hover": "#0E9689",
-    "success": "#2FAF66",
-    "warning": "#D9A441",
-    "danger": "#DA5A5A",
-    "muted": "#8FAFA0",
-    "selection": "#DCF3E9",
-    "dashed": "#B6DED4",
+    # 버터 · 아이보리 · 톤온톤 잉크 테마
+    "bg": "#F7F1E4",
+    "surface": "#FFFDF8",
+    "border": "#E6DCC5",
+    "text": "#2A2420",
+    "text_secondary": "#7A7060",
+    "primary": "#D9B54A",
+    "primary_hover": "#C6A23A",
+    "success": "#6E7F4E",
+    "warning": "#B97A3A",
+    "danger": "#A6453A",
+    "muted": "#A79A82",
+    "selection": "#F1E6C6",
+    "dashed": "#D8C9A0",
 }
 
 STATUS_COLORS = {
@@ -61,7 +61,7 @@ QWidget {{
 }}
 
 /* QLabel/QRadioButton/QCheckBox는 카드(흰 배경) 위에도 자주 올라가는데, 위 QWidget
-   규칙 때문에 배경 지정을 안 해주면 각자 앱 기본 배경(민트)을 칠해버려서 흰 카드 위에
+   규칙 때문에 배경 지정을 안 해주면 각자 앱 기본 배경(아이보리)을 칠해버려서 흰 카드 위에
    얼룩진 띠처럼 보인다. 기본값을 투명으로 깔아서 이 종류의 버그를 원천 차단한다. */
 QLabel, QRadioButton, QCheckBox {{
     background-color: transparent;
@@ -88,6 +88,13 @@ QFrame#Card[clickable="true"]:hover {{
     border-color: {COLORS['primary']};
 }}
 
+/* 카드형 필터(gui/result_screen.py 요약 칩)로 쓰일 때, 지금 선택된 필터 칩을
+   테두리로 표시한다. */
+QFrame#Card[selected="true"] {{
+    border: 2px solid {COLORS['primary']};
+    background-color: {COLORS['selection']};
+}}
+
 QFrame#SelectionCard {{
     background-color: {COLORS['surface']};
     border: 2px dashed {COLORS['dashed']};
@@ -107,7 +114,7 @@ QPushButton:hover {{
 
 QPushButton#Primary {{
     background-color: {COLORS['primary']};
-    color: white;
+    color: {COLORS['text']};
     border: none;
     font-weight: 600;
     padding: 10px 20px;
@@ -119,6 +126,7 @@ QPushButton#Primary:hover {{
 
 QPushButton#Primary:disabled {{
     background-color: {COLORS['muted']};
+    color: {COLORS['text']};
 }}
 
 QPushButton#Danger {{
@@ -267,5 +275,35 @@ QListWidget {{
     background-color: {COLORS['surface']};
     border: 1px solid {COLORS['border']};
     border-radius: 8px;
+}}
+
+/* QWidget{{}} 규칙 때문에 QMenu도 스타일시트 렌더링으로 바뀌는데, QMenu::item에
+   자체 padding을 안 주면 Qt가 텍스트 폭만큼만 좁게 잡아서 글자가 오른쪽 끝에
+   붙어 잘린 것처럼 보인다(우클릭 메뉴에서 확인됨) — 넉넉한 padding으로 고친다. */
+QMenu {{
+    background-color: {COLORS['surface']};
+    border: 1px solid {COLORS['border']};
+    border-radius: 8px;
+    padding: 6px;
+}}
+
+QMenu::item {{
+    padding: 8px 32px 8px 16px;
+    border-radius: 6px;
+}}
+
+QMenu::item:selected {{
+    background-color: {COLORS['selection']};
+    color: {COLORS['text']};
+}}
+
+QMenu::item:disabled {{
+    color: {COLORS['muted']};
+}}
+
+QMenu::separator {{
+    height: 1px;
+    background: {COLORS['border']};
+    margin: 4px 8px;
 }}
 """

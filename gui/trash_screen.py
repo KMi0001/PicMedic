@@ -30,6 +30,7 @@ ScanSessionWindow를 새로 만들 때마다(스캔을 새로 할 때마다!) �
 
 from __future__ import annotations
 
+import html
 from pathlib import Path
 
 from PySide6.QtCore import Qt, Signal, QUrl, QRectF
@@ -42,6 +43,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QFrame,
     QScrollArea,
+    QSizePolicy,
 )
 
 from gui.common_dialogs import info_dialog
@@ -87,6 +89,47 @@ def _trash_icon_pixmap(color: str, size: int = 26) -> QPixmap:
     return pixmap
 
 
+# 이 길이보다 긴 "단어"(공백으로 안 끊기는 덩어리)에만 보이지 않는 줄바꿈
+# 지점을 끼워 넣는다 — 짧은 단어/일반 문장은 손대지 않는다.
+_LONG_TOKEN_THRESHOLD = 14
+_BREAK_CHUNK = 8
+
+
+def _insert_soft_breaks(text: str) -> str:
+    """카카오톡이 자동으로 붙이는 파일명처럼("KakaoTalk_Moim_62o0LJfQcItnp0...")
+    공백이 하나도 없는 긴 "단어"는 QLabel.setWordWrap(True)만으로는 줄바꿈이
+    안 된다 — Qt는 공백에서만 줄바꿈하는데 이런 문자열은 통째로 단어 하나라서,
+    라벨이 그 폭 그대로 카드 밖으로 넘쳐 잘려 보였다(2026-09-09, 사용자
+    리포트 — "임시휴지통 가로 부분 잘려서 보여").
+
+    리치 텍스트로 CSS word-break/<wbr>을 먼저 시도했지만, 실제 화면에
+    스크린샷으로 찍어보니(수치만 보고 착각했었음 — sizeHint/heightForWidth는
+    큰 값을 보고하는데 실제 렌더링은 그냥 한 줄로 잘려 보임) 전혀 줄바꿈되지
+    않았다. 대신 눈에 안 보이는 폭 없는 문자(zero-width space, U+200B)를
+    긴 단어 "안에만" 끼워 넣는다 — 일반 텍스트라 Qt의 기본 줄바꿈 엔진이
+    이 지점을 진짜 단어 경계로 인식해서 실제로 줄바꿈되고(스크린샷으로
+    확인함), sizeHint/heightForWidth 계산도 별도 처리 없이 저절로 맞게
+    나온다(짧아진 "단어" 덕분에 minimumSizeHint도 자연히 작아짐)."""
+    zero_width_space = "​"
+    words = text.split(" ")
+    processed = []
+    for word in words:
+        if len(word) > _LONG_TOKEN_THRESHOLD:
+            chunks = [word[i : i + _BREAK_CHUNK] for i in range(0, len(word), _BREAK_CHUNK)]
+            processed.append(zero_width_space.join(chunks))
+        else:
+            processed.append(word)
+    return " ".join(processed)
+
+
+def _wrap_anywhere_label(text: str, style: str = "") -> QLabel:
+    label = QLabel(_insert_soft_breaks(text))
+    label.setWordWrap(True)
+    if style:
+        label.setStyleSheet(style)
+    return label
+
+
 class TrashScreen(QWidget):
     """utils/trash.py의 임시 휴지통 내용을 보여주는 화면. 같은 스캔 세션 안에서만
     쓰인다(gui/scan_session_window.py)."""
@@ -99,7 +142,27 @@ class TrashScreen(QWidget):
         self._pending_labels: dict[str, list[QLabel]] = {}
         self._worker: ThumbnailLoadWorker | None = None
 
-        outer = QVBoxLayout(self)
+        # 화면 전체를 쓰는 큰 창에서 카드가 창 끝까지 늘어나면 텅 빈 공간이 남아
+        # 허전해 보인다(gui/organize_hub_screen.py에서 고친 것과 같은 문제) —
+        # 내용 폭을 한 번 고정(960px)하고 가운데 정렬한다.
+        root = QHBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.addStretch(1)
+
+        content = QWidget()
+        content.setMaximumWidth(960)
+        # stretch factor 0인 위젯은 양옆 addStretch(1)에 밀려 sizeHint만큼만
+        # 차지하고 절대 안 커진다 — setMaximumWidth는 상한만 정할 뿐, 실제로
+        # 그 상한까지 채우는 힘은 Expanding 정책 + 양옆보다 훨씬 큰 stretch
+        # factor가 있어야 생긴다(2026-09-08, 사용자 리포트 — "정리 화면이
+        # 이상하게 좁다", gui/duplicate_screen.py와 같은 원인/수정 — 이
+        # 화면엔 그때 빠뜨렸다가 "임시 휴지통이 납작해 보인다"는 리포트로
+        # 뒤늦게 발견함, 2026-09-09).
+        content.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        root.addWidget(content, 100)
+        root.addStretch(1)
+
+        outer = QVBoxLayout(content)
         outer.setContentsMargins(48, 32, 48, 32)
         outer.setAlignment(Qt.AlignTop)
         outer.setSpacing(16)
@@ -141,6 +204,9 @@ class TrashScreen(QWidget):
         self.scroll_area = QScrollArea()
         self.scroll_area.setWidgetResizable(True)
         self.scroll_area.setFrameShape(QFrame.NoFrame)
+        # 카드는 항상 컨테이너 폭에 맞춰지므로 가로 스크롤은 필요 없다
+        # (gui/duplicate_screen.py와 같은 이유로 추가, 2026-09-09).
+        self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self._list_container = QWidget()
         self._list_layout = QVBoxLayout(self._list_container)
         self._list_layout.setContentsMargins(0, 0, 0, 0)
@@ -260,9 +326,10 @@ class TrashScreen(QWidget):
 
         first_entry = (trash.entry_for(moved_files[0]) or {}) if moved_files else {}
         reason = first_entry.get("reason")
-        header = QLabel(reason or "정리 그룹")
-        header.setWordWrap(True)
-        header.setStyleSheet("font-weight: 700;")
+        # reason에는 폴더 경로가 그대로 박혀 있을 수 있어(예: "'C:\...\긴폴더명'
+        # 폴더를 남기기로...") _wrap_anywhere_label을 쓴다 — 자세한 이유는
+        # 그 함수 docstring 참고.
+        header = _wrap_anywhere_label(reason or "정리 그룹", style="font-weight: 700;")
         layout.addWidget(header)
 
         kept_path = first_entry.get("kept_path")
@@ -319,9 +386,9 @@ class TrashScreen(QWidget):
 
         info_col = QVBoxLayout()
         info_col.setSpacing(2)
-        name_label = QLabel(path.name)
-        name_label.setWordWrap(True)
-        name_label.setStyleSheet("font-weight: 600;" if kept else "")
+        # 카카오톡 등이 자동으로 붙이는 파일명은 공백 없이 아주 길 수 있어
+        # _wrap_anywhere_label을 쓴다(자세한 이유는 그 함수 docstring 참고).
+        name_label = _wrap_anywhere_label(path.name, style="font-weight: 600;" if kept else "")
         info_col.addWidget(name_label)
 
         if kept:

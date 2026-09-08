@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
 
 from core.converter import RecoveryMode
 from core.scanner import SCANNABLE_EXTENSIONS
+from gui.icons import status_icon_pixmap
 from gui.quality_diagnosis_dialog import run_quality_diagnosis
 from gui.result_screen import SummaryChip
 from gui.theme import COLORS, STATUS_COLORS
@@ -144,63 +145,9 @@ class SelectionCard(QFrame):
 
 
 def _status_icon_pixmap(ok: bool, accent: str, size: int = 24) -> QPixmap:
-    """완료(✓)/중단(⚠) 상태를 원 안에 벡터로 그린 아이콘. 이모지 폰트를 쓰지 않아
-    OS(윈도우 컬러 이모지 vs macOS)에 따라 색이 달라지는 문제를 피한다.
-
-    목업은 24px 원 안에 13px짜리 아이콘을 중앙 배치한다(아이콘이 원을 거의
-    다 채우지 않고 여백이 있음) — 그 비율(13/24)과 중앙 정렬 오프셋을 그대로 따른다.
-    """
-    icon_box = size * (13 / 24)
-    inner_scale = icon_box / 24.0
-    offset = (size - icon_box) / 2
-
-    def pt(x: float, y: float) -> QPointF:
-        return QPointF(offset + x * inner_scale, offset + y * inner_scale)
-
-    pixmap = QPixmap(size, size)
-    pixmap.fill(Qt.transparent)
-
-    painter = QPainter(pixmap)
-    painter.setRenderHint(QPainter.Antialiasing)
-    painter.setPen(Qt.NoPen)
-    painter.setBrush(QColor(accent))
-    painter.drawEllipse(0, 0, size, size)
-
-    if ok:
-        pen = QPen(QColor("white"))
-        pen.setWidthF(3 * inner_scale)
-        pen.setCapStyle(Qt.RoundCap)
-        pen.setJoinStyle(Qt.RoundJoin)
-        painter.setPen(pen)
-        check = QPainterPath()
-        check.moveTo(pt(5, 12.5))
-        check.lineTo(pt(9.5, 17))
-        check.lineTo(pt(19, 7))
-        painter.drawPath(check)
-    else:
-        clip = QPainterPath()
-        clip.addEllipse(0, 0, size, size)
-        painter.setClipPath(clip)
-
-        painter.setBrush(QColor("white"))
-        triangle = QPainterPath()
-        triangle.moveTo(pt(12, 4.5))
-        triangle.lineTo(pt(21.5, 20.5))
-        triangle.lineTo(pt(2.5, 20.5))
-        triangle.closeSubpath()
-        painter.drawPath(triangle)
-
-        pen = QPen(QColor(accent))
-        pen.setWidthF(2 * inner_scale)
-        pen.setCapStyle(Qt.RoundCap)
-        painter.setPen(pen)
-        painter.drawLine(pt(12, 10.3), pt(12, 14.8))
-        painter.setPen(Qt.NoPen)
-        painter.setBrush(QColor(accent))
-        painter.drawEllipse(pt(12, 17.5), 0.9 * inner_scale, 0.9 * inner_scale)
-
-    painter.end()
-    return pixmap
+    """완료(✓)/중단(⚠) 상태 아이콘 — gui/icons.py의 공용 아이콘을 감싼 것.
+    호출부(최근 검사 목록 등)가 여전히 bool로 부르고 있어 그 형태는 유지한다."""
+    return status_icon_pixmap("success" if ok else "warning", accent, size)
 
 
 class _RecentRow(QFrame):
@@ -430,7 +377,12 @@ class HomeScreen(QWidget):
         screen.refresh()
         screen.back_requested.connect(dialog.accept)
         layout.addWidget(screen)
-        dialog.resize(560, 520)
+        # 카드 안 파일명/사유가 줄바꿈되더라도 너무 좁으면 계속 답답해
+        # 보인다(2026-09-09, 사용자 요청 — "그냥 화면 너비를 넓히면 되는게
+        # 아니야?") — 줄바꿈 자체는 gui/trash_screen.py에서 어떤 길이든
+        # 항상 되게 고쳤지만, 다이얼로그도 같이 넓혀서 애초에 줄바꿈이 덜
+        # 필요하게 한다.
+        dialog.resize(760, 560)
         dialog.exec()
         # 다이얼로그가 닫히면 screen도 곧 없어지는데, 백그라운드 썸네일 로딩이
         # 아직 도는 중일 수 있다 — 스레드가 실행 중인 채로 같이 없어지면

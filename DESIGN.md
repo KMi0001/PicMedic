@@ -7,40 +7,56 @@ UI 스타일/컴포넌트 관련 결정을 기록하는 문서. 코드 값 자�
 
 ## 색상 팔레트
 
-기준: [gui/theme.py](gui/theme.py)의 `COLORS`. "민트 케어" 톤 — 의료/케어 앱 느낌을
-주기 위해 차갑지 않은 민트-그린을 primary로 쓴다.
+기준: [gui/theme.py](gui/theme.py)의 `COLORS`. "버터 · 아이보리 · 톤온톤 잉크" 톤 —
+2026-09 리브랜딩. 이전 "민트 케어"(의료 느낌) 톤이 특정 배달 앱 목업처럼 보인다는
+피드백으로, 채도 높은 원색 대신 따뜻한 중성톤 하나(버터)만 브랜드색으로 쓰고 나머지는
+아이보리/잉크 두 무채색으로 절제하는 방향으로 바꿨다.
 
 | 이름 | 값 | 용도 |
 |---|---|---|
-| `primary` | `#12B5A6` | 브랜드 색, 주요 버튼, 안내/확인 아이콘 |
-| `success` | `#2FAF66` | 성공 상태 (정상, 복구 완료) |
-| `warning` | `#D9A441` | 주의 필요 (부분 손상, 형식 불일치) |
-| `danger` | `#DA5A5A` | 오류/실패 (손상, 복구 실패) |
-| `muted` | `#8FAFA0` | 중립/제외 (건너뜀, 지원 안 함) |
+| `primary` | `#D9B54A` | 브랜드 색(버터), 주요 버튼 — 텍스트는 흰색이 아니라 `text`(잉크)를 올린다(대비 확보) |
+| `success` | `#6E7F4E` | 성공 상태 (정상, 복구 완료) — 세이지 그린 |
+| `warning` | `#B97A3A` | 주의 필요 (부분 손상, 형식 불일치) — 번트 오렌지. `primary`(버터)와 헷갈리지 않게 일부러 오렌지 쪽으로 뺐다 |
+| `danger` | `#A6453A` | 오류/실패 (손상, 복구 실패) — 브릭 레드 |
+| `muted` | `#A79A82` | 중립/제외 (건너뜀, 지원 안 함) |
 
 ## 아이콘 시스템
 
 **원칙: 이모지 폰트를 쓰지 않는다.** Windows/macOS에서 컬러 이모지 렌더링이 서로 달라
 같은 아이콘이 OS마다 다르게 보이는 문제를 피하기 위해, 항상 `QPainter`로 직접 그린
-벡터 아이콘을 쓴다 — **색이 있는 원 배경 + 흰색 글리프**.
+벡터 아이콘을 쓴다.
 
-기준 구현: [gui/home_screen.py:141](gui/home_screen.py:141) `_status_icon_pixmap`
-(최근 검사 목록에서 사용). 원 24px 기준으로 안쪽 글리프는 13px 비율(`13/24`)로
-중앙 정렬한다 — 새 아이콘을 추가할 때도 이 비율을 유지할 것.
+**스타일(2026-09 리브랜딩 이후): 옅게 tint한 둥근 사각 배경 + 같은 색 선(stroke)
+글리프.** 이전엔 채도 높은 원 배경 + 흰 글리프였는데, 색이 서로 부딪혀 알록달록한
+뱃지처럼 보인다는 피드백으로 톤온톤으로 바꿨다 — 배경은 글리프 색을 `surface`와
+16%만 섞은 tint(고정 색상표 없이 매번 계산, [gui/icons.py](gui/icons.py) `_tint`),
+글리프는 흰색 대신 원래 색 그대로 그린다.
 
-| 종류 | 색 | 의미 | 사용 예 |
+기준 구현: [gui/icons.py](gui/icons.py) `status_icon_pixmap(kind, accent, size=24)`.
+원래 화면마다 거의 같은 그리기 코드가 4곳(`home_screen`, `common_dialogs`,
+`recovery_result_screen`)에 흩어져 있었는데("2곳 이상에서 재사용하면 공용으로"
+원칙이 이미 넘은 상태였음), 리브랜딩으로 전부 같이 손대는 김에 여기로 모았다. 24px
+기준으로 안쪽 글리프는 13px 비율(`13/24`)로 중앙 정렬 — 새 아이콘을 추가할 때도 이
+비율을 유지할 것.
+
+| kind | 색(accent) | 의미 | 사용 예 |
 |---|---|---|---|
-| 성공 (체크) | `success` | 완료 | 최근 검사 카드, 결과 요약 |
-| 경고 (삼각형 `!`) | `warning` | 주의 필요 | 최근 검사 카드(중단/부분 손상) |
-| 오류 (X) | `danger` | 실패 | 복구 실패 안내 (아직 미적용, 필요 시 추가) |
-| 확인 필요 (`?`) | `primary` | 진행 여부를 물음 | [gui/recovery_screen.py](gui/recovery_screen.py) `_question_icon_pixmap` — 정상 파일 건너뛰기 확인 팝업 |
-| 안내 (`i`) | `primary` | 단순 정보 전달 | 아직 미적용 |
-| 건너뜀 (`-`) | `muted` | 처리 대상 제외 | 아직 미적용 |
+| `success` | `success` | 완료 | 최근 검사 카드, 결과 요약, 복구 결과 목록 |
+| `warning` | `warning` | 주의 필요 | 최근 검사 카드(중단/부분 손상) |
+| `error` | `danger` | 실패 | 복구 결과 화면의 "실패 파일" 목록 |
+| `skip` | `muted` | 처리 대상 제외 | 복구 결과 화면의 "건너뛴 파일" 목록 |
+| `question` | `primary` | 진행 여부를 물음 | `_confirm_dialog`류 확인 팝업 |
+| `info` | `primary` | 단순 정보 전달 | 안내 팝업 |
+| `progress` | `primary` | 처리 중임을 나타냄(점 3개) | `ProgressDialog` 헤더 |
 
-성공/경고는 `_status_icon_pixmap`, 확인 필요는 `_confirm_dialog`용
-`_question_icon_pixmap`처럼 **화면별로 필요한 것만 로컬 함수로 둔다** — 아직 2곳
-이상에서 같은 걸 재사용하지 않는 한 공용 모듈로 미리 뽑아두지 않는다. 오류/안내/건너뜀
-아이콘을 실제로 쓰는 곳이 생기면 그때 같은 패턴으로 추가.
+화면별 로컬 함수(`home_screen._status_icon_pixmap`, `common_dialogs.question_icon_pixmap`
+등)는 이름 그대로 남아있지만 전부 `status_icon_pixmap`을 감싸는 얇은 wrapper다 —
+기존 호출부를 바꾸지 않고 그리기 로직만 한 곳으로 모으기 위함. 새 화면에서 상태
+아이콘이 필요하면 로컬 wrapper를 새로 만들지 말고 `gui/icons.py`에서 바로
+`status_icon_pixmap`을 가져다 쓸 것.
+
+페이지 제목 아이콘(달력·핀·휴지통·돋보기 등, 원 배경 없이 선으로만 그리는 것들)은
+이 패턴과 무관하다 — 그대로 화면별 로컬 함수로 둔다.
 
 ## 섹션 헤더 강조
 
@@ -88,7 +104,7 @@ accent bar(`border-left`) + `padding-left: 8px`. 카드 안의 최상위 섹션 
 
 ## 팝업/다이얼로그 패턴
 
-네이티브 `QMessageBox`는 OS 기본 스타일이라 앱 테마(민트 톤, 둥근 카드)와 겉돈다.
+네이티브 `QMessageBox`는 OS 기본 스타일이라 앱 테마(버터·아이보리 톤, 둥근 카드)와 겉돈다.
 **확인이 필요한 팝업은 `QMessageBox` 대신 `QDialog` 기반 커스텀 컴포넌트를 쓴다.**
 
 기준 구현: [gui/recovery_screen.py](gui/recovery_screen.py) `_confirm_dialog(parent, message, confirm_text="확인", cancel_text="취소")`.
@@ -175,7 +191,7 @@ accent bar(`border-left`) + `padding-left: 8px`. 카드 안의 최상위 섹션 
 
 ## 폼 컨트롤 — QComboBox
 
-기본 `QComboBox`는 OS 네이티브 드롭다운 화살표라 카드/버튼의 민트 톤과 겉돌고
+기본 `QComboBox`는 OS 네이티브 드롭다운 화살표라 카드/버튼의 버터 톤과 겉돌고
 투박해 보인다. [gui/theme.py](gui/theme.py) `APP_STYLESHEET`에서 전역으로
 `QComboBox::drop-down`을 `primary` 색 둥근 버튼(20px, 4px 여백, radius 5px)으로,
 그 안의 화살표는 흰색 삼각형 아이콘으로 바꿔서 통일했다. 펼침 목록

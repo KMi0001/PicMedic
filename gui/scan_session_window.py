@@ -27,6 +27,7 @@ from gui.common_dialogs import (
 )
 from gui.scanning_screen import ScanningScreen
 from gui.result_screen import ResultScreen
+from gui.theme import APP_STYLESHEET
 from gui.detail_screen import DetailScreen
 from gui.recovery_screen import RecoveryScreen
 from gui.recovery_result_screen import RecoveryResultScreen
@@ -86,23 +87,36 @@ class _CurrentOnlyStack(QStackedWidget):
 
 
 class ScanSessionWindow(QWidget):
-    """스캔 1회 = 창 1개. 부모(MainWindow)에 얹혀서 스타일시트를 물려받으면서도
-    Qt.Window 플래그로 독립된 최상위 창(제목표시줄, 자체 X 버튼)으로 뜬다."""
+    """스캔 1회 = 창 1개. Qt 부모 없이 완전히 독립된 최상위 창(제목표시줄, 자체
+    X 버튼)으로 뜬다 — 예전엔 parent=MainWindow로 만들어서 스타일시트만 물려받고
+    Qt.Window로 독립된 창처럼 보이게 했었는데, Windows에서 "부모가 있는
+    Qt.Window"는 최대화는 되지만 테두리를 드래그해 리사이즈하는 게 안 먹는 문제가
+    있어서(2026-09-08, 사용자 리포트) parent 없이 띄우고 스타일시트는 직접
+    적용하는 방식으로 바꿨다. 그 대신 MainWindow가 자동으로 이 창들을 닫아주지
+    않으므로 MainWindow.closeEvent()에서 열려있는 세션 창을 직접 닫아준다
+    (gui/main_window.py 참고)."""
 
     closed = Signal(object)  # self — main_window가 세션 목록에서 정리하도록
 
     # 검사 진행 중엔 카드 하나 크기(ScanningScreen.sizeHint() 기준)에 맞춰 작게,
-    # 결과가 나오면 표를 보기 편하게 크게 — 검사 중일 때 흰 카드 하나만 있는데
+    # 결과가 나오면 화면을 넓게 쓰는 큰 창으로 — 검사 중일 때 흰 카드 하나만 있는데
     # 창이 크면 주변 여백만 넓어 보여서 "팝업" 느낌이 안 살던 문제를 고친다.
+    #
+    # 결과 화면부터는(표/썸네일 그리드/지도 등 내용이 많은 화면들) 화면을 넓게 쓰는
+    # 쪽이 낫고, 이 화면들 사이를 오갈 때(뒤로가기, 정리 완료 등) 마다 창을 작게
+    # 줄였다 다시 키우면 — 특히 리사이즈와 화면 전환이 같은 순간에 겹치면 — Windows
+    # 컴포지터가 이전 화면 픽셀을 완전히 지우지 못하고 잔상처럼 남기는 문제가 있었다.
+    # 그래서 결과 화면 이후로는 창 크기를 한 번(검사 끝나고 커질 때) 말고는 절대
+    # 다시 건드리지 않는다 — 화면이 바뀌어도 창 크기는 고정, 사용자가 직접 드래그해
+    # 조절하는 것만 반영된다.
     _SCANNING_SIZE = (600, 440)
-    _NORMAL_SIZE = (760, 600)
-    # 날짜별 정리는 그룹 카드(썸네일 줄 포함)를 최소 3개는 스크롤 없이 보여줘야
-    # 해서, 다른 화면들보다 세로로 더 크게 잡는다.
-    _DATE_ORGANIZE_SIZE = (760, 820)
+    _NORMAL_SIZE = (1200, 820)
+    _MIN_NORMAL_SIZE = (900, 600)
 
     def __init__(self, home_screen, paths: list[str], parent=None):
         super().__init__(parent)
         self.setWindowFlags(Qt.Window)
+        self.setStyleSheet(APP_STYLESHEET)
         self.home_screen = home_screen
         self.setWindowTitle("PicMedic — 사진 진단 · 복구 · 정리")
         self.resize(*self._SCANNING_SIZE)
@@ -182,14 +196,14 @@ class ScanSessionWindow(QWidget):
         self.duplicate_screen.back_requested.connect(self._back_from_duplicates)
         self.duplicate_screen.view_trash_requested.connect(lambda: self._open_trash(self.duplicate_screen))
         self.duplicate_screen.file_selected.connect(
-            lambda info: self._open_detail(info, return_to=self.duplicate_screen)
+            lambda info, group: self._open_detail(info, group=group, return_to=self.duplicate_screen)
         )
 
         # 유사 사진 -> 정리 허브 / 임시 휴지통 / 상세보기(사진 미리보기)
         self.similar_screen.back_requested.connect(self._back_from_similar)
         self.similar_screen.view_trash_requested.connect(lambda: self._open_trash(self.similar_screen))
         self.similar_screen.file_selected.connect(
-            lambda info: self._open_detail(info, return_to=self.similar_screen)
+            lambda info, group: self._open_detail(info, group=group, return_to=self.similar_screen)
         )
 
         # 날짜별 정리 -> 정리 허브 / 그룹 상세(사진 확인)
@@ -272,22 +286,30 @@ class ScanSessionWindow(QWidget):
             self._pending_remaining_paths = remaining_paths if cancelled else None
             self._pending_planned_total = planned_total
             self.result_screen.set_result(
-                result, cancelled=cancelled, planned_total=planned_total, remaining_paths=remaining_paths
+                result,
+                cancelled=cancelled,
+                planned_total=planned_total,
+                remaining_paths=remaining_paths,
+                scan_paths=self._scan_origin_paths,
             )
             # 중복 화면은 그룹이 수백 개면 카드를 그만큼 만들어야 해서 스캔 하나
             # 끝날 때마다 미리 만들어두면(당장 보지도 않는데) 그때마다 응답 없음이
             # 뜬다 — 사용자가 "중복 파일 보기"를 실제로 눌렀을 때만 만든다
             # (_open_duplicates 참고).
             self.resize(*self._NORMAL_SIZE)
+            self.setMinimumSize(*self._MIN_NORMAL_SIZE)
             self.stack.setCurrentWidget(self.result_screen)
 
-    def _open_detail(self, info, return_to=None):
+    def _open_detail(self, info, group=None, return_to=None):
         self._detail_return_screen = return_to or self.result_screen
         # 중복/유사 사진 화면에서는 "이게 정말 맞나" 확인하러 들어온 것이라
         # 복구/변환/화질 개선 같은 편집 액션은 감춘다(gui/detail_screen.py::
         # set_review_only 참고) — gui/date_group_detail_screen.py와 같은 원칙.
         self.detail_screen.set_review_only(return_to in (self.duplicate_screen, self.similar_screen))
-        self.detail_screen.set_file(info)
+        # group을 주면(중복/유사 화면의 표에서 열었을 때) 상세 화면에서
+        # 방향키로 같은 그룹의 다음/이전 사진을 넘나들 수 있다(2026-09-08,
+        # 사용자 요청).
+        self.detail_screen.set_file(info, group=group)
         self.stack.setCurrentWidget(self.detail_screen)
 
     def _open_recovery(self, files, mode):
@@ -352,11 +374,9 @@ class ScanSessionWindow(QWidget):
 
         self.date_organize_screen.set_result(result)
         self.date_organize_screen.set_output_root(str(base_dir / "날짜별_정리"))
-        self.resize(*self._DATE_ORGANIZE_SIZE)
         self.stack.setCurrentWidget(self.date_organize_screen)
 
     def _back_from_date_organize(self):
-        self.resize(*self._NORMAL_SIZE)
         self.stack.setCurrentWidget(self.organize_hub_screen)
 
     def _open_date_group_detail(self, label: str, files: list):
@@ -376,11 +396,9 @@ class ScanSessionWindow(QWidget):
 
         self.city_organize_screen.set_result(result)
         self.city_organize_screen.set_output_root(str(base_dir / "도시별_정리"))
-        self.resize(*self._DATE_ORGANIZE_SIZE)
         self.stack.setCurrentWidget(self.city_organize_screen)
 
     def _back_from_city_organize(self):
-        self.resize(*self._NORMAL_SIZE)
         self.stack.setCurrentWidget(self.organize_hub_screen)
 
     def _open_city_group_detail(self, label: str, info, files: list):
@@ -485,7 +503,6 @@ class ScanSessionWindow(QWidget):
 
         _info_dialog_with_folder(self, "\n".join(lines), output_root)
 
-        self.resize(*self._NORMAL_SIZE)
         self.stack.setCurrentWidget(self.organize_hub_screen)
 
     def _open_trash(self, return_to=None):

@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
     QComboBox,
     QFrame,
     QFileDialog,
+    QSizePolicy,
 )
 
 from core.converter import RecoveryMode, recover_batch, CONVERT_TARGET_FORMATS, DEFAULT_CONVERT_FORMAT
@@ -143,7 +144,26 @@ class RecoveryScreen(QWidget):
         self.progress_dialog = ProgressDialog(self)
         self.progress_dialog.cancel_requested.connect(self._on_cancel_requested)
 
-        outer = QVBoxLayout(self)
+        # 화면 전체를 쓰는 큰 창에서 설정 카드가 창 끝까지 늘어나면 텅 빈 공간이
+        # 남아 허전해 보인다(gui/organize_hub_screen.py에서 고친 것과 같은 문제) —
+        # 내용 폭을 한 번 고정(900px)하고 가운데 정렬한다.
+        root = QHBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.addStretch(1)
+
+        content = QWidget()
+        content.setMaximumWidth(900)
+        # stretch factor 0인 위젯은 양옆 addStretch(1)에 밀려 sizeHint만큼만
+        # 차지하고 절대 안 커진다 — setMaximumWidth는 상한만 정할 뿐, 실제로
+        # 그 상한까지 채우는 힘은 Expanding 정책 + 양옆보다 훨씬 큰 stretch
+        # factor가 있어야 생긴다(2026-09-08, 사용자 리포트 — "정리 화면이
+        # 이상하게 좁다", gui/duplicate_screen.py와 같은 원인/수정 — 이
+        # 화면엔 그때 빠뜨렸다가 뒤늦게 발견함, 2026-09-09).
+        content.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        root.addWidget(content, 100)
+        root.addStretch(1)
+
+        outer = QVBoxLayout(content)
         outer.setContentsMargins(48, 32, 48, 32)
         outer.setAlignment(Qt.AlignTop)
         outer.setSpacing(16)

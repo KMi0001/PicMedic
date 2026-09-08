@@ -50,8 +50,8 @@ class SingleAIActionConfig:
     run_action: Callable[..., str]  # (input_path, output_dir, *, progress_callback, should_cancel) -> str
     cancelled_exception: type
     estimate_range: Callable[[Optional[int], Optional[int]], Optional[tuple]]  # (w,h) -> (낮,높음) 초 | None
-    no_effect_exception: type | None = None  # 예: face_restorer.NoFaceFoundError
-    no_effect_message: str | None = None
+    no_effect_exception: type | tuple[type, ...] | None = None  # 예: face_restorer.NoFaceFoundError
+    no_effect_message: str | None = None  # 지정하면 항상 이 문구; None이면 예외 메시지를 그대로 보여줌
 
 
 def _format_seconds(seconds: float) -> str:
@@ -166,7 +166,7 @@ class _ResultDialog(QDialog):
 class _Worker(QThread):
     progress = Signal(int, int, str)
     succeeded = Signal(str)
-    no_effect = Signal()
+    no_effect = Signal(str)
     failed = Signal(str)
 
     def __init__(self, config: SingleAIActionConfig, input_path: str, output_dir: str, parent=None):
@@ -191,7 +191,7 @@ class _Worker(QThread):
             return  # 취소는 에러가 아니므로 조용히 끝낸다
         except Exception as exc:  # noqa: BLE001 - 백그라운드 스레드 예외를 신호로 넘기기 위함
             if self._config.no_effect_exception is not None and isinstance(exc, self._config.no_effect_exception):
-                self.no_effect.emit()
+                self.no_effect.emit(str(exc))
             else:
                 self.failed.emit(str(exc))
             return
@@ -226,9 +226,9 @@ def run_single_ai_action(
         result_dialog = _ResultDialog(config, path, result_path, output_dir, parent)
         result_dialog.exec()
 
-    def on_no_effect():
+    def on_no_effect(message: str):
         progress_dialog.accept()
-        info_dialog(parent, config.no_effect_message or f"{config.title}에 실패했습니다.")
+        info_dialog(parent, config.no_effect_message or message or f"{config.title}에 실패했습니다.")
 
     def on_failed(message: str):
         progress_dialog.accept()

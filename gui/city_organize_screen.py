@@ -139,6 +139,10 @@ class CityOrganizeScreen(QWidget):
         # --- 하단: 방식 선택 + 저장 위치 + 실행 (gui/date_organize_screen.py와 동일 패턴) ---
         mode_card = QFrame()
         mode_card.setObjectName("Card")
+        # 지도/목록은 넓을수록 좋지만(지도는 위 outer.addWidget(..., stretch=2)로
+        # 이미 폭을 다 씀), 라디오 버튼 두 줄짜리 폼까지 창 끝까지 늘리면 텍스트
+        # 옆에 텅 빈 공간만 남는다 — 이 카드만 폭을 고정한다.
+        mode_card.setMaximumWidth(640)
         mode_layout = QVBoxLayout(mode_card)
         mode_layout.setContentsMargins(18, 14, 18, 14)
         mode_layout.setSpacing(8)
@@ -185,6 +189,7 @@ class CityOrganizeScreen(QWidget):
         self.organize_btn = QPushButton("이 방식대로 정리하기")
         self.organize_btn.setObjectName("Primary")
         self.organize_btn.setEnabled(False)
+        self.organize_btn.setMaximumWidth(640)
         self.organize_btn.clicked.connect(self._on_organize_clicked)
         outer.addWidget(self.organize_btn)
 

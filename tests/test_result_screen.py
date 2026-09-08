@@ -15,7 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication
 
-from gui.result_screen import ResultScreen, FILTER_OPTIONS
+from gui.result_screen import ResultScreen
 from models.file_info import FileInfo, FileStatus, RecoveryPossibility
 from models.scan_result import ScanResult
 
@@ -152,8 +152,7 @@ def run():
     check("필터된 소수 전체선택 정상 동작", len(mixed_screen._selected_files()) == N_MISMATCH)
 
     t0 = time.perf_counter()
-    idx = FILTER_OPTIONS.index("전체")
-    mixed_screen.filter_combo.setCurrentIndex(idx)
+    mixed_screen._filter_by_chip("전체")
     filter_back_elapsed = time.perf_counter() - t0
     check(
         f"소수 선택 후 '전체'({N_TOTAL}행)로 필터 복귀가 3초 안에 끝남 (실측 {filter_back_elapsed:.2f}초)",

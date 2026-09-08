@@ -10,8 +10,8 @@ import os
 import sys
 import subprocess
 
-from PySide6.QtCore import Qt, Signal, QUrl, QPointF
-from PySide6.QtGui import QDesktopServices, QPainter, QPixmap, QColor, QPen, QPainterPath
+from PySide6.QtCore import Qt, Signal, QUrl
+from PySide6.QtGui import QDesktopServices, QPixmap
 from PySide6.QtWidgets import (
     QWidget,
     QVBoxLayout,
@@ -24,55 +24,15 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
 )
 
+from gui.icons import status_icon_pixmap
 from gui.result_screen import SummaryChip
 from gui.theme import COLORS
 
 
 def _list_icon_pixmap(kind: str, accent: str, size: int = 32) -> QPixmap:
-    """목록 팝업 헤더 아이콘 — 최근 검사 목록/확인 팝업과 같은 스타일(색 원 + 흰색
-    벡터 글리프, 이모지 미사용). DESIGN.md 아이콘 시스템의 성공/건너뜀/오류 세 종류."""
-    icon_box = size * (13 / 24)
-    inner_scale = icon_box / 24.0
-    offset = (size - icon_box) / 2
-
-    def pt(x, y):
-        return QPointF(offset + x * inner_scale, offset + y * inner_scale)
-
-    pixmap = QPixmap(size, size)
-    pixmap.fill(Qt.transparent)
-    painter = QPainter(pixmap)
-    painter.setRenderHint(QPainter.Antialiasing)
-    painter.setPen(Qt.NoPen)
-    painter.setBrush(QColor(accent))
-    painter.drawEllipse(0, 0, size, size)
-
-    if kind == "success":
-        pen = QPen(QColor("white"))
-        pen.setWidthF(3 * inner_scale)
-        pen.setCapStyle(Qt.RoundCap)
-        pen.setJoinStyle(Qt.RoundJoin)
-        painter.setPen(pen)
-        path = QPainterPath()
-        path.moveTo(pt(5, 12.5))
-        path.lineTo(pt(9.5, 17))
-        path.lineTo(pt(19, 7))
-        painter.drawPath(path)
-    elif kind == "error":
-        pen = QPen(QColor("white"))
-        pen.setWidthF(3 * inner_scale)
-        pen.setCapStyle(Qt.RoundCap)
-        painter.setPen(pen)
-        painter.drawLine(pt(6.5, 6.5), pt(17.5, 17.5))
-        painter.drawLine(pt(17.5, 6.5), pt(6.5, 17.5))
-    elif kind == "skip":
-        pen = QPen(QColor("white"))
-        pen.setWidthF(3 * inner_scale)
-        pen.setCapStyle(Qt.RoundCap)
-        painter.setPen(pen)
-        painter.drawLine(pt(6, 12), pt(18, 12))
-
-    painter.end()
-    return pixmap
+    """목록 팝업 헤더 아이콘 — gui/icons.py의 공용 아이콘을 감싼 것. kind는
+    DESIGN.md 아이콘 시스템의 성공/건너뜀/오류(success/skip/error) 그대로."""
+    return status_icon_pixmap(kind, accent, size)
 
 
 class RecoveryResultScreen(QWidget):

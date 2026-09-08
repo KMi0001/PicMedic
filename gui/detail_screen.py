@@ -15,6 +15,8 @@ from PySide6.QtWidgets import (
     QPushButton,
     QFrame,
     QGridLayout,
+    QSizePolicy,
+    QSplitter,
 )
 
 from core.converter import RecoveryMode
@@ -23,8 +25,6 @@ from gui.quality_diagnosis_dialog import run_quality_diagnosis
 from gui.theme import COLORS, STATUS_COLORS
 from models.file_info import FileInfo, FileStatus
 from utils.file_utils import format_file_size
-
-PREVIEW_SIZE = 320
 
 
 class DetailScreen(QWidget):
@@ -37,6 +37,12 @@ class DetailScreen(QWidget):
         # 중복/유사 사진 화면에서 "미리보기"로 열렸을 때는 편집 액션(복구/
         # 변환/화질 개선)을 감춘다 — set_review_only() 참고.
         self._review_only = False
+        # 같은 그룹(중복/유사 그룹 등) 안의 다른 사진들 — 방향키로 다음/이전
+        # 사진으로 넘나들 때 쓴다(2026-09-08, 사용자 요청). set_file()이
+        # group 없이(또는 파일 하나뿐인 그룹으로) 불리면 방향키는 그냥
+        # 무시된다.
+        self._group: list[FileInfo] = []
+        self.setFocusPolicy(Qt.StrongFocus)
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(32, 24, 32, 24)
@@ -46,22 +52,32 @@ class DetailScreen(QWidget):
         back_btn.clicked.connect(self.back_requested.emit)
         outer.addWidget(back_btn, alignment=Qt.AlignLeft)
 
-        content_col = QVBoxLayout()
-        content_col.setSpacing(24)
+        # 화면 전체를 쓰는 레이아웃 — 미리보기는 창을 넓힐수록 같이 커지고, 정보
+        # 패널은 폭을 고정 범위(300~420px)로 둬서 글자 줄바꿈이 요동치지 않게 한다
+        # (experiments/fullframe_layout_prototype에서 검증한 구조 그대로).
+        splitter = QSplitter(Qt.Horizontal)
+        splitter.setChildrenCollapsible(False)
 
-        # --- 위: 미리보기 ---
+        # --- 왼쪽: 미리보기 ---
         preview_card = QFrame()
         preview_card.setObjectName("Card")
         preview_layout = QVBoxLayout(preview_card)
-        preview_layout.setAlignment(Qt.AlignCenter)
-        self.preview_viewer = ImageViewer(placeholder_text="미리보기를 생성할 수 없습니다.")
-        self.preview_viewer.setFixedSize(PREVIEW_SIZE, PREVIEW_SIZE + 28)
+        # 검사결과 목록 인라인 미리보기(gui/result_screen.py)와 같은 스타일로
+        # 통일 — 회전/맞추기 버튼을 별도 줄 대신 사진 위에 반투명하게 얹는다
+        # (2026-09-08, 사용자 요청 — "미리보기/뷰어는 다 검사결과 목록 미리보기처럼").
+        self.preview_viewer = ImageViewer(
+            placeholder_text="미리보기를 생성할 수 없습니다.", overlay_controls=True
+        )
+        self.preview_viewer.setMinimumSize(320, 320)
+        self.preview_viewer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         preview_layout.addWidget(self.preview_viewer)
-        content_col.addWidget(preview_card, alignment=Qt.AlignHCenter)
+        splitter.addWidget(preview_card)
 
-        # --- 아래: 정보 + 액션 ---
+        # --- 오른쪽: 정보 + 액션 ---
         info_card = QFrame()
         info_card.setObjectName("Card")
+        info_card.setMinimumWidth(300)
+        info_card.setMaximumWidth(420)
         info_layout = QVBoxLayout(info_card)
         info_layout.setContentsMargins(24, 24, 24, 24)
         info_layout.setSpacing(12)
@@ -88,25 +104,30 @@ class DetailScreen(QWidget):
 
         info_layout.addStretch(1)
 
-        btn_row = QHBoxLayout()
+        # 정보 패널이 고정 폭(300~420px)이라 버튼 3개를 가로로 나란히 두면 좁을 때
+        # 줄바꿈이 들쭉날쭉해진다 — 세로로 쌓아서 패널 폭에 상관없이 안정적으로 맞춘다.
+        btn_col = QVBoxLayout()
+        btn_col.setSpacing(8)
         self.diagnose_btn = QPushButton("사진 진단")
         self.diagnose_btn.setToolTip(
             "블러/노이즈/얼굴 흐림 등을 실제로 분석해서\n"
             "어떤 복원 기능이 맞는지 추천합니다."
         )
         self.diagnose_btn.clicked.connect(self._on_diagnose_clicked)
-        btn_row.addWidget(self.diagnose_btn)
+        btn_col.addWidget(self.diagnose_btn)
         self.restore_btn = QPushButton("실제 형식으로 복구")
         self.restore_btn.clicked.connect(self._on_restore_clicked)
+        btn_col.addWidget(self.restore_btn)
         self.convert_btn = QPushButton("확장자 변환")
         self.convert_btn.setObjectName("Primary")
         self.convert_btn.clicked.connect(self._on_convert_clicked)
-        btn_row.addWidget(self.restore_btn)
-        btn_row.addWidget(self.convert_btn)
-        info_layout.addLayout(btn_row)
+        btn_col.addWidget(self.convert_btn)
+        info_layout.addLayout(btn_col)
 
-        content_col.addWidget(info_card)
-        outer.addLayout(content_col, stretch=1)
+        splitter.addWidget(info_card)
+        splitter.setStretchFactor(0, 1)
+        splitter.setStretchFactor(1, 0)
+        outer.addWidget(splitter, stretch=1)
 
     # --- 외부에서 호출 --------------------------------------------------
 
@@ -118,9 +139,18 @@ class DetailScreen(QWidget):
         전후 아무 때나 불러도 되고, 다음 set_file()부터 반영된다."""
         self._review_only = review_only
 
-    def set_file(self, info: FileInfo):
+    def set_file(self, info: FileInfo, group: list[FileInfo] | None = None):
+        """group을 주면(같은 중복/유사 그룹 등) 방향키(←/→)로 그 안의
+        다음/이전 사진으로 넘나들 수 있다(2026-09-08, 사용자 요청) — 생략하면
+        (또는 파일이 하나뿐이면) 방향키는 그냥 무시된다."""
         self.current_info = info
-        self.filename_label.setText(info.filename)
+        self._group = group or []
+
+        if len(self._group) > 1 and info in self._group:
+            position = self._group.index(info) + 1
+            self.filename_label.setText(f"{info.filename}  ({position}/{len(self._group)})")
+        else:
+            self.filename_label.setText(info.filename)
 
         self._clear_grid()
         self._add_row("파일 확장자", info.extension or "-")
@@ -177,6 +207,17 @@ class DetailScreen(QWidget):
         )
 
         self._load_preview(info)
+        self.setFocus()  # 클릭 없이 바로 방향키가 먹도록
+
+    def keyPressEvent(self, event) -> None:
+        if event.key() in (Qt.Key_Left, Qt.Key_Right) and len(self._group) > 1 and self.current_info in self._group:
+            delta = -1 if event.key() == Qt.Key_Left else 1
+            idx = self._group.index(self.current_info)
+            next_info = self._group[(idx + delta) % len(self._group)]
+            self.set_file(next_info, group=self._group)
+            event.accept()
+            return
+        super().keyPressEvent(event)
 
     # --- 내부 로직 -----------------------------------------------------
 

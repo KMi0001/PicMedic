@@ -7,10 +7,11 @@ PRD 18장 "Screen 03 — Scan Result" 구현.
 from __future__ import annotations
 
 from datetime import datetime
+from os.path import commonpath
 from pathlib import Path
 
-from PySide6.QtCore import Qt, Signal, QRect, QRectF, QPointF, QItemSelectionModel
-from PySide6.QtGui import QColor, QIcon, QPainter, QPainterPath, QPen, QPixmap
+from PySide6.QtCore import Qt, Signal, QRect, QRectF, QPointF, QSize, QItemSelectionModel, QUrl
+from PySide6.QtGui import QColor, QDesktopServices, QIcon, QPainter, QPainterPath, QPen, QPixmap
 from PySide6.QtWidgets import (
     QWidget,
     QVBoxLayout,
@@ -18,30 +19,36 @@ from PySide6.QtWidgets import (
     QLabel,
     QPushButton,
     QLineEdit,
-    QComboBox,
     QTableWidget,
     QTableWidgetItem,
     QHeaderView,
     QAbstractItemView,
     QFrame,
+    QMenu,
+    QToolButton,
 )
 
+from gui.image_viewer import ImageViewer
 from gui.quality_diagnosis_dialog import run_quality_diagnosis
 from gui.theme import COLORS, STATUS_COLORS, STATUS_DOT
 from models.file_info import FileStatus, RecoveryPossibility
 from models.scan_result import ScanResult
 from utils.file_utils import format_file_size
 
-FILTER_OPTIONS = [
-    "전체",
-    "정상",
-    "형식 불일치",
-    "부분 손상",
-    "손상",
-    "복구 완료",
-    "복구 가능한 파일만",
-    "지원안함/오류",
-]
+# "손상" 칩/필터는 완전 손상뿐 아니라 지원되지 않는 형식/이미지가 아닌 파일/분석
+# 불가까지 한데 묶는다 — 사용자 요청(2026-09-08): "오류나 지원안함은 손상으로
+# 넣자, 어차피 손상정도면 복구 못해주잖아" — 어차피 복구 불가능은 매한가지라
+# 필터를 그만큼 잘게 나눌 필요가 없다는 판단.
+_CORRUPTED_LIKE_STATUSES = (
+    FileStatus.CORRUPTED,
+    FileStatus.UNSUPPORTED,
+    FileStatus.NOT_AN_IMAGE,
+    FileStatus.UNKNOWN,
+)
+
+
+def _corrupted_like_count(result: ScanResult) -> int:
+    return sum(1 for f in result.files if f.status in _CORRUPTED_LIKE_STATUSES)
 
 
 def _outline_icon(color: str, size: int, draw) -> QPixmap:
@@ -83,6 +90,23 @@ def _search_icon_pixmap(color: str, size: int = 22) -> QPixmap:
     def draw(painter, scale):
         painter.drawEllipse(QPointF(10.5 * scale, 10.5 * scale), 6.5 * scale, 6.5 * scale)
         painter.drawLine(QPointF(15.2 * scale, 15.2 * scale), QPointF(20 * scale, 20 * scale))
+
+    return _outline_icon(color, size, draw)
+
+
+def _chevron_icon_pixmap(color: str, direction: str, size: int = 16) -> QPixmap:
+    """뷰어 열기/닫기 손잡이용 "<"/">" 화살표. 텍스트 글자로 넣었더니 버튼
+    폭(18px)이 전역 QPushButton padding(8px 16px, gui/theme.py)보다 좁아서
+    아예 안 보이는 문제가 있었다(2026-09-08, 사용자 리포트) — 아이콘으로 직접
+    그려서 패딩과 무관하게 항상 보이게 한다."""
+
+    def draw(painter, scale):
+        if direction == "right":
+            painter.drawLine(QPointF(9 * scale, 5 * scale), QPointF(15 * scale, 12 * scale))
+            painter.drawLine(QPointF(15 * scale, 12 * scale), QPointF(9 * scale, 19 * scale))
+        else:
+            painter.drawLine(QPointF(15 * scale, 5 * scale), QPointF(9 * scale, 12 * scale))
+            painter.drawLine(QPointF(9 * scale, 12 * scale), QPointF(15 * scale, 19 * scale))
 
     return _outline_icon(color, size, draw)
 
@@ -197,6 +221,13 @@ class SummaryChip(QFrame):
     def set_value(self, value: int):
         self.value_label.setText(f"{value:,}")
 
+    def set_selected(self, selected: bool) -> None:
+        """이 칩이 지금 활성 필터임을 테두리 강조로 보여준다(카드형 필터 —
+        gui/theme.py의 QFrame#Card[selected="true"] 참고). clickable 칩에서만 쓴다."""
+        self.setProperty("selected", "true" if selected else "false")
+        self.style().unpolish(self)
+        self.style().polish(self)
+
     def set_text(self, text: str):
         """숫자 카운트 대신 자유 텍스트를 보여준다(예: gui/date_organize_screen.py의
         "2023.11 ~ 2025.06" 같은 날짜 범위). 숫자보다 길어서 폭에 못 들어갈 수
@@ -275,9 +306,12 @@ class ResultScreen(QWidget):
         self.cancelled_banner_frame.hide()
         outer.addWidget(self.cancelled_banner_frame)
 
-        # 칩을 누르면 아래 필터 드롭다운을 그 상태로 바꿔서 표를 바로 걸러 보여준다
-        # (DESIGN.md "상태 요약 카드" clickable 옵션 — gui/recovery_result_screen.py와
-        # 같은 패턴, 여기서는 별도 팝업 대신 이미 있는 표 필터를 재사용).
+        # 칩 자체가 필터다(2026-09-08, 사용자 요청으로 드롭다운 제거) — 누른 칩이
+        # 곧 지금 표에 걸린 필터이고, 선택된 칩은 테두리로 표시된다
+        # (SummaryChip.set_selected / _update_chip_selection 참고). "손상" 칩은
+        # 완전 손상뿐 아니라 지원안함/이미지아님/분석불가까지 다 포함한다(어차피
+        # 복구 불가능은 매한가지라서). "복구 필요"는 기존 "복구 가능한 파일 보기"
+        # 버튼을 같은 카드 형식으로 통합한 것.
         chips_row = QHBoxLayout()
         self.chip_total = SummaryChip("총 파일", COLORS["text"], clickable=True)
         self.chip_normal = SummaryChip("정상", STATUS_COLORS["정상"], clickable=True)
@@ -285,12 +319,14 @@ class ResultScreen(QWidget):
         self.chip_partial = SummaryChip("부분 손상", STATUS_COLORS["부분_손상"], clickable=True)
         self.chip_corrupted = SummaryChip("손상", STATUS_COLORS["손상"], clickable=True)
         self.chip_recovered = SummaryChip("복구 완료", STATUS_COLORS["복구_완료"], clickable=True)
+        self.chip_recovery_needed = SummaryChip("복구 필요", COLORS["warning"], clickable=True)
         self.chip_total.clicked.connect(lambda: self._filter_by_chip("전체"))
         self.chip_normal.clicked.connect(lambda: self._filter_by_chip("정상"))
         self.chip_mismatch.clicked.connect(lambda: self._filter_by_chip("형식 불일치"))
         self.chip_partial.clicked.connect(lambda: self._filter_by_chip("부분 손상"))
         self.chip_corrupted.clicked.connect(lambda: self._filter_by_chip("손상"))
         self.chip_recovered.clicked.connect(lambda: self._filter_by_chip("복구 완료"))
+        self.chip_recovery_needed.clicked.connect(lambda: self._filter_by_chip("복구 필요"))
         for chip in (
             self.chip_total,
             self.chip_normal,
@@ -298,30 +334,34 @@ class ResultScreen(QWidget):
             self.chip_partial,
             self.chip_corrupted,
             self.chip_recovered,
+            self.chip_recovery_needed,
         ):
             chips_row.addWidget(chip)
+        # DESIGN.md "상태 요약 카드" 원칙: 화면이 왼쪽 정렬이면 칩도 왼쪽에 맞추고
+        # 뒤쪽에 stretch를 둬서 칩 자체가 늘어나진 않게 한다 — 없으면 큰 창에서
+        # 칩들이 왼쪽에 몰리고 나머지 절반이 텅 비어 보인다.
+        chips_row.addStretch(1)
         outer.addLayout(chips_row)
+        self._active_filter = "전체"
+        self._update_chip_selection()
 
-        # 이 줄은 "지금 보이는 목록을 어떻게 걸러 볼지"만 다룬다 — 다른 화면으로
-        # 이동하는 기능(중복/유사/정리)은 목록 필터가 아니라서 헤더 쪽(홈 옆)에
-        # 모아뒀다.
+        # 필터 드롭다운은 칩으로 대체돼 없어졌고, 이 줄엔 검사한 폴더 경로(좌)와
+        # 검색창(우)만 남는다.
         filter_row = QHBoxLayout()
-        self.recoverable_btn = QPushButton("복구 가능한 파일 보기")
-        self.recoverable_btn.clicked.connect(self._show_recoverable_only)
-        filter_row.addWidget(self.recoverable_btn)
-
-        filter_row.addStretch(1)
+        # 검사한 폴더 경로 — 한 줄로 보여준다(경로 전체는 툴팁으로도 확인 가능).
+        # stretch=1을 안 줬을 때는 QLabel의 word-wrap sizeHint가 실제 필요한
+        # 가로 폭보다 좁게 잡혀서, 옆에 남는 공간이 있는데도 줄바꿈되며 잘려
+        # 보이는 문제가 있었다(2026-09-08, 사용자 리포트) — 이 줄의 남는 폭을
+        # 이 라벨이 먼저 차지하게 해서 한 줄로 다 보이게 한다.
+        self.scan_path_label = QLabel("")
+        self.scan_path_label.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 12px;")
+        filter_row.addWidget(self.scan_path_label, stretch=1)
 
         self.search_box = QLineEdit()
         self.search_box.setPlaceholderText("파일명·확장자·실제 형식 검색")
         self.search_box.setFixedWidth(220)
         self.search_box.textChanged.connect(self._apply_filters)
         filter_row.addWidget(self.search_box)
-
-        self.filter_combo = QComboBox()
-        self.filter_combo.addItems(FILTER_OPTIONS)
-        self.filter_combo.currentIndexChanged.connect(self._apply_filters)
-        filter_row.addWidget(self.filter_combo)
         outer.addLayout(filter_row)
 
         self.table = QTableWidget(0, 7)
@@ -338,7 +378,61 @@ class ResultScreen(QWidget):
         self.table.verticalHeader().setVisible(False)
         self.table.setSortingEnabled(True)
         self.table.doubleClicked.connect(self._on_row_double_clicked)
-        outer.addWidget(self.table, stretch=1)
+        self.table.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.table.customContextMenuRequested.connect(self._on_context_menu)
+
+        # 좌측 접이식 미리보기 패널 — 행을 클릭(선택)만 해도 여기 바로 사진이
+        # 보인다. 더 크게/자세히 보려면(EXIF 등) 기존처럼 더블클릭으로 상세
+        # 화면을 그대로 연다. 기본은 접혀 있고 목록 경계의 "‹/›" 손잡이로만 편다.
+        #
+        # QSplitter 대신 고정폭 패널 + 일반 레이아웃을 쓴다 — QSplitter는 보이는
+        # 자식의 minimumSizeHint를 계속 창 전체 최소 크기 계산에 반영하는데,
+        # 뷰어가 켜진 채로 창 테두리를 드래그하면 이 최소 크기 재계산이 OS의
+        # 라이브 리사이즈 루프와 충돌해 창 제목표시줄(최소화/최대화/닫기 버튼)이
+        # 잠깐 가려지는 문제가 있었다(2026-09-08, 사용자 리포트) — 폭이 고정된
+        # 단순 레이아웃으로 바꿔 그 충돌 소지를 없앴다.
+        # 카드 테두리를 일부러 안 준다("틀을 없애고 사진을 중앙에" 요청,
+        # 2026-09-08) — 배경색만 있는 평범한 패널 위에 사진이 바로 떠 있는
+        # 모양이 되게 한다. 회전/맞추기 버튼도 위쪽 줄 대신 사진 위에 반투명
+        # 오버레이로 얹는다(overlay_controls=True, experiments/
+        # viewer_redesign_prototype에서 방향 확인).
+        self.viewer_panel = QFrame()
+        self.viewer_panel.setFixedWidth(320)
+        viewer_layout = QVBoxLayout(self.viewer_panel)
+        viewer_layout.setContentsMargins(4, 4, 4, 4)
+        self.inline_viewer = ImageViewer(
+            placeholder_text="파일을 선택하면 미리보기가 표시됩니다.", overlay_controls=True
+        )
+        viewer_layout.addWidget(self.inline_viewer)
+        self.viewer_panel.hide()
+
+        # 목록 경계에 붙는 손잡이 — 접혀있을 땐 ">"(누르면 열림), 펴져있을 땐
+        # "<"(누르면 닫힘) 아이콘을 보여준다. 헤더/필터 줄에 있던 별도 텍스트
+        # 버튼보다 목록에 바로 붙어있는 게 더 직관적이라는 사용자 피드백으로 옮김.
+        # QPushButton 대신 QToolButton을 쓰는 이유: gui/theme.py의 전역
+        # QPushButton{padding: 8px 16px} 규칙이 이 좁은 버튼 안 내용을 다
+        # 밀어내서 아예 안 보이는 문제가 있었다 — QToolButton은 그 규칙의
+        # 대상이 아니라서 자체 스타일만 먹는다.
+        self.viewer_handle_btn = QToolButton()
+        self.viewer_handle_btn.setIcon(QIcon(_chevron_icon_pixmap(COLORS["text_secondary"], "right")))
+        self.viewer_handle_btn.setIconSize(QSize(14, 14))
+        self.viewer_handle_btn.setFixedWidth(22)
+        self.viewer_handle_btn.setAutoRaise(True)
+        self.viewer_handle_btn.setCursor(Qt.PointingHandCursor)
+        self.viewer_handle_btn.setToolTip("뷰어 열기")
+        self.viewer_handle_btn.setStyleSheet(
+            f"QToolButton {{ background-color: {COLORS['surface']}; border: 1px solid {COLORS['border']}; "
+            f"border-radius: 4px; padding: 2px; }} "
+            f"QToolButton:hover {{ border-color: {COLORS['primary']}; }}"
+        )
+        self.viewer_handle_btn.clicked.connect(self._toggle_viewer)
+
+        content_row = QHBoxLayout()
+        content_row.setSpacing(0)
+        content_row.addWidget(self.viewer_panel)
+        content_row.addWidget(self.viewer_handle_btn)
+        content_row.addWidget(self.table, stretch=1)
+        outer.addLayout(content_row, stretch=1)
 
         bottom_row = QHBoxLayout()
         # "정리"는 선택한 파일이 아니라 검사 결과 전체에 대한 동작이라(중복/유사/
@@ -383,14 +477,19 @@ class ResultScreen(QWidget):
         cancelled: bool = False,
         planned_total: int | None = None,
         remaining_paths: list | None = None,
+        scan_paths: list | None = None,
     ):
         self.result = result
+        path_text = _format_scan_path(scan_paths or [])
+        self.scan_path_label.setText(path_text)
+        self.scan_path_label.setToolTip(path_text)
         self.chip_total.set_value(result.total)
         self.chip_normal.set_value(result.normal)
         self.chip_mismatch.set_value(result.mismatch)
         self.chip_partial.set_value(result.partial_corruption)
-        self.chip_corrupted.set_value(result.corrupted)
+        self.chip_corrupted.set_value(_corrupted_like_count(result))
         self.chip_recovered.set_value(result.recovered)
+        self.chip_recovery_needed.set_value(len(result.recoverable_files()))
 
         if cancelled:
             planned = planned_total or result.total
@@ -402,7 +501,7 @@ class ResultScreen(QWidget):
         else:
             self.cancelled_banner_frame.hide()
 
-        self.filter_combo.setCurrentIndex(0)
+        self._active_filter = "전체"
         self.search_box.clear()
         self._apply_filters()
 
@@ -416,46 +515,60 @@ class ResultScreen(QWidget):
             self.chip_normal.set_value(self.result.normal)
             self.chip_mismatch.set_value(self.result.mismatch)
             self.chip_partial.set_value(self.result.partial_corruption)
-            self.chip_corrupted.set_value(self.result.corrupted)
+            self.chip_corrupted.set_value(_corrupted_like_count(self.result))
             self.chip_recovered.set_value(self.result.recovered)
+            self.chip_recovery_needed.set_value(len(self.result.recoverable_files()))
             self._apply_filters()
 
     # --- 내부 로직 -----------------------------------------------------
 
     def _show_recoverable_only(self):
-        idx = FILTER_OPTIONS.index("복구 가능한 파일만")
-        self.filter_combo.setCurrentIndex(idx)
+        """gui/scan_session_window.py 등 다른 곳에서 "복구 필요"만 보고 싶을 때
+        부르는 이름 그대로 유지 — 실제로는 이제 그 이름의 카드형 칩을 누른 것과
+        같다."""
+        self._filter_by_chip("복구 필요")
 
     def _filter_by_chip(self, filter_choice: str):
-        self.filter_combo.setCurrentIndex(FILTER_OPTIONS.index(filter_choice))
+        self._active_filter = filter_choice
+        self._apply_filters()
+
+    def _update_chip_selection(self):
+        chips_by_filter = {
+            "전체": self.chip_total,
+            "정상": self.chip_normal,
+            "형식 불일치": self.chip_mismatch,
+            "부분 손상": self.chip_partial,
+            "손상": self.chip_corrupted,
+            "복구 완료": self.chip_recovered,
+            "복구 필요": self.chip_recovery_needed,
+        }
+        for filter_choice, chip in chips_by_filter.items():
+            chip.set_selected(filter_choice == self._active_filter)
 
     def _apply_filters(self):
         if not self.result:
             return
 
-        filter_choice = self.filter_combo.currentText()
+        filter_choice = self._active_filter
         query = self.search_box.text().strip().lower()
 
         status_map = {
             "정상": FileStatus.NORMAL,
             "형식 불일치": FileStatus.MISMATCH,
             "부분 손상": FileStatus.PARTIAL_CORRUPTION,
-            "손상": FileStatus.CORRUPTED,
             "복구 완료": FileStatus.RECOVERED,
         }
 
         if filter_choice == "전체":
             files = list(self.result.files)
-        elif filter_choice == "복구 가능한 파일만":
+        elif filter_choice == "복구 필요":
             files = self.result.recoverable_files()
-        elif filter_choice == "지원안함/오류":
-            files = [
-                f
-                for f in self.result.files
-                if f.status in (FileStatus.UNSUPPORTED, FileStatus.NOT_AN_IMAGE, FileStatus.UNKNOWN)
-            ]
+        elif filter_choice == "손상":
+            files = [f for f in self.result.files if f.status in _CORRUPTED_LIKE_STATUSES]
         else:
             files = self.result.by_status(status_map[filter_choice])
+
+        self._update_chip_selection()
 
         if query:
             files = [
@@ -540,6 +653,7 @@ class ResultScreen(QWidget):
             self.table.setSortingEnabled(was_sorting)
             self.table.setUpdatesEnabled(True)
         self._update_selection_label()
+        self._refresh_inline_viewer()
 
     def _on_row_double_clicked(self, index):
         if index.column() == 0:
@@ -548,6 +662,39 @@ class ResultScreen(QWidget):
         if item:
             info = item.data(Qt.UserRole)
             self.file_selected.emit(info)
+
+    def _on_context_menu(self, pos):
+        index = self.table.indexAt(pos)
+        if not index.isValid():
+            return
+        row = index.row()
+
+        selected_rows = {r.row() for r in self.table.selectionModel().selectedRows()}
+        if row not in selected_rows:
+            # 선택되지 않은 행을 우클릭하면 탐색기처럼 그 행 하나만 선택한 것으로
+            # 취급한다 — 기존 다중 선택 위에서 우클릭하면 그 선택을 그대로 존중.
+            self.table.selectionModel().select(
+                self.table.model().index(row, 0),
+                QItemSelectionModel.ClearAndSelect | QItemSelectionModel.Rows,
+            )
+
+        info = self.table.item(row, 0).data(Qt.UserRole)
+        selected = self._selected_files()
+
+        menu = QMenu(self)
+        preview_action = menu.addAction("미리보기")
+        open_folder_action = menu.addAction("로컬 폴더 위치 열기")
+        # 사진 진단은 한 장 단위 기능이라(하단 "사진 진단" 버튼과 동일한 제약,
+        # _update_selection_label 참고) 여러 개를 우클릭했을 땐 메뉴에서 아예 뺀다.
+        diagnose_action = menu.addAction("사진 진단") if len(selected) == 1 else None
+
+        chosen = menu.exec(self.table.viewport().mapToGlobal(pos))
+        if chosen is preview_action:
+            self.file_selected.emit(info)
+        elif chosen is open_folder_action:
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(Path(info.path).parent)))
+        elif diagnose_action is not None and chosen is diagnose_action:
+            self._on_diagnose_selected()
 
     def _selected_files(self) -> list:
         result = []
@@ -595,6 +742,7 @@ class ResultScreen(QWidget):
             self.table.setSortingEnabled(was_sorting)
             self._syncing = False
         self._update_selection_label()
+        self._refresh_inline_viewer()
 
     def _on_header_toggled(self, checked: bool):
         self._set_all_checked(Qt.Checked if checked else Qt.Unchecked)
@@ -657,6 +805,53 @@ class ResultScreen(QWidget):
         selected = self._selected_files()
         if selected:
             self.recovery_requested.emit(selected)
+
+    def _toggle_viewer(self):
+        showing = not self.viewer_panel.isVisible()
+        self.viewer_panel.setVisible(showing)
+        direction = "left" if showing else "right"
+        self.viewer_handle_btn.setIcon(QIcon(_chevron_icon_pixmap(COLORS["text_secondary"], direction)))
+        self.viewer_handle_btn.setToolTip("뷰어 닫기" if showing else "뷰어 열기")
+        if showing:
+            self._refresh_inline_viewer()
+
+    def _refresh_inline_viewer(self):
+        if not self.viewer_panel.isVisible():
+            return
+        row = self.table.currentRow()
+        info = None
+        if row >= 0:
+            item = self.table.item(row, 0)
+            if item:
+                info = item.data(Qt.UserRole)
+        if info is not None:
+            self.inline_viewer.set_image_path(info.path)
+        else:
+            self.inline_viewer.set_pixmap(None)
+
+
+def _format_scan_path(paths: list) -> str:
+    """검사할 때 사용자가 선택한 원본 경로(들)를 화면에 보여줄 문자열로 만든다.
+    폴더를 선택했으면 그 폴더 자체를, 파일을 직접 여러 개 골랐으면 그 파일들의
+    부모 폴더를 보여준다. 폴더가 여러 개면(예: 폴더 여러 개를 한 번에 선택)
+    공통 상위 경로 + "외 N개"로 요약한다."""
+    if not paths:
+        return ""
+
+    dirs = []
+    for p in paths:
+        path = Path(p)
+        dirs.append(path if path.is_dir() else path.parent)
+
+    unique = list(dict.fromkeys(str(d) for d in dirs))
+    if len(unique) == 1:
+        return unique[0]
+
+    try:
+        common = commonpath(unique)
+    except ValueError:
+        common = unique[0]
+    return f"{common} 외 {len(unique) - 1}개 경로"
 
 
 def _qcolor(hex_str: str):

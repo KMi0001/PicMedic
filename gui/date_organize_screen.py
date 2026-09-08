@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QRadioButton,
     QScrollArea,
+    QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
@@ -134,7 +135,27 @@ class DateOrganizeScreen(QWidget):
         self._thumb_cache: dict[str, object] = {}  # path -> QImage | None, 그룹 재계산에도 재사용
         self._thumb_worker: _ThumbnailPreloadWorker | None = None
 
-        outer = QVBoxLayout(self)
+        # 화면 전체를 쓰는 큰 창에서 카드/폼이 창 끝까지 늘어나면 텅 빈 공간이
+        # 남아 허전해 보인다(gui/organize_hub_screen.py에서 고친 것과 같은 문제) —
+        # 내용 폭을 한 번 고정(900px)하고 가운데 정렬한다. 그룹 계산 로직은
+        # 전혀 안 건드리고 바깥 컨테이너만 바꾼 것.
+        root = QHBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.addStretch(1)
+
+        content = QWidget()
+        content.setMaximumWidth(900)
+        # stretch factor 0인 위젯은 양옆 addStretch(1)에 밀려 sizeHint(이동
+        # 라디오 버튼처럼 줄바꿈 안 되는 긴 라벨이 정하는 좁은 값)만큼만
+        # 차지하고 절대 안 커진다 — setMaximumWidth는 상한만 정할 뿐, 실제로
+        # 그 상한까지 채우는 힘은 Expanding 정책 + 양옆보다 훨씬 큰 stretch
+        # factor가 있어야 생긴다(2026-09-08, 사용자 리포트 — "정리 화면이
+        # 이상하게 좁다", gui/duplicate_screen.py와 같은 원인/수정).
+        content.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        root.addWidget(content, 100)
+        root.addStretch(1)
+
+        outer = QVBoxLayout(content)
         outer.setContentsMargins(48, 32, 48, 32)
         outer.setAlignment(Qt.AlignTop)
         outer.setSpacing(16)
@@ -198,6 +219,9 @@ class DateOrganizeScreen(QWidget):
         self.scroll_area = QScrollArea()
         self.scroll_area.setWidgetResizable(True)
         self.scroll_area.setFrameShape(QFrame.NoFrame)
+        # 카드는 항상 컨테이너 폭에 맞춰지므로 가로 스크롤은 필요 없다
+        # (gui/duplicate_screen.py와 같은 이유로 추가, 2026-09-08).
+        self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self._list_container = QWidget()
         self._list_layout = QVBoxLayout(self._list_container)
         self._list_layout.setContentsMargins(0, 0, 0, 0)

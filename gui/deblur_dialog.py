@@ -3,6 +3,12 @@ gui/deblur_dialog.py
 
 "디블러"(core/deblur.py) 실행 흐름 — gui/single_ai_action.py의 공용 확인→
 진행→결과 다이얼로그에 이 기능만의 문구/함수를 config로 넘긴다.
+
+core/deblur.py의 사전/사후 안전장치(DeblurNotRecommendedError·
+DeblurResultUnstableError)를 둘 다 no_effect_exception에 걸어둔다 — 망가진
+결과를 사용자에게 아예 보여주지 않고, 각 예외 자신의 메시지로 안내한다
+(no_effect_message를 지정하지 않으면 gui/single_ai_action.py가 예외 메시지를
+그대로 씀).
 """
 
 from __future__ import annotations
@@ -26,6 +32,7 @@ _CONFIG = SingleAIActionConfig(
     run_action=deblur.deblur_image,
     cancelled_exception=deblur.DeblurCancelled,
     estimate_range=lambda w, h: (deblur.estimate_seconds(w, h),) * 2 if w and h else None,
+    no_effect_exception=(deblur.DeblurNotRecommendedError, deblur.DeblurResultUnstableError),
 )
 
 

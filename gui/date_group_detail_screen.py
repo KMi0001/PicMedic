@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
@@ -36,7 +37,7 @@ from utils.file_utils import format_file_size
 THUMB_SIZE = 96
 CELL_MARGIN = 8
 CELL_SPACING = 12
-PREVIEW_SIZE = 260
+INFO_COL_WIDTH = 320
 
 
 class DateGroupDetailScreen(QWidget):
@@ -84,11 +85,23 @@ class DateGroupDetailScreen(QWidget):
         preview_row.setContentsMargins(20, 20, 20, 20)
         preview_row.setSpacing(20)
 
-        self.preview_image = ImageViewer(placeholder_text="미리보기를 생성할 수 없습니다.")
-        self.preview_image.setFixedSize(PREVIEW_SIZE, PREVIEW_SIZE + 28)
-        preview_row.addWidget(self.preview_image)
+        # 화면 전체를 쓰는 레이아웃 — 뷰어는 창을 넓힐수록 같이 커지고, 오른쪽
+        # 정보 칸은 폭을 고정(gui/detail_screen.py와 같은 원칙)해서 짧은 메타
+        # 정보 몇 줄이 화면 절반을 차지하는 빈 공간으로 늘어나지 않게 한다.
+        # 검사결과 목록 인라인 미리보기(gui/result_screen.py)와 같은 스타일로
+        # 통일 — 회전/맞추기 버튼을 별도 줄 대신 사진 위에 반투명하게 얹는다
+        # (2026-09-08, 사용자 요청 — "미리보기/뷰어는 다 검사결과 목록 미리보기처럼").
+        self.preview_image = ImageViewer(
+            placeholder_text="미리보기를 생성할 수 없습니다.", overlay_controls=True
+        )
+        self.preview_image.setMinimumSize(260, 260)
+        self.preview_image.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        preview_row.addWidget(self.preview_image, stretch=1)
 
-        info_col = QVBoxLayout()
+        info_wrap = QWidget()
+        info_wrap.setMaximumWidth(INFO_COL_WIDTH)
+        info_col = QVBoxLayout(info_wrap)
+        info_col.setContentsMargins(0, 0, 0, 0)
         info_col.setSpacing(10)
         info_col.setAlignment(Qt.AlignTop)
 
@@ -103,7 +116,7 @@ class DateGroupDetailScreen(QWidget):
         info_col.addLayout(self.info_grid)
         info_col.addStretch(1)
 
-        preview_row.addLayout(info_col, stretch=1)
+        preview_row.addWidget(info_wrap)
         outer.addWidget(preview_card)
 
         list_row = QHBoxLayout()

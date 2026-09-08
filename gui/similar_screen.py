@@ -19,18 +19,20 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QThread, Signal, QPointF, QRectF
-from PySide6.QtGui import QPainter, QPixmap, QColor, QPen
+from PySide6.QtCore import Qt, QThread, Signal, QPointF, QRectF, QUrl
+from PySide6.QtGui import QDesktopServices, QPainter, QPixmap, QColor, QPen
 from PySide6.QtWidgets import (
     QWidget,
     QVBoxLayout,
     QHBoxLayout,
+    QCheckBox,
+    QGridLayout,
     QLabel,
+    QMenu,
     QPushButton,
-    QRadioButton,
-    QButtonGroup,
     QFrame,
     QScrollArea,
+    QSizePolicy,
 )
 
 from gui.common_dialogs import confirm_dialog, info_dialog, ProgressDialog
@@ -101,6 +103,48 @@ def _group_similarity_note(files: list) -> str:
     return f"이미지 유사도 거리 {best} (0에 가까울수록 거의 같은 사진)"
 
 
+class _WrappingPhotoRow(QWidget):
+    """사진 카드 하나 안에서 여러 장을 가로로 나열하다가, 폭이 모자라면
+    자동으로 다음 줄로 넘어간다(2026-09-09, 사용자 리포트 — "5장 이상이면
+    짤려 보임": 기존 QHBoxLayout은 줄바꿈이 없는데 가로 스크롤도 막아놔서
+    넘치는 사진이 아예 안 보였다). gui/date_group_detail_screen.py의 그리드
+    재배치와 같은 원리를 카드 하나 스코프로 축소해서 재사용."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._grid = QGridLayout(self)
+        self._grid.setSpacing(18)
+        self._grid.setContentsMargins(0, 0, 0, 0)
+        self._grid.setAlignment(Qt.AlignLeft | Qt.AlignTop)
+        self._cells: list[QWidget] = []
+        self._cell_width = 0
+        self._last_columns = -1
+
+    def set_cells(self, cells: list[QWidget], cell_width: int) -> None:
+        self._cells = cells
+        self._cell_width = max(cell_width, 1)
+        self._last_columns = -1
+        self._relayout()
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._relayout()
+
+    def _relayout(self) -> None:
+        if not self._cells:
+            return
+        available = self.width() or (self.parentWidget().width() if self.parentWidget() else 0)
+        spacing = self._grid.spacing()
+        columns = max(1, (available + spacing) // (self._cell_width + spacing))
+        if columns == self._last_columns:
+            return
+        self._last_columns = columns
+        for cell in self._cells:
+            self._grid.removeWidget(cell)
+        for idx, cell in enumerate(self._cells):
+            self._grid.addWidget(cell, idx // columns, idx % columns)
+
+
 class _SimilarPreloadWorker(QThread):
     """similar_groups() 계산(사진이 많으면 느릴 수 있음 — 퍼셉추얼 해시
     쌍 비교가 O(n^2)) + 카드에 쓸 썸네일 로딩을 한 번에 백그라운드에서
@@ -134,13 +178,16 @@ class _SimilarPreloadWorker(QThread):
 
 
 class _GroupEntry:
-    __slots__ = ("card", "group", "radios", "skip_radio")
+    """건너뛰기 전용 라디오는 없앴다(2026-09-09, 사용자 요청 — "1장 이상
+    남기고 싶으면?") — 체크박스만 두고, 아무것도 체크 안 하거나 전부
+    체크하면(지울 게 없으므로) 자동으로 건너뛰기와 같은 뜻이 된다."""
 
-    def __init__(self, card, group, radios, skip_radio):
+    __slots__ = ("card", "group", "checkboxes")
+
+    def __init__(self, card, group, checkboxes):
         self.card = card
         self.group = group
-        self.radios = radios
-        self.skip_radio = skip_radio
+        self.checkboxes = checkboxes
 
 
 class SimilarScreen(QWidget):
@@ -149,7 +196,9 @@ class SimilarScreen(QWidget):
 
     back_requested = Signal()
     view_trash_requested = Signal()  # 정리(휴지통 이동) 완료 후 휴지통 화면으로 이동
-    file_selected = Signal(object)  # 썸네일 클릭 -> 상세보기(사진 미리보기)
+    # 파일 클릭/미리보기 -> 상세보기(FileInfo, 그 파일이 속한 그룹 — 상세
+    # 화면에서 방향키로 같은 그룹의 다음/이전 사진을 넘나들 때 씀, 2026-09-08).
+    file_selected = Signal(object, list)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -158,7 +207,26 @@ class SimilarScreen(QWidget):
         self._thumb_cache: dict = {}
         self._worker: _SimilarPreloadWorker | None = None
 
-        outer = QVBoxLayout(self)
+        # 화면 전체를 쓰는 큰 창에서 카드가 창 끝까지 늘어나면 사진 줄 뒤로 텅 빈
+        # 공간이 남아 허전해 보인다(gui/organize_hub_screen.py에서 고친 것과 같은
+        # 문제) — 내용 폭을 한 번 고정(960px)하고 가운데 정렬한다. 그룹핑/정리
+        # 로직은 전혀 안 건드리고 바깥 컨테이너만 바꾼 것.
+        root = QHBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.addStretch(1)
+
+        content = QWidget()
+        content.setMaximumWidth(960)
+        # stretch factor 0인 위젯은 양옆 addStretch(1)에 밀려 sizeHint만큼만
+        # 차지하고 절대 안 커진다 — setMaximumWidth는 상한만 정할 뿐, 실제로
+        # 그 상한까지 채우는 힘은 Expanding 정책 + 양옆보다 훨씬 큰 stretch
+        # factor가 있어야 생긴다(2026-09-08, 사용자 리포트 — "정리 화면이
+        # 이상하게 좁다", gui/duplicate_screen.py와 같은 원인/수정).
+        content.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        root.addWidget(content, 100)
+        root.addStretch(1)
+
+        outer = QVBoxLayout(content)
         outer.setContentsMargins(48, 32, 48, 32)
         outer.setAlignment(Qt.AlignTop)
         outer.setSpacing(16)
@@ -188,7 +256,7 @@ class SimilarScreen(QWidget):
 
         hint = QLabel(
             "완전히 같지는 않지만 비슷해 보이는 사진들이에요 — 오탐일 수 있으니 썸네일을 직접 보고 판단해주세요. "
-            "정리하고 싶지 않은 그룹은 \"건너뛰기\"를 그대로 두면 손대지 않아요."
+            "남기고 싶은 사진에 체크하세요(여러 장 가능) — 아무것도 체크하지 않으면 이 그룹은 그대로 둬요."
         )
         hint.setWordWrap(True)
         hint.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 12px;")
@@ -202,6 +270,9 @@ class SimilarScreen(QWidget):
         self.scroll_area = QScrollArea()
         self.scroll_area.setWidgetResizable(True)
         self.scroll_area.setFrameShape(QFrame.NoFrame)
+        # 카드는 항상 컨테이너 폭에 맞춰지므로 가로 스크롤은 필요 없다
+        # (gui/duplicate_screen.py와 같은 이유로 추가, 2026-09-08).
+        self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self._list_container = QWidget()
         self._list_layout = QVBoxLayout(self._list_container)
         self._list_layout.setContentsMargins(0, 0, 0, 0)
@@ -210,7 +281,10 @@ class SimilarScreen(QWidget):
         self.scroll_area.setWidget(self._list_container)
         outer.addWidget(self.scroll_area, stretch=1)
 
-        self.cleanup_btn = QPushButton("선택한 파일 임시 휴지통으로 이동")
+        # "선택한 파일"이라고 하면 체크한(=남길) 파일을 옮긴다는 뜻으로
+        # 오해하기 쉽다(2026-09-09, 사용자 리포트 — "반대 아니야?") — 실제로는
+        # 체크 "안 한" 파일이 옮겨지므로 문구를 그에 맞게 정확히 쓴다.
+        self.cleanup_btn = QPushButton("체크 안 한 파일 임시 휴지통으로 이동")
         self.cleanup_btn.setObjectName("Danger")
         self.cleanup_btn.setEnabled(False)
         self.cleanup_btn.clicked.connect(self._on_cleanup_clicked)
@@ -275,8 +349,8 @@ class SimilarScreen(QWidget):
                     item.widget().deleteLater()
 
             for row, group in enumerate(groups):
-                card, radios, skip_radio = self._build_group_card(row + 1, group)
-                self._entries.append(_GroupEntry(card, group, radios, skip_radio))
+                card, checkboxes = self._build_group_card(row + 1, group)
+                self._entries.append(_GroupEntry(card, group, checkboxes))
                 self._list_layout.insertWidget(row, card)
 
             self._refresh_summary()
@@ -294,7 +368,7 @@ class SimilarScreen(QWidget):
         self.scroll_area.setVisible(has_any)
         self.cleanup_btn.setEnabled(has_any)
 
-    def _build_group_card(self, idx: int, group: list) -> tuple[QFrame, list[QRadioButton], QRadioButton]:
+    def _build_group_card(self, idx: int, group: list) -> tuple[QFrame, list[QCheckBox]]:
         card = QFrame()
         card.setObjectName("Card")
         layout = QVBoxLayout(card)
@@ -310,23 +384,29 @@ class SimilarScreen(QWidget):
         note.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 11px;")
         layout.addWidget(note)
 
-        button_group = QButtonGroup(card)
-        skip_radio = QRadioButton("이 그룹은 정리하지 않음(건너뛰기)")
-        skip_radio.setChecked(True)  # 오탐 가능성이 있어 완전 중복보다도 더 보수적으로, 항상 기본값
-        skip_radio.setStyleSheet(f"color: {COLORS['text_secondary']};")
-        button_group.addButton(skip_radio)
-        layout.addWidget(skip_radio)
-
+        # 사진마다 체크박스로 "남기기"를 고른다(2026-09-09, 사용자 요청 —
+        # "1장 이상 남기고 싶으면?"). 라디오+별도 "건너뛰기" 대신, 아무것도
+        # 체크 안 하거나(지울 게 정해지지 않음) 전부 체크하면(지울 게 없음)
+        # 자동으로 건너뛰기와 같은 뜻이 된다 — _on_cleanup_clicked 참고.
+        # 기본값은 전부 체크 해제(오탐 가능성이 있어 완전 중복보다도 더
+        # 보수적으로).
+        #
         # 사진을 가로로 나란히 놓아야 서로 다른 점이 눈에 더 잘 들어온다는
         # 피드백으로 세로 목록에서 바꿨다 — 사진도 더 키우고(THUMB_SIZE),
         # 세로 목록일 때는 사진 옆 여백에 폴더 경로를 그대로 적어 넣을 수
         # 있었지만 가로로 눕히면 그 자리가 없어져서, 대신 사진마다 작은
         # "폴더" 뱃지를 붙여 어떤 게 같은 폴더 사진인지 색으로 표시한다.
-        photos_row = QHBoxLayout()
-        photos_row.setSpacing(18)
+        # 사진이 많으면(5장+) 한 줄에 다 못 들어가 잘려 보이던 문제가 있어
+        # (2026-09-09, 사용자 리포트) _WrappingPhotoRow로 자동 줄바꿈한다.
+        #
+        # 표 형태(체크옵션/구분/파일명/사유)로 통일해봤다가 되돌렸다
+        # (2026-09-08, 사용자 판단 — "중복은 해시로 100% 같은 파일이라
+        # 비교할 필요가 없지만, 유사는 오탐 가능성이 있는 추정이라 실제
+        # 큰 썸네일로 비교해야 맞다").
         folder_colors = _folder_badge_colors(group)
 
-        radios: list[QRadioButton] = []
+        checkboxes: list[QCheckBox] = []
+        cells: list[QWidget] = []
         for info in group:
             col = QVBoxLayout()
             col.setSpacing(6)
@@ -337,18 +417,24 @@ class SimilarScreen(QWidget):
             if image is not None:
                 pixmap = QPixmap.fromImage(image)
             thumb = ClickableThumbnail(pixmap, info.filename, size=THUMB_SIZE)
-            thumb.clicked.connect(lambda info=info: self.file_selected.emit(info))
+            thumb.clicked.connect(lambda info=info, group=group: self.file_selected.emit(info, group))
+            # 우클릭으로 미리보기/로컬 폴더 위치 열기 — gui/duplicate_screen.py
+            # 표들과 같은 패턴(2026-09-09, 사용자 요청 — 카톡으로 받아 이름만
+            # 바뀐 사진인지 직접 파일 크기/폴더를 확인해보고 싶다는 니즈).
+            thumb.setContextMenuPolicy(Qt.CustomContextMenu)
+            thumb.customContextMenuRequested.connect(
+                lambda pos, info=info, group=group, w=thumb: self._on_thumb_context_menu(w, pos, info, group)
+            )
             col.addWidget(thumb)
 
-            radio_row = QHBoxLayout()
-            radio_row.setAlignment(Qt.AlignHCenter)
-            radio = QRadioButton("이 파일 남기기")
-            radio.setToolTip("이 파일을 남깁니다")
-            radio.setStyleSheet("font-size: 11px;")
-            button_group.addButton(radio)
-            radios.append(radio)
-            radio_row.addWidget(radio)
-            col.addLayout(radio_row)
+            check_row = QHBoxLayout()
+            check_row.setAlignment(Qt.AlignHCenter)
+            checkbox = QCheckBox("이 파일 남기기")
+            checkbox.setToolTip("이 파일을 남깁니다")
+            checkbox.setStyleSheet("font-size: 11px;")
+            checkboxes.append(checkbox)
+            check_row.addWidget(checkbox)
+            col.addLayout(check_row)
 
             folder = Path(info.path).parent
             badge_color = folder_colors[folder]
@@ -368,12 +454,24 @@ class SimilarScreen(QWidget):
 
             col_widget = QWidget()
             col_widget.setLayout(col)
-            photos_row.addWidget(col_widget)
+            cells.append(col_widget)
 
-        photos_row.addStretch(1)
-        layout.addLayout(photos_row)
+        photo_grid = _WrappingPhotoRow()
+        cell_width = max((cell.sizeHint().width() for cell in cells), default=THUMB_SIZE + 16)
+        photo_grid.set_cells(cells, cell_width)
+        layout.addWidget(photo_grid)
 
-        return card, radios, skip_radio
+        return card, checkboxes
+
+    def _on_thumb_context_menu(self, widget: QWidget, pos, info, group: list) -> None:
+        menu = QMenu(self)
+        preview_action = menu.addAction("미리보기")
+        open_folder_action = menu.addAction("로컬 폴더 위치 열기")
+        chosen = menu.exec(widget.mapToGlobal(pos))
+        if chosen is preview_action:
+            self.file_selected.emit(info, group)
+        elif chosen is open_folder_action:
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(Path(info.path).parent)))
 
     def _on_cleanup_clicked(self):
         # gui/duplicate_screen.py::_on_cleanup_clicked와 같은 방식 — 그룹마다
@@ -384,22 +482,21 @@ class SimilarScreen(QWidget):
         entry_refs: list[_GroupEntry] = []
 
         for entry in self._entries:
-            if entry.skip_radio.isChecked():
+            keep_infos = [info for info, cb in zip(entry.group, entry.checkboxes) if cb.isChecked()]
+            remove_infos = [info for info, cb in zip(entry.group, entry.checkboxes) if not cb.isChecked()]
+            # 아무것도 체크 안 함(keep_infos 없음) 또는 전부 체크(지울 게
+            # 없음) 둘 다 "이 그룹은 건드리지 않음"과 같은 뜻이다 — 별도
+            # "건너뛰기" 컨트롤 없이 체크 상태만으로 판단한다.
+            if not keep_infos or not remove_infos:
                 continue
-            keep_info = None
-            remove_infos = []
-            for info, radio in zip(entry.group, entry.radios):
-                if radio.isChecked():
-                    keep_info = info
-                else:
-                    remove_infos.append(info)
-            if remove_infos and keep_info is not None:
-                reason = (
-                    f"유사 사진 정리 — '{Path(keep_info.path).name}' 파일을 남기고 이 파일들이 이동됨 "
-                    f"({_group_similarity_note(entry.group)})"
-                )
-                to_process.append((keep_info.path, remove_infos, reason))
-                entry_refs.append(entry)
+            keep_info = keep_infos[0]
+            extra = f" 외 {len(keep_infos) - 1}장 더" if len(keep_infos) > 1 else ""
+            reason = (
+                f"유사 사진 정리 — '{Path(keep_info.path).name}'{extra} 파일을 남기고 이 파일들이 이동됨 "
+                f"({_group_similarity_note(entry.group)})"
+            )
+            to_process.append((keep_info.path, remove_infos, reason))
+            entry_refs.append(entry)
 
         total_to_remove = sum(len(infos) for _, infos, _ in to_process)
         if not total_to_remove:
@@ -462,5 +559,3 @@ class SimilarScreen(QWidget):
 
         if moved:
             self.view_trash_requested.emit()
-
-        self.view_trash_requested.emit()
