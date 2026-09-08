@@ -5,12 +5,24 @@ core/quality_diagnosis.py
 사용자가 감으로 고르지 않아도 되게, 사진을 실제로 판단해서 추천한다.
 core/converter.py 같은 파일 진단이 아니라 "픽셀 내용"을 본다는 점이 다르다.
 
-블러/노출/대비/노이즈 추정(assess_quality_issues)은 PicMedic-Web/core/diagnosis.py
-의 같은 함수를 그대로 포팅했다 — Pillow 통계 기반 휴리스틱(ML 아님)이고, 그
+노출/대비/노이즈 추정(assess_quality_issues)은 PicMedic-Web/core/diagnosis.py의
+같은 함수를 그대로 포팅했다 — Pillow 통계 기반 휴리스틱(ML 아님)이고, 그
 저장소에서 실측으로 튜닝된 임계값이라 재검증 없이 그대로 재사용한다. 다만
 얼굴 흐림 판단은 PicMedic-Web에 없는 이 앱만의 기능이다: core/face_restorer.py가
 이미 받아둔 facexlib 얼굴 탐지 모델(RestoreFormer++ 체크포인트는 로드하지
 않음, 탐지만 가벼움)로 얼굴을 찾고, 각 얼굴 크롭에 같은 블러 공식을 적용한다.
+
+블러 추정만은 포팅 그대로가 아니라 이 앱에서 한 차례 더 손봤다(2026-09-08):
+원래는 그레이스케일 전체의 edge variance(FIND_EDGES 분산) 하나로 판단했는데,
+하늘/바다처럼 프레임 대부분이 매끈한 사진에서 실제로는 안 흐린데도 "블러
+추정"으로 오판하는 문제가 있었다 — 매끈한 영역이 평균을 끌어내려, 일부
+영역(수평선·물체 경계 등)에 진짜 선명한 디테일이 있어도 묻혀버림. 대신
+이미지를 4x4 타일로 나눠 타일별 edge variance의 상위 90퍼센타일을 대표값으로
+쓴다: 모션 블러는 프레임 전체에 고르게 걸려 가장 선명한 타일도 낮게 나오지만,
+매끈한 배경+일부 디테일 사진은 그 디테일이 있는 타일만으로도 문턱을 넘는다.
+experiments/blur_heuristic_prototype/에서 합성 사진(넓은 하늘/바다 배경 +
+작은 선명한 물체)과 실사진으로 검증 — 진짜 블러 사진은 여전히 잡아내면서,
+매끈한 배경 오탐만 줄었다.
 
 torch/facexlib는 이 파일 최상단이 아니라 함수 안에서 지연 import한다 —
 core/face_restorer.py·core/deblur.py와 같은 이유(앱 시작 속도). Pillow 쪽
@@ -28,11 +40,17 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
+import numpy as np
 from PIL import Image, ImageChops, ImageFilter, ImageStat
 
 # --- PicMedic-Web/core/diagnosis.py에서 그대로 포팅 (실측 튜닝된 임계값) ---
 QUALITY_ANALYSIS_MAX_SIDE = 512
-BLUR_EDGE_VARIANCE_THRESHOLD = 400.0
+# 타일 90퍼센타일 edge variance 기준(아래 _tile_percentile_edge_variance) —
+# experiments/blur_heuristic_prototype/sweep_params.py 실측: 실제 블러 사진의
+# 최댓값 528.4 vs 매끈한 배경 정상 사진의 최솟값 752.9, 그 사이에서 여유 있게 640.
+BLUR_EDGE_VARIANCE_THRESHOLD = 640.0
+BLUR_TILE_GRID = 4
+BLUR_TILE_PERCENTILE = 90
 DARK_MEAN_THRESHOLD = 50.0
 BRIGHT_MEAN_THRESHOLD = 205.0
 LOW_CONTRAST_STDDEV_THRESHOLD = 20.0
@@ -56,8 +74,40 @@ def _center_crop(img: Image.Image, size: int) -> Image.Image:
 
 
 def _edge_variance(gray: Image.Image) -> float:
+    """프레임 전체의 edge variance(하나의 스칼라). core/deblur.py의 사후
+    안정성 검사(출력이 입력 대비 얼마나 폭증했는지 비율)는 그 임계값이 이
+    전역 지표로 실측 보정돼 있어 그대로 이 함수를 쓴다 — 블러 "있다/없다"
+    판정에는 아래 _tile_percentile_edge_variance를 대신 쓴다."""
     edges = gray.filter(ImageFilter.FIND_EDGES)
     return ImageStat.Stat(edges).var[0]
+
+
+def _tile_percentile_edge_variance(
+    gray: Image.Image, grid: int = BLUR_TILE_GRID, percentile: float = BLUR_TILE_PERCENTILE
+) -> float:
+    """블러 "있다/없다" 판정용 지표. gray를 grid x grid 타일로 나눠 타일별
+    edge variance를 구하고 상위 percentile 값을 대표 선명도로 쓴다 — 전역
+    평균(_edge_variance) 하나만 쓰면 하늘/바다처럼 프레임 대부분이 매끈한
+    사진에서 일부 영역의 진짜 디테일이 평균에 묻혀 "블러 추정"으로 오판하는
+    문제가 있었다(experiments/blur_heuristic_prototype 실측). 타일이 너무
+    작아지면(한 변 20px 미만) 격자를 성기게 줄인다."""
+    edges = gray.filter(ImageFilter.FIND_EDGES)
+    arr = np.asarray(edges, dtype=np.float64)
+    h, w = arr.shape
+
+    g = grid
+    while g > 1 and (h // g < 20 or w // g < 20):
+        g -= 1
+
+    row_edges = np.linspace(0, h, g + 1, dtype=int)
+    col_edges = np.linspace(0, w, g + 1, dtype=int)
+
+    tile_vars = [
+        arr[row_edges[i]:row_edges[i + 1], col_edges[j]:col_edges[j + 1]].var()
+        for i in range(g)
+        for j in range(g)
+    ]
+    return float(np.percentile(tile_vars, percentile)) if tile_vars else 0.0
 
 
 def assess_quality_issues(path: str | Path) -> list[str]:
@@ -80,7 +130,7 @@ def assess_quality_issues(path: str | Path) -> list[str]:
             mean = brightness.mean[0]
             stddev = brightness.stddev[0]
 
-            edge_variance = _edge_variance(gray)
+            edge_variance = _tile_percentile_edge_variance(gray)
 
             if edge_variance < BLUR_EDGE_VARIANCE_THRESHOLD:
                 issues.append("블러 추정")
