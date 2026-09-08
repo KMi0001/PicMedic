@@ -1,0 +1,838 @@
+<title>아이콘 후보 3종</title>
+<style>
+  :root {
+    --bg: #F7F1E4;
+    --surface: #FFFDF8;
+    --surface-sunken: #F1E9D6;
+    --border: #E6DCC5;
+    --text: #2A2420;
+    --text-secondary: #7A7060;
+    --accent: #D9B54A;
+    --accent-hover: #C6A23A;
+    --ink: #2A2420;
+    --ivory: #FFFDF8;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #1E1A16;
+      --surface: #2A241D;
+      --surface-sunken: #241F19;
+      --border: #3A3226;
+      --text: #F3EEE3;
+      --text-secondary: #B8AC97;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #1E1A16;
+    --surface: #2A241D;
+    --surface-sunken: #241F19;
+    --border: #3A3226;
+    --text: #F3EEE3;
+    --text-secondary: #B8AC97;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'IBM Plex Sans KR', 'Malgun Gothic', 'Apple SD Gothic Neo', sans-serif;
+  }
+  .page {
+    max-width: 980px;
+    margin: 0 auto;
+    padding: 56px 32px 72px;
+  }
+  .eyebrow {
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    color: var(--accent-hover);
+    margin: 0 0 10px;
+  }
+  h1 {
+    font-size: 26px;
+    font-weight: 600;
+    margin: 0 0 10px;
+    text-wrap: balance;
+  }
+  .lede {
+    font-size: 15px;
+    line-height: 1.7;
+    color: var(--text-secondary);
+    max-width: 62ch;
+    margin: 0 0 44px;
+  }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 20px;
+  }
+  @media (max-width: 760px) {
+    .grid { grid-template-columns: 1fr; }
+  }
+  .grid-4col { grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); }
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 24px 20px 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  .stage {
+    background: var(--surface-sunken);
+    border-radius: 12px;
+    padding: 28px 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .stage svg { display: block; }
+  .icon-tile {
+    filter: drop-shadow(0 1px 2px rgba(42, 36, 32, 0.14));
+  }
+  .card-name {
+    font-size: 15px;
+    font-weight: 600;
+    margin: 0;
+  }
+  .card-desc {
+    font-size: 13px;
+    line-height: 1.6;
+    color: var(--text-secondary);
+    margin: 0;
+  }
+  .sizecheck {
+    display: flex;
+    align-items: flex-end;
+    gap: 18px;
+    padding-top: 12px;
+    border-top: 1px solid var(--border);
+  }
+  .size-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+  }
+  .size-item svg { display: block; }
+  .size-label {
+    font-family: 'IBM Plex Mono', ui-monospace, monospace;
+    font-size: 10px;
+    color: var(--text-secondary);
+  }
+  .footnote {
+    margin-top: 40px;
+    font-size: 13px;
+    line-height: 1.7;
+    color: var(--text-secondary);
+    max-width: 62ch;
+  }
+  .footnote b { color: var(--text); font-weight: 600; }
+</style>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@400;600&family=IBM+Plex+Mono:wght@400;500&family=Baloo+2:wght@700;800&family=Anton&display=swap">
+
+<div class="page">
+  <p class="eyebrow">PicMedic · 아이콘 리디자인</p>
+  <h1>다음 앱 아이콘, 세 가지 방향</h1>
+  <p class="lede">
+    지금 아이콘은 민트 그라디언트 배경에 사진 프레임 · 산 · 원 · 맥박선까지 다섯 개
+    요소가 겹쳐 있어 16px 작업표시줄 크기에서는 뭉개져 보입니다. 아래 세 안은 모두
+    현재 브랜드 톤(버터 · 아이보리 · 잉크)을 쓰고, 글리프를 한두 개로 줄여 작은
+    크기에서도 알아볼 수 있게 만든 시안입니다.
+  </p>
+
+  <div class="grid">
+
+    <!-- Concept A -->
+    <div class="card">
+      <div class="stage">
+        <svg class="icon-tile" width="152" height="152" viewBox="0 0 100 100">
+          <defs>
+            <linearGradient id="gradA" x1="0" y1="0" x2="100" y2="100">
+              <stop offset="0" stop-color="#E4C466"/>
+              <stop offset="1" stop-color="#C6A23A"/>
+            </linearGradient>
+          </defs>
+          <rect x="0" y="0" width="100" height="100" rx="22" fill="url(#gradA)"/>
+          <rect x="23" y="27" width="52" height="42" rx="8" fill="none" stroke="#2A2420" stroke-width="6.5"/>
+          <circle cx="35" cy="39" r="4.2" fill="#2A2420"/>
+          <path d="M 29,61 L 41,48 L 50,57 L 61,42 L 71,60" fill="none" stroke="#2A2420" stroke-width="6.5" stroke-linecap="round" stroke-linejoin="round"/>
+          <circle cx="72" cy="69" r="14.5" fill="#FFFDF8" stroke="#2A2420" stroke-width="3.5"/>
+          <path d="M 72,63.5 L 72,74.5 M 66.5,69 L 77.5,69" stroke="#2A2420" stroke-width="4" stroke-linecap="round"/>
+        </svg>
+      </div>
+      <p class="card-name">A · 프레임 + 회복 배지</p>
+      <p class="card-desc">
+        버터 그라디언트 배경에 사진 프레임 하나 + 모서리의 "+" 배지 하나.
+        지금 앱 안에서 쓰는 선(stroke) 글리프 스타일을 그대로 키운 안이라
+        가장 무난하게 브랜드와 이어집니다.
+      </p>
+      <div class="sizecheck">
+        <div class="size-item">
+          <svg width="32" height="32" viewBox="0 0 100 100">
+            <rect x="0" y="0" width="100" height="100" rx="22" fill="url(#gradA)"/>
+            <rect x="23" y="27" width="52" height="42" rx="8" fill="none" stroke="#2A2420" stroke-width="8"/>
+            <path d="M 29,61 L 41,48 L 50,57 L 61,42 L 71,60" fill="none" stroke="#2A2420" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+            <circle cx="72" cy="69" r="15" fill="#FFFDF8" stroke="#2A2420" stroke-width="4"/>
+          </svg>
+          <span class="size-label">32px</span>
+        </div>
+        <div class="size-item">
+          <svg width="16" height="16" viewBox="0 0 100 100">
+            <rect x="0" y="0" width="100" height="100" rx="22" fill="url(#gradA)"/>
+            <rect x="23" y="27" width="52" height="42" rx="8" fill="none" stroke="#2A2420" stroke-width="9"/>
+            <path d="M 29,61 L 41,48 L 50,57 L 61,42 L 71,60" fill="none" stroke="#2A2420" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/>
+            <circle cx="72" cy="69" r="15" fill="#FFFDF8" stroke="#2A2420" stroke-width="4.5"/>
+          </svg>
+          <span class="size-label">16px</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Concept B -->
+    <div class="card">
+      <div class="stage">
+        <svg class="icon-tile" width="152" height="152" viewBox="0 0 100 100">
+          <rect x="0" y="0" width="100" height="100" rx="22" fill="#FFFDF8"/>
+          <path d="M 27,26 h 32 a 9 9 0 0 1 9 9 v 32 a 9 9 0 0 1 -9 9 h -23 a 9 9 0 0 1 -9 -9 v -32 a 9 9 0 0 1 9 -9 z"
+                fill="none" stroke="#2A2420" stroke-width="6.5" stroke-linejoin="round"/>
+          <path d="M 59,49 L 59,58 A 9 9 0 0 1 68,67 L 77,67 Z" fill="#D9B54A" stroke="#2A2420" stroke-width="3.5" stroke-linejoin="round"/>
+          <path d="M 59,49 L 77,67" fill="none" stroke="#C6A23A" stroke-width="2"/>
+        </svg>
+      </div>
+      <p class="card-name">B · 접힌 모서리</p>
+      <p class="card-desc">
+        아이보리 배경 위에 사진 카드 한 장, 모서리 한쪽만 살짝 접혀 버터색이
+        비칩니다. 글리프가 딱 두 개뿐이라 세 안 중 가장 단순하고, 요즘 앱
+        아이콘 트렌드(단색 배경 + 심플한 단일 모티프)에 제일 가깝습니다.
+      </p>
+      <div class="sizecheck">
+        <div class="size-item">
+          <svg width="32" height="32" viewBox="0 0 100 100">
+            <rect x="0" y="0" width="100" height="100" rx="22" fill="#FFFDF8"/>
+            <path d="M 27,26 h 32 a 9 9 0 0 1 9 9 v 32 a 9 9 0 0 1 -9 9 h -23 a 9 9 0 0 1 -9 -9 v -32 a 9 9 0 0 1 9 -9 z"
+                  fill="none" stroke="#2A2420" stroke-width="8" stroke-linejoin="round"/>
+            <path d="M 59,49 L 59,58 A 9 9 0 0 1 68,67 L 77,67 Z" fill="#D9B54A" stroke="#2A2420" stroke-width="4" stroke-linejoin="round"/>
+          </svg>
+          <span class="size-label">32px</span>
+        </div>
+        <div class="size-item">
+          <svg width="16" height="16" viewBox="0 0 100 100">
+            <rect x="0" y="0" width="100" height="100" rx="22" fill="#FFFDF8"/>
+            <path d="M 27,26 h 32 a 9 9 0 0 1 9 9 v 32 a 9 9 0 0 1 -9 9 h -23 a 9 9 0 0 1 -9 -9 v -32 a 9 9 0 0 1 9 -9 z"
+                  fill="none" stroke="#2A2420" stroke-width="9" stroke-linejoin="round"/>
+            <path d="M 59,49 L 59,58 A 9 9 0 0 1 68,67 L 77,67 Z" fill="#D9B54A" stroke="#2A2420" stroke-width="4.5" stroke-linejoin="round"/>
+          </svg>
+          <span class="size-label">16px</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Concept C -->
+    <div class="card">
+      <div class="stage">
+        <svg class="icon-tile" width="152" height="152" viewBox="0 0 100 100">
+          <rect x="0" y="0" width="100" height="100" rx="22" fill="#2A2420"/>
+          <rect x="23" y="27" width="52" height="42" rx="8" fill="none" stroke="#D9B54A" stroke-width="6.5"/>
+          <path d="M 29,61 L 41,48 L 50,57 L 61,42 L 71,60" fill="none" stroke="#D9B54A" stroke-width="6.5" stroke-linecap="round" stroke-linejoin="round"/>
+          <path d="M 74,20 L 74,30 M 69,25 L 79,25 M 70.5,21.5 L 77.5,28.5 M 77.5,21.5 L 70.5,28.5"
+                stroke="#D9B54A" stroke-width="2.6" stroke-linecap="round"/>
+        </svg>
+      </div>
+      <p class="card-name">C · 다크 + 스파클</p>
+      <p class="card-desc">
+        배경을 잉크색으로 뒤집고 글리프만 버터색으로. 사진 프레임 + 모서리의
+        작은 반짝임(보정 완료 표시) 두 개뿐이라 단순하면서도, 데스크톱/독에서
+        파스텔 톤 앱들 사이에서 확실히 눈에 띕니다.
+      </p>
+      <div class="sizecheck">
+        <div class="size-item">
+          <svg width="32" height="32" viewBox="0 0 100 100">
+            <rect x="0" y="0" width="100" height="100" rx="22" fill="#2A2420"/>
+            <rect x="23" y="27" width="52" height="42" rx="8" fill="none" stroke="#D9B54A" stroke-width="8"/>
+            <path d="M 29,61 L 41,48 L 50,57 L 61,42 L 71,60" fill="none" stroke="#D9B54A" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          <span class="size-label">32px</span>
+        </div>
+        <div class="size-item">
+          <svg width="16" height="16" viewBox="0 0 100 100">
+            <rect x="0" y="0" width="100" height="100" rx="22" fill="#2A2420"/>
+            <rect x="23" y="27" width="52" height="42" rx="8" fill="none" stroke="#D9B54A" stroke-width="9"/>
+            <path d="M 29,61 L 41,48 L 50,57 L 61,42 L 71,60" fill="none" stroke="#D9B54A" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          <span class="size-label">16px</span>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <p class="eyebrow" style="margin-top:44px;">추가 후보</p>
+  <h1 style="font-size:20px; margin-bottom:24px;">조금 더 뽑아본 세 가지</h1>
+
+  <div class="grid">
+
+    <!-- Concept D -->
+    <div class="card">
+      <div class="stage">
+        <svg class="icon-tile" width="152" height="152" viewBox="0 0 100 100">
+          <rect x="0" y="0" width="100" height="100" rx="22" fill="#D9B54A"/>
+          <circle cx="42" cy="42" r="18" fill="none" stroke="#2A2420" stroke-width="7"/>
+          <line x1="55" y1="55" x2="74" y2="74" stroke="#2A2420" stroke-width="8" stroke-linecap="round"/>
+          <path d="M 33,43 L 40,50 L 52,34" fill="none" stroke="#2A2420" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </div>
+      <p class="card-name">D · 돋보기 진단</p>
+      <p class="card-desc">
+        돋보기 렌즈 안에 체크 표시 하나. "사진을 들여다보고 이상 없음을
+        확인한다"는 진단 앱의 본질을 가장 직접적으로 보여주는 안입니다.
+        다만 돋보기 아이콘 자체는 흔한 모티프라 차별성은 셋 중 가장 약합니다.
+      </p>
+      <div class="sizecheck">
+        <div class="size-item">
+          <svg width="32" height="32" viewBox="0 0 100 100">
+            <rect x="0" y="0" width="100" height="100" rx="22" fill="#D9B54A"/>
+            <circle cx="42" cy="42" r="18" fill="none" stroke="#2A2420" stroke-width="8.5"/>
+            <line x1="55" y1="55" x2="76" y2="76" stroke="#2A2420" stroke-width="9.5" stroke-linecap="round"/>
+            <path d="M 33,43 L 40,50 L 52,34" fill="none" stroke="#2A2420" stroke-width="7.5" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          <span class="size-label">32px</span>
+        </div>
+        <div class="size-item">
+          <svg width="16" height="16" viewBox="0 0 100 100">
+            <rect x="0" y="0" width="100" height="100" rx="22" fill="#D9B54A"/>
+            <circle cx="42" cy="42" r="18" fill="none" stroke="#2A2420" stroke-width="10"/>
+            <line x1="55" y1="55" x2="76" y2="76" stroke="#2A2420" stroke-width="11" stroke-linecap="round"/>
+            <path d="M 33,43 L 40,50 L 52,34" fill="none" stroke="#2A2420" stroke-width="8.5" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          <span class="size-label">16px</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Concept E -->
+    <div class="card">
+      <div class="stage">
+        <svg class="icon-tile" width="152" height="152" viewBox="0 0 100 100">
+          <rect x="0" y="0" width="100" height="100" rx="22" fill="#FFFDF8"/>
+          <rect x="23" y="25" width="54" height="50" rx="10" fill="none" stroke="#2A2420" stroke-width="6.5"/>
+          <path d="M 30,50 L 40,50 L 45,36 L 52,63 L 57,50 L 70,50"
+                fill="none" stroke="#D9B54A" stroke-width="6.5" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </div>
+      <p class="card-name">E · Pic + Medic</p>
+      <p class="card-desc">
+        사진 프레임 안에 산·해 대신 심전도(맥박) 선 하나. "Pic"과 "Medic"을
+        그대로 한 화면에 겹친 안이라 이름과의 연결이 가장 분명하고, 요소는
+        프레임 + 선 두 개뿐이라 작은 크기에서도 잘 읽힙니다.
+      </p>
+      <div class="sizecheck">
+        <div class="size-item">
+          <svg width="32" height="32" viewBox="0 0 100 100">
+            <rect x="0" y="0" width="100" height="100" rx="22" fill="#FFFDF8"/>
+            <rect x="23" y="25" width="54" height="50" rx="10" fill="none" stroke="#2A2420" stroke-width="8"/>
+            <path d="M 30,50 L 40,50 L 45,36 L 52,63 L 57,50 L 70,50"
+                  fill="none" stroke="#D9B54A" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          <span class="size-label">32px</span>
+        </div>
+        <div class="size-item">
+          <svg width="16" height="16" viewBox="0 0 100 100">
+            <rect x="0" y="0" width="100" height="100" rx="22" fill="#FFFDF8"/>
+            <rect x="23" y="25" width="54" height="50" rx="10" fill="none" stroke="#2A2420" stroke-width="9.5"/>
+            <path d="M 30,50 L 40,50 L 45,36 L 52,63 L 57,50 L 70,50"
+                  fill="none" stroke="#D9B54A" stroke-width="9.5" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          <span class="size-label">16px</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Concept F -->
+    <div class="card">
+      <div class="stage">
+        <svg class="icon-tile" width="152" height="152" viewBox="0 0 100 100">
+          <rect x="0" y="0" width="100" height="100" rx="22" fill="#2A2420"/>
+          <path d="M 32,26 h 20 a 15 15 0 0 1 0 30 h -10 v 18 h -10 z"
+                fill="#D9B54A"/>
+        </svg>
+      </div>
+      <p class="card-name">F · 모노그램 P</p>
+      <p class="card-desc">
+        "PicMedic"의 P 하나로 된 굵은 심볼. 글리프가 하나뿐이라 셋 중 가장
+        대담하고 로고에 가깝습니다 — 다만 사진/복구라는 앱의 기능을 직접
+        설명하지 않고 브랜드 이름에만 기대는 안이라 호불호가 갈릴 수 있습니다.
+      </p>
+      <div class="sizecheck">
+        <div class="size-item">
+          <svg width="32" height="32" viewBox="0 0 100 100">
+            <rect x="0" y="0" width="100" height="100" rx="22" fill="#2A2420"/>
+            <path d="M 32,26 h 20 a 15 15 0 0 1 0 30 h -10 v 18 h -10 z" fill="#D9B54A"/>
+          </svg>
+          <span class="size-label">32px</span>
+        </div>
+        <div class="size-item">
+          <svg width="16" height="16" viewBox="0 0 100 100">
+            <rect x="0" y="0" width="100" height="100" rx="22" fill="#2A2420"/>
+            <path d="M 32,26 h 20 a 15 15 0 0 1 0 30 h -10 v 18 h -10 z" fill="#D9B54A"/>
+          </svg>
+          <span class="size-label">16px</span>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <p class="eyebrow" style="margin-top:44px;">F 변형</p>
+  <h1 style="font-size:20px; margin-bottom:8px;">"Medic!" 문구를 넣으면?</h1>
+  <p class="lede" style="margin-bottom:24px;">
+    직접 넣어서 크기별로 세워봤습니다 — 512px에서는 잘 읽히지만, 작업표시줄/독
+    아이콘이 실제로 쓰이는 32px·16px에서는 글자가 뭉개져서 브랜드 구별에
+    도움이 안 됩니다. 십자 노치(F3)도 다시 찾아봤는데, 한국 <b>대한적십자사
+    조직법 제25조</b>가 막는 건 "흰 바탕에 붉은 그리스식 십자"(또는 혼동될
+    만큼 비슷한 색·형태)라 잉크색(#2A2420) 노치는 해당하지 않습니다 — 다만
+    유료 스토어 출시작에 굳이 애매함을 남길 이유가 없어서, 십자 대신 심전도
+    선(E와 같은 모티프)으로 바꾼 F4를 추가했습니다.
+  </p>
+
+  <div class="grid grid-4col">
+
+    <!-- Concept F2 -->
+    <div class="card">
+      <div class="stage">
+        <svg class="icon-tile" width="152" height="152" viewBox="0 0 100 100">
+          <rect x="0" y="0" width="100" height="100" rx="22" fill="#2A2420"/>
+          <path d="M 32,18 h 20 a 15 15 0 0 1 0 30 h -10 v 18 h -10 z" fill="#D9B54A"/>
+          <text x="50" y="88" text-anchor="middle" font-family="'IBM Plex Sans KR', sans-serif"
+                font-size="14" font-weight="600" letter-spacing="0.5" fill="#FFFDF8">MEDIC!</text>
+        </svg>
+      </div>
+      <p class="card-name">F2 · P + "Medic!" 문구</p>
+      <p class="card-desc">
+        512px에서는 의도가 분명하지만, 앱 아이콘은 글자를 담는 자리가 아닙니다.
+        아래 32px·16px 미리보기를 보면 문구가 얼룩처럼 뭉개지는 게 바로 보입니다.
+      </p>
+      <div class="sizecheck">
+        <div class="size-item">
+          <svg width="32" height="32" viewBox="0 0 100 100">
+            <rect x="0" y="0" width="100" height="100" rx="22" fill="#2A2420"/>
+            <path d="M 32,18 h 20 a 15 15 0 0 1 0 30 h -10 v 18 h -10 z" fill="#D9B54A"/>
+            <text x="50" y="88" text-anchor="middle" font-family="'IBM Plex Sans KR', sans-serif"
+                  font-size="14" font-weight="600" fill="#FFFDF8">MEDIC!</text>
+          </svg>
+          <span class="size-label">32px</span>
+        </div>
+        <div class="size-item">
+          <svg width="16" height="16" viewBox="0 0 100 100">
+            <rect x="0" y="0" width="100" height="100" rx="22" fill="#2A2420"/>
+            <path d="M 32,18 h 20 a 15 15 0 0 1 0 30 h -10 v 18 h -10 z" fill="#D9B54A"/>
+            <text x="50" y="88" text-anchor="middle" font-family="'IBM Plex Sans KR', sans-serif"
+                  font-size="14" font-weight="600" fill="#FFFDF8">MEDIC!</text>
+          </svg>
+          <span class="size-label">16px</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Concept F3 -->
+    <div class="card">
+      <div class="stage">
+        <svg class="icon-tile" width="152" height="152" viewBox="0 0 100 100">
+          <rect x="0" y="0" width="100" height="100" rx="22" fill="#2A2420"/>
+          <path d="M 32,26 h 20 a 15 15 0 0 1 0 30 h -10 v 18 h -10 z" fill="#D9B54A"/>
+          <rect x="40" y="32" width="4" height="16" fill="#2A2420"/>
+          <rect x="34" y="38" width="16" height="4" fill="#2A2420"/>
+        </svg>
+      </div>
+      <p class="card-name">F3 · P + 십자 노치</p>
+      <p class="card-desc">
+        법적으로는 문제없는 색(잉크색, 적십자와 무관)이지만 "십자"라는 모양
+        자체가 굳이 필요한지는 의문 — 오른쪽 F4가 같은 아이디어를 십자 없이
+        풀어낸 안입니다.
+      </p>
+      <div class="sizecheck">
+        <div class="size-item">
+          <svg width="32" height="32" viewBox="0 0 100 100">
+            <rect x="0" y="0" width="100" height="100" rx="22" fill="#2A2420"/>
+            <path d="M 32,26 h 20 a 15 15 0 0 1 0 30 h -10 v 18 h -10 z" fill="#D9B54A"/>
+            <rect x="40" y="32" width="4" height="16" fill="#2A2420"/>
+            <rect x="34" y="38" width="16" height="4" fill="#2A2420"/>
+          </svg>
+          <span class="size-label">32px</span>
+        </div>
+        <div class="size-item">
+          <svg width="16" height="16" viewBox="0 0 100 100">
+            <rect x="0" y="0" width="100" height="100" rx="22" fill="#2A2420"/>
+            <path d="M 32,26 h 20 a 15 15 0 0 1 0 30 h -10 v 18 h -10 z" fill="#D9B54A"/>
+            <rect x="40" y="32" width="4" height="16" fill="#2A2420"/>
+            <rect x="34" y="38" width="16" height="4" fill="#2A2420"/>
+          </svg>
+          <span class="size-label">16px</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Concept F4 -->
+    <div class="card">
+      <div class="stage">
+        <svg class="icon-tile" width="152" height="152" viewBox="0 0 100 100">
+          <rect x="0" y="0" width="100" height="100" rx="22" fill="#2A2420"/>
+          <path d="M 32,26 h 20 a 15 15 0 0 1 0 30 h -10 v 18 h -10 z" fill="#D9B54A"/>
+          <path d="M 35,41 L 39,41 L 41,35 L 44,47 L 46,41 L 49,41"
+                fill="none" stroke="#2A2420" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </div>
+      <p class="card-name">F4 · P + 심전도 노치</p>
+      <p class="card-desc">
+        십자 대신 작은 맥박선을 새겼습니다 — E와 같은 모티프라 두 안을 같이 써도
+        브랜드가 이어지고, 십자 관련 규정을 아예 신경 쓸 필요가 없습니다.
+        지금은 이 안을 추천합니다.
+      </p>
+      <div class="sizecheck">
+        <div class="size-item">
+          <svg width="32" height="32" viewBox="0 0 100 100">
+            <rect x="0" y="0" width="100" height="100" rx="22" fill="#2A2420"/>
+            <path d="M 32,26 h 20 a 15 15 0 0 1 0 30 h -10 v 18 h -10 z" fill="#D9B54A"/>
+            <path d="M 35,41 L 39,41 L 41,35 L 44,47 L 46,41 L 49,41"
+                  fill="none" stroke="#2A2420" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          <span class="size-label">32px</span>
+        </div>
+        <div class="size-item">
+          <svg width="16" height="16" viewBox="0 0 100 100">
+            <rect x="0" y="0" width="100" height="100" rx="22" fill="#2A2420"/>
+            <path d="M 32,26 h 20 a 15 15 0 0 1 0 30 h -10 v 18 h -10 z" fill="#D9B54A"/>
+            <path d="M 35,41 L 39,41 L 41,35 L 44,47 L 46,41 L 49,41"
+                  fill="none" stroke="#2A2420" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          <span class="size-label">16px</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Concept F5 -->
+    <div class="card">
+      <div class="stage">
+        <svg class="icon-tile" width="152" height="152" viewBox="0 0 100 100">
+          <rect x="0" y="0" width="100" height="100" rx="22" fill="#2A2420"/>
+          <path d="M 32,26 h 20 a 15 15 0 0 1 0 30 h -10 v 18 h -10 z" fill="#D9B54A"/>
+          <path d="M 35,41 L 39,41 L 41,35 L 44,47 L 46,41 L 49,41"
+                fill="none" stroke="#2A2420" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+          <text x="50" y="88" text-anchor="middle" font-family="'IBM Plex Sans KR', sans-serif"
+                font-size="20" font-weight="700" fill="#FFFDF8"
+                stroke="#2A2420" stroke-width="2.5" paint-order="stroke fill" stroke-linejoin="round">메딕</text>
+        </svg>
+      </div>
+      <p class="card-name">F5 · P + 노치 + "메딕" 겹침</p>
+      <p class="card-desc">
+        요청하신 대로 P 하단(스템)에 "메딕" 두 글자를 겹쳐봤습니다. 512px에서는
+        읽히고 나쁘지 않은데, 32px 이하로 내려가면 F2와 똑같이 글자가 뭉개지는
+        문제가 재발합니다 — 텍스트가 있는 한 작은 크기 문제는 피하기 어려워
+        보입니다.
+      </p>
+      <div class="sizecheck">
+        <div class="size-item">
+          <svg width="32" height="32" viewBox="0 0 100 100">
+            <rect x="0" y="0" width="100" height="100" rx="22" fill="#2A2420"/>
+            <path d="M 32,26 h 20 a 15 15 0 0 1 0 30 h -10 v 18 h -10 z" fill="#D9B54A"/>
+            <path d="M 35,41 L 39,41 L 41,35 L 44,47 L 46,41 L 49,41"
+                  fill="none" stroke="#2A2420" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+            <text x="50" y="88" text-anchor="middle" font-family="'IBM Plex Sans KR', sans-serif"
+                  font-size="20" font-weight="700" fill="#FFFDF8"
+                  stroke="#2A2420" stroke-width="2.5" paint-order="stroke fill" stroke-linejoin="round">메딕</text>
+          </svg>
+          <span class="size-label">32px</span>
+        </div>
+        <div class="size-item">
+          <svg width="16" height="16" viewBox="0 0 100 100">
+            <rect x="0" y="0" width="100" height="100" rx="22" fill="#2A2420"/>
+            <path d="M 32,26 h 20 a 15 15 0 0 1 0 30 h -10 v 18 h -10 z" fill="#D9B54A"/>
+            <path d="M 35,41 L 39,41 L 41,35 L 44,47 L 46,41 L 49,41"
+                  fill="none" stroke="#2A2420" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"/>
+            <text x="50" y="88" text-anchor="middle" font-family="'IBM Plex Sans KR', sans-serif"
+                  font-size="20" font-weight="700" fill="#FFFDF8"
+                  stroke="#2A2420" stroke-width="2.5" paint-order="stroke fill" stroke-linejoin="round">메딕</text>
+          </svg>
+          <span class="size-label">16px</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Concept F6 -->
+    <div class="card">
+      <div class="stage">
+        <svg class="icon-tile" width="152" height="152" viewBox="0 0 100 100">
+          <rect x="0" y="0" width="100" height="100" rx="22" fill="#2A2420"/>
+          <path d="M 35,26 H 52 A 15 15 0 0 1 52,56 L 45,56 A 3 3 0 0 0 42,59 V 71 A 3 3 0 0 1 39,74 L 35,74 A 3 3 0 0 1 32,71 V 29 A 3 3 0 0 1 35,26 Z" fill="#D9B54A"/>
+          <text x="32" y="49" font-family="'Baloo 2', sans-serif"
+                font-size="18" font-weight="800" fill="#2A2420">M</text>
+          <rect x="48.5" y="38" width="2.8" height="7" rx="1.4" fill="#2A2420"/>
+          <rect x="49" y="45.6" width="1.8" height="4.8" rx="0.9" fill="#2A2420"/>
+          <rect x="47.5" y="47.1" width="4.8" height="1.8" rx="0.9" fill="#2A2420"/>
+        </svg>
+      </div>
+      <p class="card-name">F6 · P (모서리만 살짝) + "M!" 노치</p>
+      <p class="card-desc">
+        "M!" 전체가 정사각형 하나에 들어간다고 보고 다시 배치 — M을 더 키우고
+        왼쪽에 크게, "!"는 기둥을 짧고 두껍게(통통하게) 줄여 M과 높이가 맞도록
+        내렸습니다. 점은 여전히 아주 작은 십자라 "+" 힌트는 그대로 남아있습니다.
+      </p>
+      <div class="sizecheck">
+        <div class="size-item">
+          <svg width="32" height="32" viewBox="0 0 100 100">
+            <rect x="0" y="0" width="100" height="100" rx="22" fill="#2A2420"/>
+            <path d="M 35,26 H 52 A 15 15 0 0 1 52,56 L 45,56 A 3 3 0 0 0 42,59 V 71 A 3 3 0 0 1 39,74 L 35,74 A 3 3 0 0 1 32,71 V 29 A 3 3 0 0 1 35,26 Z" fill="#D9B54A"/>
+            <text x="32" y="49" font-family="'Baloo 2', sans-serif"
+                  font-size="18" font-weight="800" fill="#2A2420">M</text>
+            <rect x="48.5" y="38" width="2.8" height="7" rx="1.4" fill="#2A2420"/>
+            <rect x="49" y="45.6" width="1.8" height="4.8" rx="0.9" fill="#2A2420"/>
+            <rect x="47.5" y="47.1" width="4.8" height="1.8" rx="0.9" fill="#2A2420"/>
+          </svg>
+          <span class="size-label">32px</span>
+        </div>
+        <div class="size-item">
+          <svg width="16" height="16" viewBox="0 0 100 100">
+            <rect x="0" y="0" width="100" height="100" rx="22" fill="#2A2420"/>
+            <path d="M 35,26 H 52 A 15 15 0 0 1 52,56 L 45,56 A 3 3 0 0 0 42,59 V 71 A 3 3 0 0 1 39,74 L 35,74 A 3 3 0 0 1 32,71 V 29 A 3 3 0 0 1 35,26 Z" fill="#D9B54A"/>
+            <text x="32" y="49" font-family="'Baloo 2', sans-serif"
+                  font-size="18" font-weight="800" fill="#2A2420">M</text>
+            <rect x="48.5" y="38" width="2.8" height="7" rx="1.4" fill="#2A2420"/>
+            <rect x="49" y="45.6" width="1.8" height="4.8" rx="0.9" fill="#2A2420"/>
+            <rect x="47.5" y="47.1" width="4.8" height="1.8" rx="0.9" fill="#2A2420"/>
+          </svg>
+          <span class="size-label">16px</span>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <p class="eyebrow" style="margin-top:44px;">사용자 시안</p>
+  <h1 style="font-size:20px; margin-bottom:8px;">직접 그려주신 방향으로</h1>
+  <p class="lede" style="margin-bottom:24px;">
+    보내주신 시안(둥글린 P + 볼 안의 이중 배지 + 아래 워드마크) 그대로 벡터로
+    다시 그렸습니다. PicGrow까지 같은 P에 배지만 바꿔서 세트로 맞췄어요. 다만
+    워드마크가 들어간 버전은 512px 매장용 그래픽/스플래시 화면용이고, 실제
+    <b>icon.ico·icon.icns</b>로 쓸 건 아래 "아이콘 전용"(글자 없는) 버전을
+    권합니다 — 이유는 계속 봐온 대로, 16px 작업표시줄에서는 워드마크가 뭉개져요.
+  </p>
+
+  <div class="grid grid-4col">
+
+    <!-- G1: PMEDIC lockup -->
+    <div class="card">
+      <div class="stage">
+        <svg class="icon-tile" width="152" height="152" viewBox="0 0 100 100">
+          <rect x="0" y="0" width="100" height="100" rx="20" fill="#2A2420"/>
+          <path d="M 31,18 H 57 A 18 18 0 0 1 57,54 L 45,54 A 6 6 0 0 0 39,60 V 66 A 6 6 0 0 1 33,72 L 31,72 A 6 6 0 0 1 25,66 V 24 A 6 6 0 0 1 31,18 Z" fill="#D9B54A"/>
+          <rect x="50" y="24" width="6" height="16" rx="3" fill="#2A2420"/>
+          <rect x="45" y="29" width="16" height="6" rx="3" fill="#2A2420"/>
+          <rect x="64" y="34.5" width="4" height="11" rx="2" fill="#FFFDF8"/>
+          <rect x="60.5" y="38" width="11" height="4" rx="2" fill="#FFFDF8"/>
+          <text x="50" y="88" text-anchor="middle" font-family="'Anton', sans-serif"
+                font-size="20" letter-spacing="1" fill="#FFFDF8">MEDIC</text>
+        </svg>
+      </div>
+      <p class="card-name">G1 · P MEDIC (매장용 로고)</p>
+      <p class="card-desc">
+        512px 매장 그래픽/웹사이트 헤더용 풀 로고. P는 모서리를 크게 둥글렸고,
+        볼 안에는 잉크색 큰 십자 + 크림색 작은 십자를 겹쳐 배지처럼 만들었습니다.
+      </p>
+    </div>
+
+    <!-- G2: PGROW lockup -->
+    <div class="card">
+      <div class="stage">
+        <svg class="icon-tile" width="152" height="152" viewBox="0 0 100 100">
+          <rect x="0" y="0" width="100" height="100" rx="20" fill="#2A2420"/>
+          <path d="M 31,18 H 57 A 18 18 0 0 1 57,54 L 45,54 A 6 6 0 0 0 39,60 V 66 A 6 6 0 0 1 33,72 L 31,72 A 6 6 0 0 1 25,66 V 24 A 6 6 0 0 1 31,18 Z" fill="#D9B54A"/>
+          <circle cx="53" cy="32" r="10" fill="#2A2420"/>
+          <circle cx="60" cy="27" r="6" fill="#FFFDF8"/>
+          <text x="50" y="88" text-anchor="middle" font-family="'Anton', sans-serif"
+                font-size="20" letter-spacing="1" fill="#FFFDF8">GROW</text>
+        </svg>
+      </div>
+      <p class="card-name">G2 · P GROW (매장용 로고, 구상 중)</p>
+      <p class="card-desc">
+        같은 P + 같은 배지 구조를 유지하면서 배지만 십자 대신 겹친 원(달/방울
+        느낌)으로 바꿔서, 나중에 PicGrow를 내도 한 가족처럼 보이게 했습니다.
+      </p>
+    </div>
+
+    <!-- G3: MEDIC icon-only -->
+    <div class="card">
+      <div class="stage">
+        <svg class="icon-tile" width="152" height="152" viewBox="0 0 100 100">
+          <rect x="0" y="0" width="100" height="100" rx="22" fill="#2A2420"/>
+          <path d="M 35,26 H 52 A 15 15 0 0 1 52,56 L 45,56 A 3 3 0 0 0 42,59 V 71 A 3 3 0 0 1 39,74 L 35,74 A 3 3 0 0 1 32,71 V 29 A 3 3 0 0 1 35,26 Z" fill="#D9B54A"/>
+          <rect x="37.5" y="36" width="11" height="4" rx="2" fill="#2A2420"/>
+          <rect x="41" y="32.5" width="4" height="11" rx="2" fill="#2A2420"/>
+          <rect x="44.5" y="42.7" width="7" height="2.6" rx="1.3" fill="#FFFDF8"/>
+          <rect x="46.7" y="40.5" width="2.6" height="7" rx="1.3" fill="#FFFDF8"/>
+        </svg>
+      </div>
+      <p class="card-name">G3 · 아이콘 전용 (P + Medic 배지)</p>
+      <p class="card-desc">
+        <b>icon.ico / icon.icns에 쓸 실제 후보.</b> 워드마크 없이 배지만
+        남겨서, 배지가 조금 작아진 대신 16px에서도 P 실루엣과 배지 둘 다
+        살아남습니다.
+      </p>
+      <div class="sizecheck">
+        <div class="size-item">
+          <svg width="32" height="32" viewBox="0 0 100 100">
+            <rect x="0" y="0" width="100" height="100" rx="22" fill="#2A2420"/>
+            <path d="M 35,26 H 52 A 15 15 0 0 1 52,56 L 45,56 A 3 3 0 0 0 42,59 V 71 A 3 3 0 0 1 39,74 L 35,74 A 3 3 0 0 1 32,71 V 29 A 3 3 0 0 1 35,26 Z" fill="#D9B54A"/>
+            <rect x="37.5" y="36" width="11" height="4" rx="2" fill="#2A2420"/>
+            <rect x="41" y="32.5" width="4" height="11" rx="2" fill="#2A2420"/>
+            <rect x="44.5" y="42.7" width="7" height="2.6" rx="1.3" fill="#FFFDF8"/>
+            <rect x="46.7" y="40.5" width="2.6" height="7" rx="1.3" fill="#FFFDF8"/>
+          </svg>
+          <span class="size-label">32px</span>
+        </div>
+        <div class="size-item">
+          <svg width="16" height="16" viewBox="0 0 100 100">
+            <rect x="0" y="0" width="100" height="100" rx="22" fill="#2A2420"/>
+            <path d="M 35,26 H 52 A 15 15 0 0 1 52,56 L 45,56 A 3 3 0 0 0 42,59 V 71 A 3 3 0 0 1 39,74 L 35,74 A 3 3 0 0 1 32,71 V 29 A 3 3 0 0 1 35,26 Z" fill="#D9B54A"/>
+            <rect x="37.5" y="36" width="11" height="4" rx="2" fill="#2A2420"/>
+            <rect x="41" y="32.5" width="4" height="11" rx="2" fill="#2A2420"/>
+            <rect x="44.5" y="42.7" width="7" height="2.6" rx="1.3" fill="#FFFDF8"/>
+            <rect x="46.7" y="40.5" width="2.6" height="7" rx="1.3" fill="#FFFDF8"/>
+          </svg>
+          <span class="size-label">16px</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- G4: GROW icon-only -->
+    <div class="card">
+      <div class="stage">
+        <svg class="icon-tile" width="152" height="152" viewBox="0 0 100 100">
+          <rect x="0" y="0" width="100" height="100" rx="22" fill="#2A2420"/>
+          <path d="M 35,26 H 52 A 15 15 0 0 1 52,56 L 45,56 A 3 3 0 0 0 42,59 V 71 A 3 3 0 0 1 39,74 L 35,74 A 3 3 0 0 1 32,71 V 29 A 3 3 0 0 1 35,26 Z" fill="#D9B54A"/>
+          <circle cx="43" cy="38" r="8" fill="#2A2420"/>
+          <circle cx="48" cy="44" r="5" fill="#FFFDF8"/>
+        </svg>
+      </div>
+      <p class="card-name">G4 · 아이콘 전용 (P + Grow 배지)</p>
+      <p class="card-desc">
+        PicGrow용 아이콘 전용 버전. 나중에 실제로 만들게 되면 이 파일이
+        <b>PicGrow/assets/icon.ico</b> 후보가 됩니다 (지금 저장소엔 해당
+        프로젝트가 없어서 코드에는 반영하지 않았어요).
+      </p>
+      <div class="sizecheck">
+        <div class="size-item">
+          <svg width="32" height="32" viewBox="0 0 100 100">
+            <rect x="0" y="0" width="100" height="100" rx="22" fill="#2A2420"/>
+            <path d="M 35,26 H 52 A 15 15 0 0 1 52,56 L 45,56 A 3 3 0 0 0 42,59 V 71 A 3 3 0 0 1 39,74 L 35,74 A 3 3 0 0 1 32,71 V 29 A 3 3 0 0 1 35,26 Z" fill="#D9B54A"/>
+            <circle cx="43" cy="38" r="8" fill="#2A2420"/>
+            <circle cx="48" cy="44" r="5" fill="#FFFDF8"/>
+          </svg>
+          <span class="size-label">32px</span>
+        </div>
+        <div class="size-item">
+          <svg width="16" height="16" viewBox="0 0 100 100">
+            <rect x="0" y="0" width="100" height="100" rx="22" fill="#2A2420"/>
+            <path d="M 35,26 H 52 A 15 15 0 0 1 52,56 L 45,56 A 3 3 0 0 0 42,59 V 71 A 3 3 0 0 1 39,74 L 35,74 A 3 3 0 0 1 32,71 V 29 A 3 3 0 0 1 35,26 Z" fill="#D9B54A"/>
+            <circle cx="43" cy="38" r="8" fill="#2A2420"/>
+            <circle cx="48" cy="44" r="5" fill="#FFFDF8"/>
+          </svg>
+          <span class="size-label">16px</span>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <p class="eyebrow" style="margin-top:44px;">사용자 시안 2</p>
+  <h1 style="font-size:20px; margin-bottom:8px;">"Pic" — 전부 손으로 그린 벡터</h1>
+  <p class="lede" style="margin-bottom:24px;">
+    보내주신 "P + ic + 클로버 배지 두 개" 그대로, 글자 하나 없이 전부
+    &lt;path&gt;/&lt;circle&gt;/&lt;rect&gt;만으로 다시 그렸습니다 — 폰트가
+    없는 환경에서 열어도 모양이 그대로 유지됩니다.
+  </p>
+
+  <div class="grid" style="grid-template-columns: repeat(2, 1fr);">
+
+    <div class="card">
+      <div class="stage">
+        <svg class="icon-tile" width="152" height="152" viewBox="0 0 100 100">
+          <rect x="0" y="0" width="100" height="100" rx="20" fill="#2A2420"/>
+          <path d="M 31,18 H 57 A 18 18 0 0 1 57,54 L 45,54 A 6 6 0 0 0 39,60 V 66 A 6 6 0 0 1 33,72 L 31,72 A 6 6 0 0 1 25,66 V 24 A 6 6 0 0 1 31,18 Z" fill="#FFFDF8"/>
+          <circle cx="44" cy="29.2" r="3.4" fill="#2A2420"/>
+          <circle cx="44" cy="34.8" r="3.4" fill="#2A2420"/>
+          <circle cx="41.2" cy="32" r="3.4" fill="#2A2420"/>
+          <circle cx="46.8" cy="32" r="3.4" fill="#2A2420"/>
+          <circle cx="38" cy="68" r="3.6" fill="#FFFDF8"/>
+          <rect x="35.4" y="73.5" width="5.2" height="11" rx="2.6" fill="#FFFDF8"/>
+          <path d="M 63.5,84.2 A 9.5 9.5 0 1 1 63.5,72.8 L 60.3,75.5 A 5 5 0 1 0 60.3,81.5 Z" fill="#FFFDF8"/>
+          <circle cx="66.5" cy="80" r="2" fill="#D9B54A"/>
+          <circle cx="66.5" cy="83.4" r="2" fill="#D9B54A"/>
+          <circle cx="64.8" cy="81.7" r="2" fill="#D9B54A"/>
+          <circle cx="68.2" cy="81.7" r="2" fill="#D9B54A"/>
+        </svg>
+      </div>
+      <p class="card-name">H · Pic (매장용, 512px 기준)</p>
+      <p class="card-desc">
+        P는 흰색으로, 볼 안 클로버 배지는 잉크색으로 바꿔 P 위에서도 또렷하게
+        보이게 했습니다. "ic"는 원(점) + 둥근 막대("i") · 링 모양 path("c")
+        조합이라 어떤 프로그램에서 열어도 폰트 없이 똑같이 보입니다.
+      </p>
+    </div>
+
+    <div class="card">
+      <div class="stage">
+        <svg class="icon-tile" width="152" height="152" viewBox="0 0 100 100">
+          <rect x="0" y="0" width="100" height="100" rx="20" fill="#2A2420"/>
+          <path d="M 31,18 H 57 A 18 18 0 0 1 57,54 L 45,54 A 6 6 0 0 0 39,60 V 66 A 6 6 0 0 1 33,72 L 31,72 A 6 6 0 0 1 25,66 V 24 A 6 6 0 0 1 31,18 Z" fill="#FFFDF8"/>
+          <circle cx="44" cy="29.2" r="3.4" fill="#2A2420"/>
+          <circle cx="44" cy="34.8" r="3.4" fill="#2A2420"/>
+          <circle cx="41.2" cy="32" r="3.4" fill="#2A2420"/>
+          <circle cx="46.8" cy="32" r="3.4" fill="#2A2420"/>
+        </svg>
+      </div>
+      <p class="card-name">H2 · 아이콘 전용 (P + 클로버만)</p>
+      <p class="card-desc">
+        16px 작업표시줄용으로는 "ic"를 떼고 P + 클로버 배지만 남긴 버전을
+        권합니다 — 앞서 계속 확인한 것처럼 작은 글자는 그 크기에서 뭉개지기
+        때문입니다. 아래에서 32·16px로 확인해보세요.
+      </p>
+      <div class="sizecheck">
+        <div class="size-item">
+          <svg width="32" height="32" viewBox="0 0 100 100">
+            <rect x="0" y="0" width="100" height="100" rx="20" fill="#2A2420"/>
+            <path d="M 31,18 H 57 A 18 18 0 0 1 57,54 L 45,54 A 6 6 0 0 0 39,60 V 66 A 6 6 0 0 1 33,72 L 31,72 A 6 6 0 0 1 25,66 V 24 A 6 6 0 0 1 31,18 Z" fill="#FFFDF8"/>
+            <circle cx="44" cy="29.2" r="3.4" fill="#2A2420"/>
+            <circle cx="44" cy="34.8" r="3.4" fill="#2A2420"/>
+            <circle cx="41.2" cy="32" r="3.4" fill="#2A2420"/>
+            <circle cx="46.8" cy="32" r="3.4" fill="#2A2420"/>
+          </svg>
+          <span class="size-label">32px</span>
+        </div>
+        <div class="size-item">
+          <svg width="16" height="16" viewBox="0 0 100 100">
+            <rect x="0" y="0" width="100" height="100" rx="20" fill="#2A2420"/>
+            <path d="M 31,18 H 57 A 18 18 0 0 1 57,54 L 45,54 A 6 6 0 0 0 39,60 V 66 A 6 6 0 0 1 33,72 L 31,72 A 6 6 0 0 1 25,66 V 24 A 6 6 0 0 1 31,18 Z" fill="#FFFDF8"/>
+            <circle cx="44" cy="29.2" r="3.4" fill="#2A2420"/>
+            <circle cx="44" cy="34.8" r="3.4" fill="#2A2420"/>
+            <circle cx="41.2" cy="32" r="3.4" fill="#2A2420"/>
+            <circle cx="46.8" cy="32" r="3.4" fill="#2A2420"/>
+          </svg>
+          <span class="size-label">16px</span>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <p class="footnote">
+    셋 다 색은 <b>gui/theme.py</b>에 이미 있는 값 그대로 씁니다(버터 #D9B54A ·
+    아이보리 #FFFDF8 · 잉크 #2A2420) — 새 색상은 추가하지 않았습니다. 배경 모양은
+    미리보기용 둥근 사각형이고, 실제 <b>assets/icon.icns</b>는 macOS 규칙에 맞춰
+    투명 여백이 포함된 형태로 다시 내보내야 합니다. 방향을 하나 고르시면(또는
+    섞어서 조정하면) 그걸 기준으로 icon.png / icon.ico / icon.icns를 실제로
+    만들게요.
+  </p>
+</div>

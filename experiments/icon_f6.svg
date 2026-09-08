@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 100 100">
+  <rect x="0" y="0" width="100" height="100" rx="22" fill="#2A2420"/>
+  <path d="M 35,26 H 52 A 15 15 0 0 1 52,56 L 45,56 A 3 3 0 0 0 42,59 V 71 A 3 3 0 0 1 39,74 L 35,74 A 3 3 0 0 1 32,71 V 29 A 3 3 0 0 1 35,26 Z" fill="#D9B54A"/>
+  <text x="32" y="49" font-family="'Baloo 2', sans-serif" font-size="18" font-weight="800" fill="#2A2420">M</text>
+  <rect x="48.5" y="38" width="2.8" height="7" rx="1.4" fill="#2A2420"/>
+  <rect x="49" y="45.6" width="1.8" height="4.8" rx="0.9" fill="#2A2420"/>
+  <rect x="47.5" y="47.1" width="4.8" height="1.8" rx="0.9" fill="#2A2420"/>
+</svg>
