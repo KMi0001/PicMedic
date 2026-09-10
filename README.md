@@ -97,11 +97,34 @@ pip install pyinstaller
 pyinstaller --noconfirm --windowed --onefile --name PicMedic --icon assets/icon.ico --add-data "assets;assets" --collect-all pillow_heif main.py
 ```
 
-- 결과물: `dist/PicMedic.exe` (단일 실행 파일, ~70MB)
+- 위 한 줄 커맨드(`--onefile`) 결과물은 `dist/PicMedic.exe` 단일 파일이지만, 실제 배포용
+  `PicMedic.spec`은 **onedir 방식**이라 결과물이 `dist/PicMedic/PicMedic.exe` +
+  그 옆의 여러 파일/폴더(전체를 통째로 배포해야 함)입니다. AI 복원 자산까지 전부
+  담아 훨씬 크고, onefile의 "실행할 때마다 압축 해제" 문제(콜드 스타트 실측 80초)를
+  피하려고 2026-09-11에 onedir로 바꿨습니다 — RESTORATION_QUALITY_PLAN.md 5-1 참고.
+  배포 시 `dist/PicMedic/` 폴더 전체를 zip으로 묶거나 설치 프로그램(MSIX 등)으로
+  감싸세요, exe 파일 하나만 떼어가면 실행되지 않습니다.
 - `--collect-all pillow_heif`가 반드시 필요합니다 (HEIC/HEIF 디코딩용 네이티브 DLL을 exe 안에 포함시키기 위함, 빠지면 HEIC 관련 기능이 조용히 실패함)
 - `--icon assets/icon.ico`는 exe 파일 자체의 아이콘, `--add-data "assets;assets"`는 실행 중 창 아이콘(`main.py`에서 읽음)을 위해 필요합니다
 - 로그(`logs/`)와 기본 복구 저장 위치는 실행 파일 기준 경로를 사용하므로, exe를 옮기면 그 위치에 새로 생성됩니다
 - 두 번째 빌드부터는 `PicMedic.spec`이 위 설정을 기억하고 있어 `pyinstaller PicMedic.spec`만 실행해도 됩니다
+- **GPU 가속이 필요하면 빌드 전에 CUDA 빌드 torch를 따로 설치하세요.**
+  `pip install -r requirements.txt`만 하면 보통 CPU 전용 torch가 깔리고(2026-09-11
+  실측: 이 저장소 dev 환경도 원래 `torch==2.14.0+cpu`였음), 그 상태로 빌드하면
+  exe에도 CPU 전용 torch가 담겨서 `core/torch_device.py`의 GPU 자동 감지가 있으나
+  마나가 됩니다. 설치된 torch 버전과 정확히 맞는 CUDA 빌드로 torch·torchvision을
+  둘 다 다시 설치하세요(torchvision은 버전을 안 박으면 기존 CPU 빌드가 그대로
+  남아있을 수 있어 `--force-reinstall` 권장):
+  ```bash
+  pip install torch==<버전>+cuXXX torchvision --index-url https://download.pytorch.org/whl/cuXXX --force-reinstall --no-deps
+  ```
+  `cuXXX`는 타깃 GPU 드라이버에 맞는 CUDA 버전(`cu121`/`cu124`/`cu126`/`cu128` 등) —
+  **`cu121`/`cu124`엔 없어도 `cu126`/`cu128`엔 최신 Python 버전용 휠이 있을 수 있으니
+  여러 인덱스를 다 확인하세요**(2026-09-11: 처음에 cu121/124만 보고 "Python 3.14는
+  지원 안 됨"이라 잘못 결론 냈다가, cu126에서 정확히 맞는 휠을 찾아 실제 설치·
+  GPU 가속 실측까지 성공했음 — RESTORATION_QUALITY_PLAN.md 5-2 참고). 설치 후
+  `python -c "import torch; print(torch.cuda.is_available())"`로 `True`가 나오는지
+  확인하세요.
 - 재빌드 전 이전 산출물을 지우려면: `rm -rf build dist`
 
 ## .app 빌드 (macOS 배포용)

@@ -40,19 +40,28 @@ Real-ESRGAN)은 라이선스/성능 검증을 거쳐 고른 것들이라 교체 
 ### 1-2. 디노이즈 — [core/denoise.py](core/denoise.py)
 - 모델: NAFNet-SIDD-width32, 스마트폰 센서 저조도 노이즈 데이터셋 전용 학습 —
   디블러와 **같은 아키텍처 계열, 같은 종류의 좁은 도메인 리스크**.
-- 안전장치: ⬜ **없음.** 사전/사후 점검이 전혀 없어서, 디블러가 실제로 겪었던 것과
-  동일한 방식(도메인 밖 입력 → 발산 → 색 손상)의 실패가 발생해도 그대로 저장된다.
-- **이게 이 문서에서 가장 시급한 항목이다.** 디블러의 안전장치는 "우연히 먼저 사고가
-  나서" 생긴 것이지 디노이즈가 더 안전해서가 아니다.
+- 안전장치: ✅ **완료(2026-09-11)** — 사전 점검(`DenoiseNotRecommendedError`,
+  `core.quality_diagnosis.NOISE_RESIDUAL_STDDEV_THRESHOLD` 재사용) + 사후 점검
+  (`DenoiseResultUnstableError`, 출력 edge variance가 입력의 1.5배를 넘으면 저장 안 함).
+  디블러처럼 과거 사고 실측치를 재사용한 게 아니라 "디노이징은 출력 variance를
+  입력보다 늘려선 안 된다"는 원리적 불변식 — `experiments/denoise_safety_prototype/measure.py`
+  실측(정상 케이스 ratio 0.14~0.99, 전부 1 미만)으로 뒷받침. 실제 발산 사례가 보고되면
+  임계값 재조정 필요.
 
 ### 1-3. 얼굴복원 — [core/face_restorer.py](core/face_restorer.py)
 - 모델: RestoreFormer++ (Apache 2.0). GFPGAN/CodeFormer는 라이선스 문제로 배제하고
   선택한 모델 — 이 부분 판단은 유지.
-- 안전장치: 🟡 부분적 — "얼굴을 아예 못 찾음"(`NoFaceFoundError`)만 구분해서 처리.
-- 남은 약점: 얼굴을 **찾긴 했지만 복원 품질이 나쁜 경우**(작은 얼굴, 옆모습, 저해상도
-  crop)를 걸러내는 기준이 없다. 이런 모델은 디테일이 부족한 얼굴에 "그럴듯하지만 실제와
-  다른" 디테일(다른 사람처럼 보이는 눈/치아 등)을 새로 그려 넣는 경향이 있는데, 이건
-  단순 실패가 아니라 "결과가 나왔지만 신뢰할 수 없는" 더 까다로운 실패 모드다.
+- 안전장치: ✅ **완료(2026-09-11)** —
+  - `FaceTooSmallError`: 찾은 얼굴이 전부 `core.quality_diagnosis.MIN_FACE_CROP_SIZE`
+    (60px, 기존 사진진단 얼굴탐지가 이미 쓰던 기준을 재사용)보다 작으면 저장 안 함.
+  - `AnimalPhotoError`: `core.photo_category`의 CLIP 8-카테고리 분류(이미 있던 "동물
+    사진" 카테고리 재사용)로 사진 전체가 동물 사진이면 아예 실행하지 않음 — 사용자
+    요청("고양이/강아지는 복원대상에서 빼줘")으로 추가.
+  - **알려진 한계**: 사람+반려동물이 함께 나온 사진은 전체 분류가 "인물 사진"이라
+    이 사전 점검을 통과한다. 얼굴 단위로 동물/사람을 구분해 반려동물 얼굴만
+    선택적으로 제외하려면 RestoreFormer 내부 파이프라인(`vendor/restoreformer`)을
+    직접 고쳐야 해서(현재는 `enhance(paste_back=True)`가 감지→복원→합성을 한 번에
+    처리) 더 큰 작업 — 이번엔 포함하지 않음, 필요성이 확인되면 별도 항목으로.
 
 ### 1-4. 화질개선(업스케일) — [core/quality_enhancer.py](core/quality_enhancer.py)
 - 모델: Real-ESRGAN x4plus (ncnn-vulkan). NAFNet 계열처럼 좁은 도메인에 갇혀있진 않아
@@ -80,42 +89,30 @@ Real-ESRGAN)은 라이선스/성능 검증을 거쳐 고른 것들이라 교체 
 
 ### P0 — 사고 재발 방지 (판매 전 필수)
 
-- [ ] **디노이즈에 디블러와 동일한 안전장치 이식**
-  - 사전 점검: 입력이 애초에 노이즈가 적은 사진이면(`core/quality_diagnosis`의 노이즈
-    판정 기준 활용) 거부.
-  - 사후 점검: 출력 edge variance/색 분산이 원본 대비 비정상 폭증하면 저장 거부.
-  - 임계값은 `experiments/deblur_safety_prototype/measure.py`와 같은 방식으로 —
-    디노이즈 전용 실측 스크립트(`experiments/denoise_safety_prototype/measure.py`
-    같은 이름으로)를 새로 만들어 SIDD 노이즈 사진 + 노이즈 없는 사진 양쪽에 실측 후
-    임계값을 정한다. **디블러 임계값을 그대로 재사용하지 말 것** — 노이즈 데이터의
-    edge variance 분포는 블러 데이터와 다를 수 있다.
-  - 완료 기준: `core/denoise.py`에 `DenoiseNotRecommendedError`/
-    `DenoiseResultUnstableError` 추가 + 실측 기반 임계값 문서화(코드 주석).
-
-- [ ] **얼굴복원 최소 품질 게이트**
-  - `restorer.enhance()`가 반환하는 `cropped_faces`의 픽셀 크기(가로/세로)를 확인해서,
-    일정 크기 미만(예: 64px 미만 등 — 실측 필요)인 얼굴은 복원하지 않고
-    `FaceTooSmallError` 같은 전용 예외로 분리.
-  - 근거: RestoreFormer++ 등 GAN 기반 얼굴 복원은 입력 얼굴 해상도가 너무 낮으면
-    "복원"이 아니라 "새로 창작"에 가까워진다 — 이건 다른 사람처럼 보이는 결과를
-    만들 위험이 있어 디블러/디노이즈의 "색이 깨짐"보다 사용자 신뢰에 더 치명적이다.
-  - 완료 기준: 실제 저해상도 얼굴 샘플로 임계값 실측 + 예외 처리 + GUI 안내 문구.
+- [x] **디노이즈에 디블러와 동일한 안전장치 이식** (2026-09-11 완료) — [1-2](#1-2-디노이즈--coredenoisepy) 참고.
+- [x] **얼굴복원 최소 품질 게이트 + 동물 사진 제외** (2026-09-11 완료) — [1-3](#1-3-얼굴복원--coreface_restorerpy) 참고.
 
 ### P1 — 신뢰도 검증 체계 (있어야 "된다"고 말할 수 있음)
 
-- [ ] **실사진 기반 골드셋 구축**
-  - `experiments/restore_quality_goldset/` 같은 디렉토리에 실제 손떨림 사진 5~10장,
-    실제 저조도 노이즈 사진 5~10장, 다양한 크기/각도의 인물 사진 5~10장을 모은다
-    (저작권 문제 없는 본인 촬영 사진 또는 CC0 소스로).
-  - 이미 `experiments/restore_prototype/test_images/`,
-    `experiments/city_organize_prototype/sample_photos/`에 일부 샘플이 있으니
-    재사용 가능한지 먼저 확인.
+- [x] **비교 스크립트 뼈대** (2026-09-11) — [experiments/restore_quality_goldset/compare.py](experiments/restore_quality_goldset/compare.py)
+  로 4개 기능을 기존 샘플에 돌려 원본|결과 나란히 붙인 PNG를 만드는 구조는 만들었다.
+- [ ] **진짜 실사진으로 교체 — 아직 안 됨, 확인해보니 기존 샘플은 전부 합성/일러스트였다**
+  - 실행해서 실제로 눈으로 봤더니(2026-09-11): `experiments/city_organize_prototype/
+    sample_photos/*.jpg`(busan.jpg 등)는 **단색 하늘색 배경 하나뿐인 합성 이미지**였고,
+    `experiments/restore_prototype/test_images/old_blurry_portrait.jpg`는 **실제 사진이
+    아니라 평면 벡터 일러스트 얼굴**이었다(그래서 face_restorer가 `NoFaceFoundError`를
+    던짐 — RetinaFace는 실사진 얼굴로 학습된 모델이라 일러스트에서는 얼굴을 못 찾는 게
+    당연한 결과). 즉 지금까지 "샘플"이라고 불러온 것들이 전부 실제 사진이 아니었다 —
+    [1-5](#1-5-테스트--testtest_ai_restorationpy)에서 짐작만 했던 문제가 실측으로 확정됨.
+  - **다음 사람이 할 일**: 저작권 문제 없는 진짜 사진(본인 촬영 또는 CC0)으로 —
+    실제 손떨림 사진 5~10장, 실제 저조도 노이즈 사진 5~10장, 다양한 크기/각도의
+    인물 사진 5~10장 — `experiments/restore_quality_goldset/`에 넣고
+    `compare.py`의 `CANDIDATES`를 실제 경로로 바꿔야 이 항목이 비로소 의미가 있다.
   - 용도: 모델/임계값을 바꿀 때마다 이 골드셋으로 돌려서 "이전보다 나빠지지 않았는지"를
     비교하는 회귀 기준점으로 쓴다.
 
-- [ ] **Before/After 시각 비교 리포트 스크립트**
-  - 골드셋 전체를 4개 기능에 각각 돌려서 원본/결과를 나란히 이미지 그리드로 저장하는
-    스크립트 (`experiments/` 아래 1회성 프로토타입으로, 기존 `measure.py` 패턴과 동일).
+- [x] **Before/After 시각 비교 리포트 스크립트** (2026-09-11) — 위 `compare.py`가
+  이 역할. 골드셋이 진짜 사진으로 채워지면 그대로 재실행만 하면 됨.
   - 목적은 자동 판정이 아니라 **사람이 눈으로 훑어보고 "이 정도면 팔 만하다" 판단을
     내릴 수 있는 근거 자료**를 만드는 것. 스토어 심사/마케팅용 스크린샷도 여기서 나올 수 있음.
 
@@ -155,10 +152,10 @@ Real-ESRGAN)은 라이선스/성능 검증을 거쳐 고른 것들이라 교체 
 
 ## 4. 로드맵 (권장 순서)
 
-1. **디노이즈 안전장치** (P0) — 디블러 패턴 그대로 이식이라 가장 빠르고, 재발 방지
-   효과가 가장 큼.
-2. **얼굴복원 최소 크기 게이트** (P0) — 신뢰도에 가장 직접적인 영향.
-3. **골드셋 + Before/After 리포트** (P1) — 1·2번을 검증할 근거이자, 이후 모든 튜닝의 기준점.
+1. ~~**디노이즈 안전장치** (P0)~~ — 2026-09-11 완료.
+2. ~~**얼굴복원 최소 크기 게이트 + 동물 사진 제외** (P0)~~ — 2026-09-11 완료.
+3. **골드셋 + Before/After 리포트** (P1) — 아직 미착수. 1·2번을 검증할 근거이자, 이후
+   모든 튜닝의 기준점 — 다음으로 손볼 항목.
 4. **macOS 바이너리 / 안내 문구** (P2) — 배포 완성도, 품질 자체와는 별개라 나중에 처리해도 무방.
 
 이 로드맵이 끝나면 "복원 기능이 실패할 땐 안전하게 실패하고, 성공할 땐 골드셋으로
@@ -171,72 +168,234 @@ Real-ESRGAN)은 라이선스/성능 검증을 거쳐 고른 것들이라 교체 
 복원 품질과 별개로, "exe를 실제로 빌드해서 스토어에 낸다"는 흐름 자체를 점검하다가
 발견한 항목들. 모델 튜닝보다 먼저 막혀도 이상하지 않은 부분들이라 같이 기록해둔다.
 
-### 5-1. ⬜ 패키징 용량/시작 속도 미검증
-- `assets/` 전체 실측: **약 1GB**(deblur 68MB + denoise 117MB + face_restore
-  465MB + photo_category 354MB + realesrgan 39MB 등). 여기에 `PicMedic.spec`이
-  `collect_all`로 통째로 담는 `torch`/`torchvision`/`facexlib`/`open_clip`까지
-  더하면 최종 exe는 **수 GB대**가 될 가능성이 높다.
-- 지금 빌드 커맨드는 `--onefile`([README.md:97](README.md:97)) — onefile은 **실행할 때마다**
-  압축된 내용을 임시 폴더에 풀어헤친다. 수백MB면 몇 초로 끝나지만 수 GB대에서는
-  "앱을 켤 때마다" 체감되는 지연이 생길 수 있다. 실측해본 적이 없다면 이게 첫인상을
-  깎아먹을 수 있는 항목.
-- 확인/조치 후보: 실제 빌드해서 (a) exe 용량, (b) 콜드 스타트 시간을 실측 →
-  느리면 `--onefile` 대신 `--onedir`(폴더 배포)로 전환 검토. MSIX 패키징(MS 스토어)은
-  onedir 결과물을 그대로 감싸는 방식이 더 자연스럽기도 하다.
+### 5-1. 🟡 패키징 용량/시작 속도 — 실측 완료, 조치 필요
+- **실측(2026-09-11, `pyinstaller PicMedic.spec`, CPU 전용 torch 기준)**:
+  - exe 용량: **1.3GB**.
+  - 콜드 스타트: 실행 파일 실행 → onefile 압축 해제 완료(자식 프로세스 기동) 까지
+    **약 80초**, 그 뒤 창이 뜨기까지 추가 시간(측정 안 함, Qt 자체 기동은 빠를 것으로
+    예상). `%TEMP%\_MEIxxxxx`로 풀린 크기는 **2GB**(exe보다 큼 — 압축 해제된 상태라).
+    이건 CUDA torch가 아니라 CPU 전용 torch 기준이라, CUDA 빌드로 바꾸면 용량이 더
+    커질 수 있다(5-2 참고).
+  - **결론: `--onefile`은 이 규모에서 첫 실행 경험을 확실히 해친다.** "앱을 눌렀는데
+    1분 넘게 아무 반응이 없다"는 건 유료 소프트웨어에서 리뷰 테러 사유가 되기 쉽다.
+  - 조치: `--onedir`(폴더 배포)로 전환 — 압축 해제가 설치 시 한 번만 일어나고 실행마다
+    반복되지 않는다.
+- ✅ **조치 완료·재측정 완료(2026-09-11)** — `PicMedic.spec`/`PicMedic-mac.spec`(macOS는
+  원래부터 이 구조였음)에 `EXE(..., exclude_binaries=True)` + `COLLECT(...)`로 전환.
+  재빌드해서 실측: **콜드 스타트 80초 → 4.2초로 개선**(약 19배). `dist/PicMedic/
+  PicMedic.exe` 자체는 62.5MB로 작아졌고(부트로더만 남음), 나머지는 옆의 `_internal/`
+  폴더에 있음 — **배포 시 exe 파일 하나만 옮기면 실행 안 됨, 폴더 전체를 같이
+  배포해야 함**(README.md에 반영함). `logs/`·기본 저장 위치는 `sys.executable` 기준
+  경로라 onedir에서도 그대로 "exe 옆"에 생성됨(코드 변경 불필요, 확인함).
 
-### 5-2. ⬜ "GPU 자동 감지"가 실제로 GPU 빌드를 쓰는지 미확인
-- 최근 커밋("사진 진단 카테고리 5종 -> 8종 확장 + GPU 자동 감지")과 `core/deblur.py`
-  등의 `torch.cuda.is_available()` 분기는 있지만, [requirements.txt](requirements.txt)의
-  `torch>=2.0`은 **버전만 지정하고 CPU/CUDA 빌드를 지정하지 않는다.** PyPI 기본
-  `pip install torch`는 보통 CPU 전용 휠이 설치되므로, 별도로 CUDA 인덱스
-  (`--index-url https://download.pytorch.org/whl/cuXXX`)를 지정해서 설치한 환경에서
-  빌드하지 않으면 **exe에는 CPU 전용 torch가 담기고, GPU 자동 감지 분기는 있으나
-  마나가 된다.**
-- 확인 방법: 실제로 만든 `dist/PicMedic.exe`(또는 빌드 직전 venv)에서
-  `python -c "import torch; print(torch.version.cuda, torch.cuda.is_available())"`
-  로 CUDA 빌드 여부 확인.
-- 이건 품질 문제라기보다 "고객이 좋은 GPU가 있어도 체감 속도 이득을 못 받는" 배포
-  설정 문제라 빌드 스크립트/문서에 CUDA 인덱스 지정을 명시해야 한다.
+### 5-2. 🟡 "GPU 자동 감지"가 실제로 GPU 빌드를 쓰는지
+- **판정 로직 자체는 2026-09-11에 고쳤다** — [core/torch_device.py](core/torch_device.py)
+  `resolve_device()`(`cuda → mps → cpu` 순)를 만들어 기존 6곳(deblur/denoise/
+  face_restorer/quality_diagnosis/photo_category/cat_finder)에 흩어져 있던
+  `torch.device("cuda" if torch.cuda.is_available() else "cpu")` 중복을 전부
+  교체했다. macOS의 Apple Silicon GPU(MPS)를 이제 코드상으로는 쓸 수 있다.
+- **다만 배포 설정 문제는 여전히 남아있고, 실측으로 확인됐다.** 이 개발 환경에서
+  `python -c "import torch; print(torch.__version__)"` 결과가 **`2.14.0+cpu`** —
+  CUDA 빌드가 아니다. [requirements.txt](requirements.txt)의 `torch>=2.0`은 버전만
+  지정하고 CPU/CUDA 빌드를 지정하지 않아서, 기본 `pip install`로 만든 환경 그대로
+  Windows exe를 빌드하면 **exe에도 CPU 전용 torch가 담긴다** — `resolve_device()`가
+  아무리 올바르게 판정해도 애초에 `torch.cuda.is_available()`이 항상 False라 GPU
+  가속을 전혀 못 쓴다.
+- ✅ **완료·실측 검증까지 끝남(2026-09-11)**. 처음엔 `cu121`/`cu124` 인덱스만 확인하고
+  "Python 3.14는 공식 CUDA 휠 자체가 없다"고 잘못 결론 내렸었다 — 실제로는
+  **`cu126`/`cu128` 인덱스에 Python 3.14(cp314) + torch 2.14.0 CUDA 빌드가 정확히
+  있었다**(`torch-2.14.0+cu126-cp314-cp314-win_amd64.whl`). 확인 범위가 부족해서
+  생긴 오판이었다 — 다음에 비슷한 걸 확인할 땐 cu121/124뿐 아니라 cu126/128까지
+  다 훑을 것.
+  - 설치: `pip install torch==2.14.0+cu126 torchvision --index-url
+    https://download.pytorch.org/whl/cu126`(torchvision은 버전을 안 박으면 기존
+    CPU 빌드가 그대로 남는 함정이 있어 `--force-reinstall`로 한 번 더 맞춰야 했음).
+  - 검증: `torch.cuda.is_available()` → `True`, `torch.cuda.get_device_name(0)` →
+    `NVIDIA GeForce RTX 3060 Ti`(이 머신에 실제 GPU가 있었음, `nvidia-smi`로 사전
+    확인). `core/torch_device.resolve_device()`도 `cuda`를 정확히 고름.
+  - `tests/test_ai_restoration.py`(12/12)·`test_photo_category.py`·
+    `test_quality_diagnosis.py` 전부 GPU 빌드에서도 0 실패.
+  - **실측 속도 비교, 두 가지 해상도**(`core/deblur.py`):
+    - 원본 크기(720x900, 작은 테스트 이미지): CPU 11.47초 → GPU 1.22초 (**약 9.4배**).
+    - **12MP(4032x3024, 요즘 폰카 실제 해상도)로 키운 같은 사진**: CPU 160.00초 →
+      GPU 94.05초 (**약 1.7배뿐**).
+    - **작은 이미지에서 본 "9.4배"를 실제 사용자 체감으로 오해하면 안 된다** — 해상도가
+      커질수록 GPU 이득이 급격히 줄어든다(9.4배 → 1.7배). NAFNet(width=32) 아키텍처가
+      큰 텐서 하나를 통째로 돌리는 방식이라, 해상도가 커질수록 연산보다 메모리
+      이동/대역폭이 병목이 되는 것으로 보인다(타일링 등 최적화는 안 되어 있음 —
+      추가 조사·최적화는 이번 범위 밖, 필요하면 별도 항목으로 뺄 것).
+    - **`estimate_seconds()`의 GPU 미반영 문제** — [core/deblur.py:67-70](core/deblur.py:67)의
+      예상 시간 공식은 CPU 실측(0.5초 고정 + 5초/MP)만 반영돼 있고 GPU 여부를
+      전혀 구분하지 않는다. GPU 사용자에게도 "12MP면 약 60초"라고 안내하게 되는데,
+      실측(94초, 위 참고)을 보면 GPU라고 크게 빠르지도 않아서 이 부분은 표시 문구
+      자체는 당장 급하지 않아 보이지만, 그렇다고 CPU 공식이 GPU에 맞는 것도 아니다 —
+      추후 실제 사용자 피드백을 보고 조정할 항목으로 남겨둠.
+  - 결론: GPU 자동 감지 체인(판정 로직 → 실제 GPU 빌드)은 전부 작동을 확인했지만,
+    **"GPU면 훨씬 빠르다"는 기대는 최소한 디블러(NAFNet)에서는 해상도가 커질수록
+    많이 꺾인다** — 화질개선(Real-ESRGAN)·얼굴복원(RestoreFormer++)은 아키텍처가
+    달라 같은 정도로 꺾이는지는 이번에 확인 못 함. 배포용 빌드 환경엔 이 방식(torch
+    버전에 맞는 `cuXXX` 인덱스 지정, 필요시 torchvision도 같이 `--force-reinstall`)을
+    그대로 적용하면 된다 — README.md에 반영.
 
-### 5-3. ⬜ 오픈소스 라이선스 고지 누락
-- 현재 저장소 최상위에 `LICENSE`/`NOTICE` 파일이 없다(확인함). NAFNet(MIT),
-  RestoreFormer++(Apache 2.0), basicsr(Apache 2.0), Real-ESRGAN 등 번들된 모델/코드는
-  상업적 이용 자체는 문제없다고 이미 판단했지만(GFPGAN/CodeFormer는 라이선스
-  회색지대/비상업 전용이라 이미 배제함, [core/face_restorer.py:10-12](core/face_restorer.py:10)
-  참고), MIT/Apache 라이선스는 **재배포 시
-  저작권 고지·라이선스 사본 포함을 요구**한다. 지금처럼 코드 주석에만 출처가 남아있고
-  최종 사용자에게 전달되는 배포물(exe)이나 스토어 페이지에 고지가 없으면 라이선스
-  조건 미준수 상태가 된다.
-- 조치: 앱 정보/도움말 화면이나 별도 `THIRD_PARTY_NOTICES.txt`를 exe에 포함시켜서
-  NAFNet/RestoreFormer++/basicsr/Real-ESRGAN(+ facexlib, open_clip 등)의 라이선스
-  전문과 저작권 고지를 나열. 스토어 심사에서 직접 요구하지 않아도 법적으로는 필요.
+### 5-3. 🟡 오픈소스 라이선스 고지 누락 — 실제 의존성 라이선스 전수 확인, 새 위험 하나 발견
+- 확인됨: 저장소 최상위는 물론 `vendor/basicsr_min`, `vendor/restoreformer`(둘 다 이
+  저장소가 직접 벤더링한 코드)에도 `LICENSE`/`NOTICE` 파일이 **하나도 없다** — pip로
+  설치되는 패키지들은 site-packages 안에 자체 라이선스 파일을 갖고 있지만, 벤더링한
+  코드와 최종 배포물(exe)에는 아무 라이선스 고지도 따라가지 않는다.
+- **실제 설치된 패키지 메타데이터로 라이선스를 하나씩 확인**(2026-09-11,
+  `importlib.metadata`로 실측 — 표로 남김):
 
-### 5-4. ⬜ MS 스토어 제출 요건 체크리스트 부재
+  | 패키지 | 라이선스 | 비고 |
+  |---|---|---|
+  | torchvision | BSD | |
+  | facexlib | Apache 2.0 | |
+  | open-clip-torch | MIT | |
+  | opencv-python | Apache 2.0 | |
+  | pillow-heif | BSD-3-Clause | |
+  | torch, pillow, numpy | (메타데이터에 필드 없음) | 각각 BSD류로 알려져 있으나 메타데이터로는 확인 안 됨 — 공식 저장소 LICENSE로 재확인 필요 |
+  | **reverse_geocoder** | **LGPL** | **아래 참고 — 지금까지 검토한 MIT/Apache 계열과 다른 종류라 새로 발견된 위험** |
+
+- **새로 발견된 위험: `core/geocoder.py`("도시별 정리" 기능)가 의존하는
+  `reverse_geocoder`가 LGPL이다.** 지금까지 이 문서와 `feedback_check_commercial_license`
+  메모가 검토해온 건 MIT/Apache 계열(재배포 시 고지만 하면 됨)뿐이었는데, LGPL은
+  결이 다르다 — 상업적 이용 자체는 허용되지만, PyInstaller `--onefile`처럼 라이브러리를
+  실행 파일 하나로 정적으로 합쳐 배포하는 방식이 LGPL이 요구하는 "사용자가 이
+  라이브러리만 교체/재연결할 수 있어야 한다"는 조건과 어떻게 맞물리는지는 법률
+  검토가 필요한 영역이다(나는 변호사가 아니라 여기서 결론을 낼 수 없음). 조치 후보:
+  (a) 법률 자문으로 현재 배포 방식이 문제없는지 확인, 또는 (b) MIT/Apache 계열의
+  대체 오프라인 역지오코딩 라이브러리로 교체(`core/geocoder.py`가 GeoNames 파생
+  CSV 최근접 탐색만 하는 단순한 구조라 교체 자체의 기술 난이도는 낮아 보임).
+- 나머지(NAFNet MIT, RestoreFormer++ Apache 2.0, basicsr Apache 2.0 — 전부
+  [core/face_restorer.py:10-12](core/face_restorer.py:10) 등 코드 주석에 이미
+  근거가 남아있음)는 상업적 이용 자체는 문제없다고 이미 판단됐고, MIT/Apache는
+  재배포 시 저작권 고지·라이선스 사본 포함만 요구한다. 지금처럼 코드 주석에만
+  출처가 남아있고 최종 사용자에게 전달되는 배포물(exe)이나 스토어 페이지에 고지가
+  없으면 이 부분도 라이선스 조건 미준수 상태다.
+- 조치: (1) reverse_geocoder LGPL 건 먼저 정리(법률 검토 또는 교체 — 아래 참고),
+  (2) 나머지 MIT/Apache 계열은 앱 정보/도움말 화면이나 별도 `THIRD_PARTY_NOTICES.txt`를
+  exe에 포함시켜서 라이선스 전문과 저작권 고지를 나열. 스토어 심사에서 직접 요구하지
+  않아도 법적으로는 필요.
+- **(1) ✅ 완료(2026-09-11)**: `reverse_geocoder` 패키지(LGPL 코드는 `__init__.py`+
+  `cKDTree_MP.py` 합쳐 15KB 남짓의 얇은 래퍼뿐 — 실제 데이터는 GeoNames 파생이라
+  CC-BY 4.0이고 LGPL과 무관)를 프로토타입([experiments/geocoder_license_prototype/](experiments/geocoder_license_prototype/),
+  8/8 좌표 완전 일치 검증)으로 먼저 확인한 뒤 `core/geocoder.py`에 실제로 통합했다.
+  - 데이터를 `assets/geonames_cities1000.csv`로 옮기고 `scipy.spatial.cKDTree`(BSD,
+    requirements.txt에 명시 추가 — reverse_geocoder를 통해 간접 설치되던 걸 놓칠
+    뻔해서 직접 못 박음)로 전세계 인덱스 하나를 만들어 재사용, 기존 한국 지역
+    보정(`_get_kr_only_index`, 백령도 국경 오탐 수정)은 그 인덱스를 공유하도록
+    리팩터링만 하고 로직은 그대로 유지.
+  - `requirements.txt`/`PicMedic.spec`/`PicMedic-mac.spec`에서 `reverse_geocoder`
+    제거, `THIRD_PARTY_NOTICES.txt`에 GeoNames 데이터 저작자 표시(CC-BY 4.0) 추가.
+  - **이 모듈은 그동안 테스트가 하나도 없었다** — [tests/test_geocoder.py](tests/test_geocoder.py)를
+    새로 만들어 서울/부산/뉴욕/파리 매칭, 백령도 국경 오탐 보정, 배치 조회 순서
+    일치까지 7개 케이스로 고정. 전체 테스트 스위트(`test_*.py` 전부) 재실행해서
+    0 실패 확인.
+- **(2) 진행 상황(2026-09-11)**: [THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt) 초안
+  작성 완료 — NAFNet/BasicSR/RestoreFormer++/facexlib/Real-ESRGAN/open_clip/
+  torchvision/pillow-heif/opencv-python까지, 라이선스 종류는 pip 메타데이터로 실측
+  확인. torch/numpy/Pillow 세 개는 메타데이터에 필드가 없어 공식 저장소 링크만
+  남겨두고 배포 전 재확인이 필요하다고 명시했다. reverse_geocoder는 (1)이 정리되기
+  전까지 이 목록에서 제외.
+
+### 5-4. ⬜ MS 스토어 제출 요건 체크리스트 부재 — 구체 항목으로 보강
 - 저장소 안에 개인정보처리방침(Privacy Policy) URL, 연령 등급 설문 답변, 지원
   이메일/문의처, EULA 초안 등 스토어 제출에 필요한 문서가 보이지 않는다. 무료일 땐
-  건너뛸 수 있었어도 **유료 전환 시 MS 스토어는 개인정보처리방침 URL을 필수로 요구**한다.
-- 이 앱은 로컬 파일만 다루고 외부로 데이터를 보내지 않는 걸로 보이는데(네트워크 호출은
-  `scripts/fetch_*_assets.py`의 최초 자산 다운로드 정도), 정책 문서에는 이 점("사진은
-  기기 밖으로 나가지 않는다")을 명시하면 오히려 신뢰 포인트로 쓸 수 있다.
-- 조치: 제출 전 체크리스트로 정리 — 개인정보처리방침 페이지(정적 페이지 하나로 충분),
-  지원 연락처, 스토어 스크린샷/설명 문구, 연령 등급.
+  건너뛸 수 있었어도 **유료 전환 시 Partner Center는 개인정보처리방침 URL을 모든
+  앱에 필수로 요구**한다(무료/유료 무관 — 유료는 여기에 결제 관련 고지가 추가로 필요).
+- **Partner Center 제출 흐름에서 실제로 막힐 수 있는 항목들** (일반적인 Microsoft
+  Store 정책 기준 — PicMedic 전용 확정 요건은 실제 제출 시 화면에서 최종 확인 필요):
+  1. **개인정보처리방침 URL** — 반드시 실제로 접속 가능한 공개 URL(정적 페이지 하나로
+     충분). 이 앱은 로컬 파일만 다루고 외부로 사진/위경도를 보내지 않는 구조라
+     ([core/geocoder.py:7-9](core/geocoder.py:7)에 이미 "이 프로세스 밖으로 절대
+     안 나감" 원칙이 명시돼 있음), 정책 문서에 그대로 반영하면 신뢰 포인트가 된다.
+     단, 5-6의 옵트인 원격 로그를 나중에 추가하면 그 항목도 정책에 명시해야 함.
+  2. **연령 등급 설문(IARC)** — Partner Center 제출 화면에서 매번 새로 answer해야
+     하는 설문. 폭력/성인/도박성 콘텐츠 없음으로 답하면 대체로 낮은 등급이 나오지만
+     설문 자체를 안 하면 제출이 막힌다 — 문서로 준비할 항목이 아니라 제출 시점에
+     직접 답해야 함, 체크리스트에 "제출 당일 처리"로 남겨두면 됨.
+  3. **지원 연락처** — 이메일 또는 웹사이트 URL 중 최소 하나, 앱스토어 상세 페이지에
+     노출됨. 지금 저장소/README에 이런 연락처가 없다 — 준비 필요.
+  4. **스크린샷/설명 문구** — 최소 1장(권장 4장 이상), 지원 해상도 규격 있음. 실행
+     화면을 캡처하면 되므로 기술적 난이도는 낮음.
+  5. **EULA** — 커스텀 EULA를 안 쓰면 Microsoft 표준 라이선스 약관이 자동 적용됨(대부분
+     앱은 이걸로 충분). 커스텀이 필요한 이유(예: 5-3의 제3자 라이선스 고지를 EULA에
+     같이 넣고 싶다면)가 없으면 굳이 새로 쓸 필요는 없음 — 우선순위 낮음.
+- 조치: 제출 전 체크리스트로 정리 — 개인정보처리방침 페이지(작성 필요), 지원 연락처
+  (이메일 하나면 충분), 스크린샷 4장 이상, 연령 등급은 제출 당일 처리.
+- **진행 상황(2026-09-11)**: [PRIVACY_POLICY_DRAFT.md](PRIVACY_POLICY_DRAFT.md) 초안
+  작성 완료 — 이 앱이 실제로 사진/위경도를 로컬에서만 처리하고 외부로 전송하지
+  않는다는 점을 중심으로 작성. 아직 공개 URL로 호스팅되지 않았으니(정적 페이지로
+  옮겨야 함) 실제 제출 전에는 URL이 필요. 5-6(옵트인 실패 로그)을 나중에 추가하면
+  이 문서도 같이 갱신해야 함(문서 상단에 메모해둠).
 
-### 5-5. 🟡 "원본은 절대 건드리지 않는다" 약속의 예외 경로 커버리지
-- 이 원칙은 `core/converter.py`부터 복원 4종까지 일관되게 지켜지고 있고
-  ([tests/test_ai_restoration.py](tests/test_ai_restoration.py)에서 정상/얼굴없음
-  케이스는 이미 "원본 파일은 그대로 남음"을 검증함) — 이 자체는 잘 돼 있다.
-- 다만 지금 테스트는 "정상 실행"과 "예상된 예외"(얼굴 없음, 도메인 밖 입력) 경로만
-  검증한다. **예상 못한 예외**(디스크 꽉 참, 강제 종료, 권한 오류 등)가 나는 도중에도
-  원본이 안전한지는 코드 구조상(항상 새 파일에만 쓰고 원본 핸들을 읽기 전용으로만
-  여는 방식) 안전해 보이지만, 유료 신뢰의 핵심 약속인 만큼 "쓰기 도중 강제 종료"
-  같은 케이스를 한 번은 의도적으로 테스트해볼 가치가 있다. 환불 사유 1순위가 될 수
-  있는 약속이라서 우선순위를 P1 근처로 올려도 된다.
+### 5-5. ✅ "원본은 절대 건드리지 않는다" 약속의 예외 경로 커버리지 — 실제 버그 발견·수정·검증 완료(2026-09-11)
+- **복원 4종(디블러/디노이즈/얼굴복원/화질개선)은 구조적으로 안전하다** — 원본을
+  항상 읽기 전용으로만 열고 결과는 전혀 다른 새 경로에만 쓰므로, 어떤 예외가 나도
+  원본을 건드릴 방법 자체가 없다. 이건 코드 구조로 이미 증명되는 부분이라 별도
+  실험 없이 결론 남김.
+- **진짜 위험은 `core/converter.py`의 `replace_original=True`("원본 삭제" 옵션)
+  경로였다** — 여기는 원본을 실제로 옮긴다(먼저 같은 폴더 임시휴지통으로 이동 →
+  그 자리에 결과물 저장). 이 함수의 문서화된 약속은 "실패하면 옮겨둔 원본을 즉시
+  되돌린다"였는데, **실제로 재현해보니 지켜지지 않는 경로가 있었다**:
+  `_recover_file_replacing_original()`이 내부에서 부르는 `recover_file()`이
+  (이미 처리 중인 `OSError`가 아니라) **예상 못한 예외**를 던지면, 그 예외가 함수
+  전체를 그냥 뚫고 나가버려서 "실패 시 원본 복원" 코드 자체가 실행되지 않았다 —
+  원본이 임시휴지통에 방치된 채 아무도 되돌리지 않는 상태. `unittest.mock.patch`로
+  실제 재현 확인 후 [core/converter.py](core/converter.py)의 `recover_file()` 호출을
+  try/except로 감싸 예외 경로에서도 즉시 복원하도록 수정, [tests/test_converter.py](tests/test_converter.py)
+  20~24번에 회귀 테스트로 고정(수정 전 재현 → 수정 후 통과 확인, `test_converter.py`
+  53/53 통과).
+  - 다행히 "데이터 유실"까지는 아니었다 — `utils/trash.py`의 임시휴지통은 원본 폴더
+    바로 옆에 있고 매니페스트로 원래 경로를 기억하는 구조라, 버그가 있던 상태에서도
+    파일 자체는 찾을 수 있었다(`gui/trash_screen.py`에서 수동 복원 가능). 다만
+    "복구했더니 사진이 원래 자리에서 사라진 것처럼 보인다"는 건 유료 신뢰에 치명적인
+    경험이라 자동 복원이 실제로 지켜지는 게 중요했다.
 
-### 5-6. ⬜ 배포 후 실패율을 알 방법이 없음
+### 5-6. ⬜ 배포 후 실패율을 알 방법이 없음 — 구체 설계로 보강
 - 지금은 로컬 `logs/picmedic_log.jsonl`만 있고([README.md:125-128](README.md:125)),
   개발자에게 전달되는 원격 신호가 전혀 없다. 유료 전환 후 "고객 컴퓨터에서 얼마나
-  자주 `DeblurResultUnstableError`/`NoFaceFoundError` 등이 발생하는지"를 알 방법이
-  없어서, 이 문서의 P0/P1 항목들이 실제로 효과가 있었는지도 사후 검증이 안 된다.
-- 조치 후보(개인정보 수집 최소화 원칙 유지): 완전 옵트인 방식으로 "실패 유형과 코드
-  위치만"(사진 내용/경로 제외) 익명 집계하는 간단한 원격 로그를 검토. 이건 스토어
-  개인정보처리방침에도 명시해야 하는 사항이라 5-4번과 같이 처리.
+  자주 `DeblurResultUnstableError`/`DenoiseResultUnstableError`/`AnimalPhotoError`
+  등이 발생하는지"를 알 방법이 없어서, 이번에 추가한 안전장치들이 실제로 효과가
+  있었는지(너무 자주 걸려서 오탐이 많은 건 아닌지, 반대로 거의 안 걸려서 굳이 필요
+  없었는지)도 사후 검증이 안 된다.
+- **구체 설계 제안** (구현은 아직 안 함 — 다음에 착수할 때 이 설계부터 검토):
+  - 전송 대상: 예외 클래스 이름(`"DenoiseResultUnstableError"`) + 발생 지점(모듈명)
+    + 앱 버전 + OS 종류(Windows/macOS)뿐. 사진 내용/파일명/경로/위경도는 **코드 레벨에서
+    아예 수집 대상에 포함하지 않는다**(수집 후 필터링이 아니라, 애초에 그 값을 읽지
+    않는 함수로 설계 — core/geocoder.py의 "이 프로세스 밖으로 안 나감" 원칙과 같은
+    수준의 보장).
+  - 트리거: 설정 화면에 "실패 진단 정보를 개발자에게 보내 품질 개선에 도움주기"
+    체크박스(기본값 꺼짐, 완전 옵트인) — 켠 사용자에 한해 위 4개 필드만 전송.
+  - 전송 시점: 예외가 GUI의 `no_effect`/`failed` 경로로 잡히는 시점([gui/single_ai_action.py](gui/single_ai_action.py)
+    `_Worker.run()`의 `except Exception` 블록 — 지금 이미 모든 실패가 여기로
+    모이므로, 훅을 하나 추가하는 정도로 끝날 가능성이 높음).
+  - 서버: 처음엔 Google Forms/간단한 서버리스 엔드포인트 하나로도 충분 — 집계
+    대시보드까지는 초기 단계에 필요 없음, "가끔 로그를 직접 열어보는" 수준으로 시작.
+  - 이건 스토어 개인정보처리방침에도 명시해야 하는 사항이라 5-4번과 같이 처리.
+
+---
+
+## 6. 지금 시점 종합 상태 (2026-09-11 기준, 세 번째 갱신 — 오늘 작업 마무리)
+
+**완료(✅)**:
+- 1-2 디노이즈 안전장치, 1-3 얼굴복원 게이트+동물 제외.
+- 5-1 onedir 전환 — 재빌드해서 실측까지 완료: **콜드 스타트 80초 → 4.2초**.
+- 5-3 `reverse_geocoder`(LGPL) 제거 — `core/geocoder.py`를 자체 `scipy.cKDTree`
+  구현으로 실제 교체, 테스트 0개였던 이 모듈에 `tests/test_geocoder.py` 신설(7개),
+  `THIRD_PARTY_NOTICES.txt`에 GeoNames 데이터 저작자 표시 반영.
+- 5-4 `PRIVACY_POLICY_DRAFT.md`, 5-3 `THIRD_PARTY_NOTICES.txt` 초안 작성.
+- 5-5 원본 보호 버그 수정.
+- **5-2 GPU 가속 실제 설치·실측까지 완료** — 처음엔 "Python 3.14는 공식 CUDA 휠이
+  없다"고 잘못 판단했었는데(cu121/124만 확인한 탓), `cu126` 인덱스에서 정확히
+  맞는 휠을 찾아 실제 설치했다. **다만 실측 결과가 기대만큼 좋지는 않았다** —
+  작은 이미지에선 9.4배 빨라졌지만, 실제 폰카 해상도(12MP)에서는 1.7배에 그쳤다
+  (아키텍처 특성으로 추정, 원인 심층 분석은 범위 밖).
+- 전부 실측/재현/테스트로 검증됨 — `tests/test_*.py` 전체(200개 이상) 0 실패.
+
+**설계/조사만 되고 실행은 미착수(⬜)**: 3(골드셋 — 기존 샘플이 전부 가짜였다는 것만
+확인됨, 사용자가 실사진 제공하면 바로 채울 예정), 5-4의 나머지(연령등급/스크린샷/
+지원연락처 — 실제 Partner Center 계정에서 처리해야 함), 5-6(옵트인 실패 로그 —
+설계만 남음), GPU 가속이 해상도 클 때 왜 덜 빠른지 원인 분석(선택, 급하지 않음).
+
+**사용자가 해야 하는 것**: 골드셋용 실사진 제공(목록은 대화 참고), MS 스토어 실제
+제출(Partner Center 계정 필요) — 이 둘은 제가 대신 못 한다.

@@ -1,0 +1,139 @@
+PicMedic — Third-Party Notices
+================================
+
+(이 파일은 초안입니다 — 실제 배포 전에 사람이 한 번 더 확인할 것.
+RESTORATION_QUALITY_PLAN.md 5-3 참고. reverse_geocoder 패키지(LGPL)는 2026-09-11에
+자체 구현으로 교체해서 더 이상 쓰지 않는다 — 대신 그 패키지가 썼던 것과 같은
+GeoNames 데이터를 직접 포함하므로, 코드 라이선스 목록과 별개로 아래에 데이터
+저작자 표시를 남겼다.)
+
+PicMedic uses the following third-party software. We thank the authors and
+maintainers of these projects.
+
+
+------------------------------------------------------------------------------
+NAFNet
+------------------------------------------------------------------------------
+Used for: 디블러("core/deblur.py") / 디노이즈("core/denoise.py")
+Source: https://github.com/megvii-research/NAFNet
+License: MIT
+
+MIT License
+
+Copyright (c) 2022 megvii-model
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+
+------------------------------------------------------------------------------
+BasicSR (vendor/basicsr_min — 일부만 발췌해 벤더링)
+------------------------------------------------------------------------------
+Used for: NAFNet·RestoreFormer++ 공통 기반 코드
+Source: https://github.com/XPixelGroup/BasicSR
+License: Apache License 2.0
+전문: https://www.apache.org/licenses/LICENSE-2.0
+(표준 Apache 2.0 원문 그대로 — 이 파일엔 전문을 생략, 배포 시 원문 링크의
+텍스트를 그대로 포함시킬 것)
+
+
+------------------------------------------------------------------------------
+RestoreFormer++ (vendor/restoreformer)
+------------------------------------------------------------------------------
+Used for: 얼굴 복원("core/face_restorer.py")
+Source: https://github.com/wzhouxiff/RestoreFormerPlusPlus
+License: Apache License 2.0
+전문: https://www.apache.org/licenses/LICENSE-2.0
+
+
+------------------------------------------------------------------------------
+facexlib
+------------------------------------------------------------------------------
+Used for: 얼굴 탐지(디블러/디노이즈 후 얼굴복원 파이프라인, 사진 진단의 얼굴 탐지)
+Source: https://github.com/xinntao/facexlib
+License: Apache License 2.0
+전문: https://www.apache.org/licenses/LICENSE-2.0
+
+
+------------------------------------------------------------------------------
+Real-ESRGAN (ncnn-vulkan 실행 파일)
+------------------------------------------------------------------------------
+Used for: 화질 개선("core/quality_enhancer.py")
+Source: https://github.com/xinntao/Real-ESRGAN-ncnn-vulkan
+License: BSD-3-Clause 계열 (실제 배포 전 원저장소 LICENSE 파일로 정확한 문구
+재확인 필요 — 이 초안에선 라이선스 종류만 표기)
+
+
+------------------------------------------------------------------------------
+open_clip
+------------------------------------------------------------------------------
+Used for: 사진 진단 카테고리 분류("core/photo_category.py"), 고양이 찾기
+("core/cat_finder.py"), 얼굴복원 동물 사진 제외 사전점검
+Source: https://github.com/mlfoundations/open_clip
+License: MIT
+(pip 메타데이터로 확인: License: MIT)
+
+
+------------------------------------------------------------------------------
+torchvision
+------------------------------------------------------------------------------
+Source: https://github.com/pytorch/vision
+License: BSD-3-Clause
+(pip 메타데이터로 확인: License: BSD)
+
+
+------------------------------------------------------------------------------
+pillow-heif
+------------------------------------------------------------------------------
+Used for: HEIC/HEIF 디코딩
+Source: https://github.com/bigcat88/pillow_heif
+License: BSD-3-Clause
+(pip 메타데이터로 확인)
+
+
+------------------------------------------------------------------------------
+opencv-python / opencv-contrib-python
+------------------------------------------------------------------------------
+Source: https://github.com/opencv/opencv-python
+License: Apache License 2.0
+전문: https://www.apache.org/licenses/LICENSE-2.0
+
+
+------------------------------------------------------------------------------
+torch (PyTorch), numpy, Pillow
+------------------------------------------------------------------------------
+(이 셋은 설치된 패키지의 pip 메타데이터에 License 필드가 비어 있어 실측으로
+확인 못 함 — 일반적으로 각각 BSD 계열/BSD-3-Clause/HPND 계열로 알려져 있으나,
+배포 전 반드시 아래 공식 저장소의 LICENSE 파일 원문으로 직접 재확인해서
+이 섹션을 채울 것.)
+- torch: https://github.com/pytorch/pytorch/blob/main/LICENSE
+- numpy: https://github.com/numpy/numpy/blob/main/LICENSE.txt
+- Pillow: https://github.com/python-pillow/Pillow/blob/main/LICENSE
+
+
+------------------------------------------------------------------------------
+GeoNames (데이터, 코드 아님)
+------------------------------------------------------------------------------
+Used for: 도시별 정리("core/geocoder.py")의 GPS -> 도시명 매칭 —
+assets/geonames_cities1000.csv
+Source: https://www.geonames.org/
+License: Creative Commons Attribution 4.0 License (CC-BY 4.0)
+전문: https://creativecommons.org/licenses/by/4.0/
+
+This work is based on data from GeoNames (https://www.geonames.org/), made
+available under the Creative Commons Attribution 4.0 License.
