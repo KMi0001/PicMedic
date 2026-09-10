@@ -3,6 +3,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from tests.helpers import check
+
 from models.file_info import FileInfo
 from models.scan_result import ScanResult
 
@@ -12,17 +14,7 @@ def _info(path: str, phash: str | None = None, content_hash: str | None = None) 
     return FileInfo(path=path, filename=p.name, extension=p.suffix, perceptual_hash=phash, content_hash=content_hash)
 
 
-def run():
-    passed = failed = 0
-
-    def check(label, cond, extra=""):
-        nonlocal passed, failed
-        print(f"[{'PASS' if cond else 'FAIL'}] {label} {extra}")
-        if cond:
-            passed += 1
-        else:
-            failed += 1
-
+def test_scan_result():
     # 1) 파일명 패턴 — 접미사를 뗀 이름이 실제 존재하는 파일과 일치하면 그룹핑
     f_base = _info("C:/x/a.jpg", content_hash="h1")
     f_suffix = _info("C:/x/a_1.jpg", content_hash="h2")
@@ -67,9 +59,7 @@ def run():
     groups7 = result7.similar_groups()
     check("퍼셉추얼 해시 없어도 파일명 패턴만으로 그룹핑됨", len(groups7) == 1 and len(groups7[0]) == 2)
 
-    print(f"\n총 {passed + failed}개 중 {passed}개 통과, {failed}개 실패")
-    return failed == 0
 
-
-if __name__ == "__main__":
-    sys.exit(0 if run() else 1)
+if __name__ == "__main__":  # pytest 없이 이 파일 하나만 돌려보고 싶을 때
+    test_scan_result()
+    print("OK")

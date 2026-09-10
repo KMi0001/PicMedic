@@ -13,6 +13,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from tests.helpers import check, skip
+
 from PIL import Image, ImageFilter
 
 from core import deblur, denoise, face_restorer, quality_enhancer
@@ -26,22 +28,7 @@ def _make_test_photo(path: Path, size=(300, 200)):
     img.save(path, format="PNG")
 
 
-def run():
-    passed = failed = skipped = 0
-
-    def check(label, cond, extra=""):
-        nonlocal passed, failed
-        print(f"[{'PASS' if cond else 'FAIL'}] {label} {extra}")
-        if cond:
-            passed += 1
-        else:
-            failed += 1
-
-    def skip(label):
-        nonlocal skipped
-        skipped += 1
-        print(f"[SKIP] {label}")
-
+def test_ai_restoration():
     with tempfile.TemporaryDirectory() as tmp:
         tmp = Path(tmp)
         photo_path = tmp / "test.png"
@@ -112,9 +99,7 @@ def run():
         else:
             skip("restore_face 실제 실행 (assets/face_restore/ 없음 — scripts/fetch_face_restore_assets.py 필요)")
 
-    print(f"\n총 {passed + failed}개 중 {passed}개 통과, {failed}개 실패 ({skipped}개 스킵)")
-    return failed == 0
 
-
-if __name__ == "__main__":
-    sys.exit(0 if run() else 1)
+if __name__ == "__main__":  # pytest 없이 이 파일 하나만 돌려보고 싶을 때
+    test_ai_restoration()
+    print("OK")

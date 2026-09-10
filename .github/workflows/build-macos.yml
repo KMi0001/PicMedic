@@ -1,9 +1,19 @@
 name: Build macOS App
 
+# 크로스 컴파일이 불가능해서(PyInstaller 제약) macOS 하드웨어가 없을 때
+# .app을 얻는 유일한 경로. 자세한 배경은 README.md "로컬 macOS 없이 빌드하기".
+#
+# 2026-09-11 수정: 예전엔 AI 자산을 하나도 안 받고 빌드해서, 여기서 나온 .app은
+# 화질 개선·얼굴 복원·디블러·디노이즈·사진 진단 카테고리가 통째로 빠진 물건이었다
+# (assets/* 가 전부 .gitignore 대상이라 체크아웃에 없는데, scripts/fetch_*를
+# 실행하지 않았음). 받을 수 있는 자산은 받고, 못 받은 건 아티팩트 안에
+# BUILD_INFO.txt로 명시한다.
+
 on:
   workflow_dispatch:
   push:
     branches:
+      - main
       - "claude/**"
     paths:
       - "**.py"
@@ -21,23 +31,79 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+          cache: pip
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          pip install -r requirements.txt -r requirements-dev.txt
           pip install pyinstaller
+
+      # 모델 가중치는 합쳐서 약 1GB라 매번 받으면 빌드가 느리고 원본 호스트에도
+      # 부담이다. fetch 스크립트가 바뀌지 않는 한(=받는 파일이 그대로인 한) 캐시를 쓴다.
+      - name: Cache AI model assets
+        uses: actions/cache@v4
+        with:
+          path: |
+            assets/face_restore
+            assets/photo_category
+            assets/deblur
+            assets/denoise
+          key: ai-assets-${{ hashFiles('scripts/fetch_*_assets.py') }}
+
+      - name: Fetch AI model assets (best effort)
+        # 개별 자산을 못 받아도 빌드 자체는 계속한다 — 그 기능만 빠진 .app이
+        # 나오고, 어떤 게 빠졌는지는 다음 스텝이 기록한다.
+        # deblur/denoise는 Google Drive라(gdown 사용) CI에서 특히 실패하기 쉽다.
+        continue-on-error: true
+        run: |
+          for s in face_restore photo_category deblur denoise; do
+            echo "::group::fetch_${s}_assets.py"
+            python "scripts/fetch_${s}_assets.py" || echo "!! ${s} 자산 받기 실패 (계속 진행)"
+            echo "::endgroup::"
+          done
+          # realesrgan(화질 개선)은 Windows 실행 파일만 배포돼 있어 macOS에서는
+          # 받을 수 없다 — RESTORATION_QUALITY_PLAN.md P2 "macOS Real-ESRGAN
+          # 바이너리 확보"가 해결되기 전까지는 이 기능이 빠진 채로 나간다.
+          echo "realesrgan: macOS 바이너리 미확보 — 건너뜀"
+
+      - name: Record what actually made it into the bundle
+        run: |
+          {
+            echo "PicMedic macOS 빌드"
+            echo "커밋: ${{ github.sha }}"
+            echo "빌드 시각: $(date -u '+%Y-%m-%d %H:%M UTC')"
+            echo ""
+            echo "포함된 AI 기능 (자산이 실제로 받아진 것만 동작합니다):"
+            check() { if [ -d "assets/$1" ] && [ -n "$(ls -A "assets/$1" 2>/dev/null)" ]; then echo "  [O] $2"; else echo "  [X] $2 — 자산 없음, 이 빌드에서 동작하지 않음"; fi; }
+            check face_restore   "얼굴 복원"
+            check photo_category "사진 진단(카테고리 판단)"
+            check deblur         "디블러"
+            check denoise        "디노이즈"
+            check realesrgan     "화질 개선(업스케일)"
+            echo ""
+            echo "진단/복구/정리 기능은 AI 자산과 무관하게 항상 포함됩니다."
+          } | tee BUILD_INFO.txt
+
+      - name: Run tests
+        env:
+          QT_QPA_PLATFORM: offscreen
+          PYTHONIOENCODING: utf-8
+        run: python -m pytest -v
 
       - name: Build .app with PyInstaller
         run: pyinstaller --noconfirm PicMedic-mac.spec
 
       - name: Zip .app bundle
         run: |
+          cp BUILD_INFO.txt dist/
           cd dist
           ditto -c -k --sequesterRsrc --keepParent PicMedic.app PicMedic-macOS.zip
 
       - uses: actions/upload-artifact@v4
         with:
           name: PicMedic-macOS
-          path: dist/PicMedic-macOS.zip
+          path: |
+            dist/PicMedic-macOS.zip
+            dist/BUILD_INFO.txt
           retention-days: 14

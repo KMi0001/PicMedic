@@ -11,6 +11,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from tests.helpers import check
+
 from PIL import Image
 import pillow_heif
 
@@ -43,19 +45,7 @@ def make_tiff(path: Path):
     Image.new("RGB", (20, 20), color="purple").save(path, format="TIFF")
 
 
-def run():
-    passed = 0
-    failed = 0
-
-    def check(label, condition):
-        nonlocal passed, failed
-        status = "PASS" if condition else "FAIL"
-        if condition:
-            passed += 1
-        else:
-            failed += 1
-        print(f"[{status}] {label}")
-
+def test_detector():
     with tempfile.TemporaryDirectory() as tmp:
         tmp = Path(tmp)
 
@@ -119,10 +109,7 @@ def run():
         check("'.bmp'는 지원 확장자(추가 포맷 지원)", detector.is_mvp_supported_extension(".bmp"))
         check("'.avif'는 아직 지원 확장자 아님", not detector.is_mvp_supported_extension(".avif"))
 
-    print(f"\n총 {passed + failed}개 중 {passed}개 통과, {failed}개 실패")
-    return failed == 0
 
-
-if __name__ == "__main__":
-    success = run()
-    sys.exit(0 if success else 1)
+if __name__ == "__main__":  # pytest 없이 이 파일 하나만 돌려보고 싶을 때
+    test_detector()
+    print("OK")

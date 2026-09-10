@@ -14,6 +14,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from tests.helpers import check
+
 import numpy as np
 from PIL import Image, ImageFilter
 
@@ -37,17 +39,7 @@ def _sharp_image(size=(600, 600)) -> Image.Image:
     return Image.fromarray(arr, mode="L").convert("RGB")
 
 
-def run():
-    passed = failed = 0
-
-    def check(label, cond, extra=""):
-        nonlocal passed, failed
-        print(f"[{'PASS' if cond else 'FAIL'}] {label} {extra}")
-        if cond:
-            passed += 1
-        else:
-            failed += 1
-
+def test_quality_diagnosis():
     with tempfile.TemporaryDirectory() as tmp:
         tmp = Path(tmp)
 
@@ -127,9 +119,7 @@ def run():
             calls,
         )
 
-    print(f"\n총 {passed + failed}개 중 {passed}개 통과, {failed}개 실패")
-    return failed == 0
 
-
-if __name__ == "__main__":
-    sys.exit(0 if run() else 1)
+if __name__ == "__main__":  # pytest 없이 이 파일 하나만 돌려보고 싶을 때
+    test_quality_diagnosis()
+    print("OK")

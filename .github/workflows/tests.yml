@@ -1,0 +1,50 @@
+name: Tests
+
+# 2026-09-11까지 이 저장소의 유일한 워크플로는 build-macos.yml이었고, 테스트를
+# 자동으로 돌리는 곳이 전혀 없었다(케이스 230개가 전부 수동 실행에만 의존).
+# 유료 배포를 앞둔 시점이라 최소한 "머지 전에 다 돌아간다"는 보장을 만든다.
+
+on:
+  push:
+    branches: [main, "claude/**"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  test:
+    # Windows/macOS 양쪽을 지원하는 게 이 앱의 전제(CLAUDE.md 크로스플랫폼 원칙)라
+    # 둘 다 돌린다. 실제로 macOS에서만 재현된 버그(심볼릭 링크 순환 스캔)가
+    # 있었던 만큼, 한쪽만 돌리면 의미가 절반이다.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        # torch는 CPU 휠로 충분하다 — 여기서 검증하는 건 로직이지 GPU 가속이
+        # 아니고, CUDA 휠은 받는 데만 몇 GB라 CI 시간을 통째로 잡아먹는다.
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Run tests
+        # AI 모델 자산(수백MB~1GB)은 git에 없고 여기서 받지도 않는다 —
+        # 그 자산이 필요한 케이스는 tests/helpers.py의 skip()으로 [SKIP] 처리되고
+        # 순수 로직 검증은 자산 없이도 전부 통과해야 한다(README 참고).
+        # Qt 위젯을 만드는 테스트(test_result_screen.py)가 있어서 헤드리스
+        # 플랫폼 플러그인이 필요하다.
+        env:
+          QT_QPA_PLATFORM: offscreen
+          PYTHONIOENCODING: utf-8
+        run: python -m pytest -v

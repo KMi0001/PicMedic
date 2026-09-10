@@ -1,6 +1,7 @@
 # Python
 __pycache__/
 *.pyc
+.pytest_cache/
 
 # Build artifacts (PicMedic.spec is kept — documents the exact build flags)
 build/

@@ -3,6 +3,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from tests.helpers import check
+
 from core.duplicate_resolver import suggest_keep, suggest_keep_folder
 from models.file_info import FileInfo
 
@@ -19,17 +21,7 @@ def _times(mapping: dict[str, float]):
     return fn
 
 
-def run():
-    passed = failed = 0
-
-    def check(label, cond, extra=""):
-        nonlocal passed, failed
-        print(f"[{'PASS' if cond else 'FAIL'}] {label} {extra}")
-        if cond:
-            passed += 1
-        else:
-            failed += 1
-
+def test_duplicate_resolver():
     # 1) 파일명 패턴으로 정해지는 경우 - "복사본" 표시 없는 유일한 파일을 추천
     group = [_info("C:/a/IMG_0284.jpg"), _info("C:/b/IMG_0284_복사본.jpg")]
     result = suggest_keep(group, creation_time_fn=_times({}))
@@ -146,9 +138,7 @@ def run():
         f"실제={result12}",
     )
 
-    print(f"\n총 {passed + failed}개 중 {passed}개 통과, {failed}개 실패")
-    return failed == 0
 
-
-if __name__ == "__main__":
-    sys.exit(0 if run() else 1)
+if __name__ == "__main__":  # pytest 없이 이 파일 하나만 돌려보고 싶을 때
+    test_duplicate_resolver()
+    print("OK")

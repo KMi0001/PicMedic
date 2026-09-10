@@ -6,6 +6,8 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from tests.helpers import check
+
 from PIL import Image
 import pillow_heif
 
@@ -21,17 +23,7 @@ def make_heic(path: Path):
     heif_file.save(path, quality=80)
 
 
-def run():
-    passed = failed = 0
-
-    def check(label, cond, extra=""):
-        nonlocal passed, failed
-        print(f"[{'PASS' if cond else 'FAIL'}] {label} {extra}")
-        if cond:
-            passed += 1
-        else:
-            failed += 1
-
+def test_converter():
     with tempfile.TemporaryDirectory() as tmp:
         tmp = Path(tmp)
         output_dir = tmp / "Recovered"
@@ -230,9 +222,7 @@ def run():
         stranded = [p for p in trash.list_trash(trash_dir2) if p.stem.startswith("PET2")]
         check("예상 못한 예외 발생 후 PET2가 임시휴지통에 방치되지 않음", not stranded, stranded)
 
-    print(f"\n총 {passed + failed}개 중 {passed}개 통과, {failed}개 실패")
-    return failed == 0
 
-
-if __name__ == "__main__":
-    sys.exit(0 if run() else 1)
+if __name__ == "__main__":  # pytest 없이 이 파일 하나만 돌려보고 싶을 때
+    test_converter()
+    print("OK")

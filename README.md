@@ -56,24 +56,29 @@ python main.py
 ## 테스트 실행
 
 ```bash
-python tests/test_detector.py
-python tests/test_analyzer.py
-python tests/test_converter.py
-python tests/test_logger.py
-python tests/test_scanner.py
-python tests/test_result_screen.py
-python tests/test_trash.py
-python tests/test_duplicate_resolver.py
-python tests/test_date_organizer.py
-python tests/test_scan_result.py
-python tests/test_ai_restoration.py
-python tests/test_quality_diagnosis.py
-python tests/test_photo_category.py
+pip install -r requirements.txt -r requirements-dev.txt
+python -m pytest
 ```
-모두 [PASS]로 통과해야 합니다 (총 230개 케이스 — 2026-09-11 실측 확인, 심볼릭 링크 생성
-권한이 없는 환경 기준). `test_scanner.py`는 심볼릭 링크를 만들 권한이 없는
-환경(예: 개발자 모드가 꺼진 Windows)에서는 순환 테스트 일부가 [SKIP]으로
+
+2026-09-11에 pytest로 옮겼습니다. 그전에는 파일마다 `python tests/test_x.py`로
+따로 돌려야 했고(여기 14줄짜리 목록이 있었음) 실패해도 stack trace가 안 나왔습니다.
+**테스트 본문은 그대로 두고** 파일마다 중복돼 있던 `check()` 헬퍼만
+[tests/helpers.py](tests/helpers.py)로 합쳤으므로, 라벨과 케이스는 예전과 동일합니다.
+파일 하나만 돌려보고 싶으면 예전처럼 `python tests/test_detector.py`도 그대로 됩니다.
+
+모두 [PASS]로 통과해야 합니다 (테스트 함수 14개 / 단언 230개 — 2026-09-11 실측 확인,
+심볼릭 링크 생성 권한이 없는 환경 기준). `test_scanner.py`는 심볼릭 링크를 만들 권한이
+없는 환경(예: 개발자 모드가 꺼진 Windows)에서는 순환 테스트 일부가 [SKIP]으로
 표시되고, 권한이 있으면 그만큼 케이스 수가 더 늘어납니다.
+
+Qt 위젯을 만드는 테스트가 있어서, 화면이 없는 환경(CI 등)에서는
+`QT_QPA_PLATFORM=offscreen`을 설정해야 합니다.
+
+### 자동 실행 (CI)
+
+`.github/workflows/tests.yml`이 `main`·`claude/**` 푸시와 `main`으로 가는 PR마다
+**Windows + macOS 양쪽에서** 위 명령을 돌립니다. macOS에서만 재현됐던 버그(심볼릭
+링크 순환 스캔)가 있었던 만큼 한쪽만 돌리지 않습니다.
 
 `test_ai_restoration.py`·`test_photo_category.py`는 화질 개선/얼굴 복원/디블러/
 디노이즈/사진 진단 카테고리 판단이 쓰는 모델 자산(`scripts/fetch_*_assets.py`로
@@ -148,7 +153,16 @@ pyinstaller --noconfirm PicMedic-mac.spec
 
 ### 로컬 macOS 없이 빌드하기 (GitHub Actions)
 
-`.github/workflows/build-macos.yml`이 `claude/**` 브랜치 푸시 시 GitHub의 macOS 러너에서 자동으로 `.app`을 빌드해 Actions 아티팩트(`PicMedic-macOS`)로 올려줍니다. Actions 탭 → 해당 워크플로우 실행 → Artifacts에서 zip을 내려받아 압축 해제 후 실행하면 됩니다. 필요시 "Run workflow" 버튼으로 수동 실행도 가능합니다.
+`.github/workflows/build-macos.yml`이 `main`·`claude/**` 브랜치 푸시 시 GitHub의 macOS 러너에서 자동으로 `.app`을 빌드해 Actions 아티팩트(`PicMedic-macOS`)로 올려줍니다. Actions 탭 → 해당 워크플로우 실행 → Artifacts에서 zip을 내려받아 압축 해제 후 실행하면 됩니다. 필요시 "Run workflow" 버튼으로 수동 실행도 가능합니다.
+
+- 이 워크플로는 빌드 전에 **테스트를 먼저 돌리고**, AI 모델 자산(`scripts/fetch_*_assets.py`)도
+  받아서 번들에 넣습니다. 2026-09-11 이전에는 자산을 하나도 안 받아서, 여기서 나온 `.app`은
+  AI 기능이 통째로 빠진 물건이었습니다.
+- 다만 **화질 개선(Real-ESRGAN)은 여전히 빠집니다** — macOS용 바이너리가 아직 없습니다
+  (RESTORATION_QUALITY_PLAN.md P2). 디블러/디노이즈 자산은 Google Drive에서 받아오는지라
+  CI에서 실패할 수 있고, 그 경우 그 기능만 빠진 채 빌드가 계속됩니다.
+- **아티팩트 안의 `BUILD_INFO.txt`에 어떤 AI 기능이 실제로 들어갔는지 기록됩니다** — 받은 `.app`에서
+  기능이 안 보이면 먼저 이 파일을 확인하세요.
 
 ## 로그 (FR-006)
 

@@ -13,6 +13,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from tests.helpers import check, skip
+
 from core.scanner import iter_candidate_files, scan_paths
 
 TIMEOUT_SEC = 5
@@ -29,20 +31,7 @@ def _run_with_timeout(fn):
             return None, f"{TIMEOUT_SEC}초 안에 안 끝남 (심볼릭 링크 순환에서 멈춘 것으로 보임)"
 
 
-def run():
-    passed = 0
-    failed = 0
-    skipped = 0
-
-    def check(label, condition):
-        nonlocal passed, failed
-        status = "PASS" if condition else "FAIL"
-        if condition:
-            passed += 1
-        else:
-            failed += 1
-        print(f"[{status}] {label}")
-
+def test_scanner():
     with tempfile.TemporaryDirectory() as tmp:
         tmp = Path(tmp)
         (tmp / "photo.jpg").write_bytes(b"fake")
@@ -54,8 +43,7 @@ def run():
             symlink_ok = False
 
         if not symlink_ok:
-            skipped += 1
-            print("[SKIP] 심볼릭 링크 순환 테스트 (이 환경에서는 심볼릭 링크 생성 권한이 없음)")
+            skip("심볼릭 링크 순환 테스트 (이 환경에서는 심볼릭 링크 생성 권한이 없음)")
         else:
             # 1) 자기 자신을 가리키는 심볼릭 링크가 있어도 무한 루프 없이 끝나야 한다
             files, err = _run_with_timeout(lambda: list(iter_candidate_files(tmp)))
@@ -89,10 +77,7 @@ def run():
 
         check("취소 신호 후 파일 수집이 즉시 멈춤 (3개 이하)", len(seen) <= 3)
 
-    print(f"\n총 {passed + failed}개 중 {passed}개 통과, {failed}개 실패 ({skipped}개 스킵)")
-    return failed == 0
 
-
-if __name__ == "__main__":
-    success = run()
-    sys.exit(0 if success else 1)
+if __name__ == "__main__":  # pytest 없이 이 파일 하나만 돌려보고 싶을 때
+    test_scanner()
+    print("OK")
