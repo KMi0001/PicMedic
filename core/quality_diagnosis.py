@@ -166,10 +166,11 @@ def _get_detection_model(weights_dir: Path):
     if _detection_model_cache is not None:
         return _detection_model_cache
 
-    import torch
     from facexlib.detection import init_detection_model
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    from core.torch_device import resolve_device
+
+    device = resolve_device()
     model = init_detection_model("retinaface_resnet50", half=False, device=device, model_rootpath=str(weights_dir))
     _detection_model_cache = (model, device)
     return _detection_model_cache

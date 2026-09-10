@@ -152,12 +152,14 @@ def _get_model():
     import torch
     from basicsr.models.archs.NAFNet_arch import NAFNet
 
+    from core.torch_device import resolve_device
+
     net = NAFNet(img_channel=3, width=32, middle_blk_num=1, enc_blk_nums=[1, 1, 1, 28], dec_blk_nums=[1, 1, 1, 1])
     ckpt = torch.load(str(_CKPT_PATH), map_location="cpu")
     net.load_state_dict(ckpt["params"], strict=True)
     net.eval()
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = resolve_device()
     net = net.to(device)
     _model_cache = (net, device)
     return _model_cache

@@ -60,7 +60,9 @@ def _get_model():
     import open_clip
     import torch
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    from core.torch_device import resolve_device
+
+    device = resolve_device()
 
     model, _, preprocess = open_clip.create_model_and_transforms(
         "ViT-B-32", pretrained=str(_CKPT_PATH), force_quick_gelu=True, weights_only=False

@@ -71,11 +71,13 @@ def _get_model():
     import open_clip
     import torch
 
-    # core/deblur.py·denoise.py·face_restorer.py와 동일한 GPU 자동 감지 —
-    # 이 함수만 빠져 있어서 GPU가 있는 기기에서도 항상 CPU로 돌고 있었다
-    # (실측: 4032x3024 기준 CPU 215ms/장, 사진 진단의 카테고리 판단도 이
-    # 경로를 타므로 같이 빨라진다).
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    from core.torch_device import resolve_device
+
+    # core/deblur.py·denoise.py·face_restorer.py와 동일한 GPU 자동 감지(공용
+    # core/torch_device.resolve_device) — 이 함수만 빠져 있어서 GPU가 있는
+    # 기기에서도 항상 CPU로 돌고 있었다(실측: 4032x3024 기준 CPU 215ms/장,
+    # 사진 진단의 카테고리 판단도 이 경로를 타므로 같이 빨라진다).
+    device = resolve_device()
 
     model, _, preprocess = open_clip.create_model_and_transforms(
         "ViT-B-32", pretrained=str(_CKPT_PATH), force_quick_gelu=True, weights_only=False
