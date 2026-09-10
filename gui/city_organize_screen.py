@@ -34,6 +34,7 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QPushButton,
     QRadioButton,
+    QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
@@ -89,7 +90,23 @@ class CityOrganizeScreen(QWidget):
         self._group_exclusions: dict[str, set[str]] = {}
         self._output_root: str = ""
 
-        outer = QVBoxLayout(self)
+        # 화면 전체를 쓰는 큰 창에서 내용이 창 끝까지 늘어나면 텅 빈 공간이
+        # 남아 허전해 보인다(gui/date_organize_screen.py·gui/organize_hub_screen.py와
+        # 같은 문제/수정) — 내용 폭을 한 번 고정(900px)하고 가운데 정렬한다.
+        # 예전엔 이 컨테이너가 없어서 지도/목록만 창 끝까지 늘어나고 하단 카드/
+        # 버튼은 따로 640px로 좁혀놔서 왼쪽에 따로 몰려 보였다(2026-09-10, 사용자
+        # 리포트 — "하단부분이 안이뻐, 다른애들이랑 통일하자").
+        root = QHBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.addStretch(1)
+
+        content = QWidget()
+        content.setMaximumWidth(900)
+        content.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        root.addWidget(content, 100)
+        root.addStretch(1)
+
+        outer = QVBoxLayout(content)
         outer.setContentsMargins(48, 32, 48, 32)
         outer.setSpacing(14)
 
@@ -139,10 +156,6 @@ class CityOrganizeScreen(QWidget):
         # --- 하단: 방식 선택 + 저장 위치 + 실행 (gui/date_organize_screen.py와 동일 패턴) ---
         mode_card = QFrame()
         mode_card.setObjectName("Card")
-        # 지도/목록은 넓을수록 좋지만(지도는 위 outer.addWidget(..., stretch=2)로
-        # 이미 폭을 다 씀), 라디오 버튼 두 줄짜리 폼까지 창 끝까지 늘리면 텍스트
-        # 옆에 텅 빈 공간만 남는다 — 이 카드만 폭을 고정한다.
-        mode_card.setMaximumWidth(640)
         mode_layout = QVBoxLayout(mode_card)
         mode_layout.setContentsMargins(18, 14, 18, 14)
         mode_layout.setSpacing(8)
@@ -189,7 +202,6 @@ class CityOrganizeScreen(QWidget):
         self.organize_btn = QPushButton("이 방식대로 정리하기")
         self.organize_btn.setObjectName("Primary")
         self.organize_btn.setEnabled(False)
-        self.organize_btn.setMaximumWidth(640)
         self.organize_btn.clicked.connect(self._on_organize_clicked)
         outer.addWidget(self.organize_btn)
 

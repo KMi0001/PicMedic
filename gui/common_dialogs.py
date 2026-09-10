@@ -228,7 +228,16 @@ class ProgressDialog(QDialog):
     def update_progress(self, current: int, total: int, filename: str):
         pct = int((current / total) * 100) if total else 0
         self.bar.setValue(pct)
-        self.status_label.setText(f"{filename} 처리 중... ({current}/{total})")
+        # 파일명(특히 긴 숫자 나열 파일명)엔 줄바꿈될 공백이 없어서 setWordWrap만으론
+        # 못 끊기고 고정폭 팝업 밖으로 삐져나갔다(2026-09-10, 사용자 리포트) — 파일명
+        # 줄과 "처리 중..." 줄을 아예 나눠서(원래도 공백 때문에 사실상 이렇게 두 줄로
+        # 보였다), 파일명 줄만 그 폭에 맞게 가운데를 말줄임표로 줄인다. 전체 문구는
+        # 툴팁으로 남겨 필요하면 볼 수 있게 한다.
+        suffix = f"처리 중... ({current}/{total})"
+        metrics = self.status_label.fontMetrics()
+        elided_filename = metrics.elidedText(filename, Qt.ElideMiddle, max(self.status_label.width(), 0))
+        self.status_label.setText(f"{elided_filename}\n{suffix}")
+        self.status_label.setToolTip(f"{filename} {suffix}")
 
     def _on_cancel_clicked(self):
         # 이미 처리 중인 작업은 끝까지 끝내야 하니 버튼을 바로 잠그고 진행 중임을 알린다
