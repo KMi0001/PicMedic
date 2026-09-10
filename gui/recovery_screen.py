@@ -365,14 +365,15 @@ class RecoveryScreen(QWidget):
         # "원본 삭제"를 고르면 "저장 위치"/"파일명에 추가할 문구"는 안 쓰인다 —
         # 결과가 항상 원본이 있던 그 폴더에, 원본 이름 그대로(확장자만 결과에
         # 맞게) 저장되기 때문(core/converter.py::_recover_file_replacing_original).
-        # 값 자체는 지우지 않고 비활성화만 해서, 다시 "원본 보존"으로 돌아가면
-        # 이전에 입력해둔 값이 그대로 남게 한다.
+        # 회색으로 비활성화만 하면 "왜 안 써도 되는 칸이 계속 보이지?" 헷갈릴 수
+        # 있어 아예 숨긴다(2026-09-10, 사용자 요청) — 값 자체는 지우지 않으니
+        # 다시 "원본 보존"으로 돌아가면 이전에 입력해둔 값이 그대로 남는다.
         checked = self.replace_original_radio.isChecked()
-        self.output_label.setEnabled(not checked)
-        self.output_edit.setEnabled(not checked)
-        self.browse_btn.setEnabled(not checked)
-        self.suffix_label.setEnabled(not checked)
-        self.suffix_edit.setEnabled(not checked)
+        self.output_label.setVisible(not checked)
+        self.output_edit.setVisible(not checked)
+        self.browse_btn.setVisible(not checked)
+        self.suffix_label.setVisible(not checked)
+        self.suffix_edit.setVisible(not checked)
         if checked:
             self.keep_original_note.setText(
                 "원본은 그 폴더의 \"임시휴지통\"으로 옮겨지고, 복구 결과가 원본이 있던 자리를 대신합니다. "
