@@ -23,8 +23,18 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import Qt, Signal, QSettings, QStandardPaths, QPointF, QRectF
-from PySide6.QtGui import QCursor, QPixmap, QPainter, QPen, QColor
+from PySide6.QtCore import (
+    Qt,
+    Signal,
+    QSettings,
+    QStandardPaths,
+    QPointF,
+    QRectF,
+    QPropertyAnimation,
+    QEasingCurve,
+    Property,
+)
+from PySide6.QtGui import QCursor, QPixmap, QPainter, QPen, QColor, QBrush
 from PySide6.QtWidgets import (
     QWidget,
     QVBoxLayout,
@@ -35,9 +45,11 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QDialog,
     QMenu,
+    QAbstractButton,
 )
 
 from core.scanner import SCANNABLE_EXTENSIONS
+from gui import theme
 from gui.common_dialogs import info_dialog
 from gui.convert_dialog import run_convert
 from gui.quality_diagnosis_dialog import run_quality_diagnosis
@@ -120,6 +132,71 @@ def _convert_icon_pixmap(color: str, size: int = 26) -> QPixmap:
     return _outline_icon(color, size, draw)
 
 
+class ThemeToggle(QAbstractButton):
+    """다크모드 on/off용 iOS 스타일 토글 스위치. 트랙/노브 색을 매 paintEvent마다
+    COLORS에서 읽으므로, 테마가 바뀌면(다른 창에서든) 다음 repaint에 알아서
+    새 색으로 그려진다 — 이 위젯 자체를 위한 refresh는 따로 필요 없다."""
+
+    _WIDTH = 44
+    _HEIGHT = 24
+    _MARGIN = 3
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setCheckable(True)
+        self.setCursor(Qt.PointingHandCursor)
+        self.setFixedSize(self._WIDTH, self._HEIGHT)
+        self._knob_pos = 1.0 if self.isChecked() else 0.0
+        self._anim = QPropertyAnimation(self, b"knob_pos", self)
+        self._anim.setDuration(160)
+        self._anim.setEasingCurve(QEasingCurve.OutCubic)
+        self.toggled.connect(self._animate_to)
+
+    def _animate_to(self, checked: bool) -> None:
+        self._anim.stop()
+        self._anim.setStartValue(self._knob_pos)
+        self._anim.setEndValue(1.0 if checked else 0.0)
+        self._anim.start()
+
+    def _get_knob_pos(self) -> float:
+        return self._knob_pos
+
+    def _set_knob_pos(self, value: float) -> None:
+        self._knob_pos = value
+        self.update()
+
+    knob_pos = Property(float, _get_knob_pos, _set_knob_pos)
+
+    def setChecked(self, checked: bool) -> None:
+        super().setChecked(checked)
+        self._knob_pos = 1.0 if checked else 0.0
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setPen(Qt.NoPen)
+
+        track_off = QColor(COLORS["border"])
+        track_on = QColor(COLORS["primary"])
+        painter.setBrush(QBrush(self._blend(track_off, track_on, self._knob_pos)))
+        painter.drawRoundedRect(self.rect(), self._HEIGHT / 2, self._HEIGHT / 2)
+
+        knob_d = self._HEIGHT - self._MARGIN * 2
+        travel = self._WIDTH - knob_d - self._MARGIN * 2
+        x = self._MARGIN + travel * self._knob_pos
+        painter.setBrush(QBrush(QColor(COLORS["surface"])))
+        painter.drawEllipse(QRectF(x, self._MARGIN, knob_d, knob_d))
+        painter.end()
+
+    @staticmethod
+    def _blend(c1: QColor, c2: QColor, t: float) -> QColor:
+        return QColor(
+            int(c1.red() + (c2.red() - c1.red()) * t),
+            int(c1.green() + (c2.green() - c1.green()) * t),
+            int(c1.blue() + (c2.blue() - c1.blue()) * t),
+        )
+
+
 class DropActionCard(QFrame):
     """검사/진단/정리 액션 카드 — 각각 독립된 드래그앤드롭 타겟이자 클릭
     진입점이다(2026-09-10, 사용자 요청으로 공용 드롭존을 없애고 카드 3개
@@ -142,28 +219,42 @@ class DropActionCard(QFrame):
         layout.setContentsMargins(20, 16, 20, 16)
         layout.setSpacing(16)
 
-        icon_label = QLabel()
-        icon_label.setFixedSize(52, 52)
-        icon_label.setAlignment(Qt.AlignCenter)
-        icon_label.setStyleSheet(f"background-color: {COLORS['selection']}; border-radius: 26px;")
-        icon_label.setPixmap(icon_pixmap)
-        layout.addWidget(icon_label)
+        self.icon_label = QLabel()
+        self.icon_label.setFixedSize(52, 52)
+        self.icon_label.setAlignment(Qt.AlignCenter)
+        self.icon_label.setStyleSheet(f"background-color: {COLORS['selection']}; border-radius: 26px;")
+        self.icon_label.setPixmap(icon_pixmap)
+        layout.addWidget(self.icon_label)
 
         text_col = QVBoxLayout()
         text_col.setSpacing(3)
         title_label = QLabel(title)
         title_label.setStyleSheet("font-size: 15px; font-weight: 700; background: transparent;")
         text_col.addWidget(title_label)
-        desc_label = QLabel(desc)
-        desc_label.setWordWrap(True)
-        desc_label.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 11.5px; background: transparent;")
-        text_col.addWidget(desc_label)
+        self.desc_label = QLabel(desc)
+        self.desc_label.setWordWrap(True)
+        self.desc_label.setStyleSheet(
+            f"color: {COLORS['text_secondary']}; font-size: 11.5px; background: transparent;"
+        )
+        text_col.addWidget(self.desc_label)
         layout.addLayout(text_col, 1)
 
-        hint_label = QLabel("여기로 끌어놓기\n또는 클릭")
-        hint_label.setAlignment(Qt.AlignCenter)
-        hint_label.setStyleSheet(f"color: {COLORS['muted']}; font-size: 10.5px; background: transparent;")
-        layout.addWidget(hint_label)
+        self.hint_label = QLabel("여기로 끌어놓기\n또는 클릭")
+        self.hint_label.setAlignment(Qt.AlignCenter)
+        self.hint_label.setStyleSheet(f"color: {COLORS['muted']}; font-size: 10.5px; background: transparent;")
+        layout.addWidget(self.hint_label)
+
+    def refresh_theme(self, icon_pixmap: QPixmap) -> None:
+        """다크모드 토글 직후 호출 — 인라인 setStyleSheet로 색을 굳혀놓은
+        라벨들과 COLORS['primary']로 그려둔 아이콘 픽스맵을 새 팔레트로 다시
+        칠한다(QFrame#Card 테두리는 _apply_style이 처리)."""
+        self._apply_style(active=False)
+        self.icon_label.setStyleSheet(f"background-color: {COLORS['selection']}; border-radius: 26px;")
+        self.icon_label.setPixmap(icon_pixmap)
+        self.desc_label.setStyleSheet(
+            f"color: {COLORS['text_secondary']}; font-size: 11.5px; background: transparent;"
+        )
+        self.hint_label.setStyleSheet(f"color: {COLORS['muted']}; font-size: 10.5px; background: transparent;")
 
     def dragEnterEvent(self, event):
         if event.mimeData().hasUrls():
@@ -234,19 +325,28 @@ class HomeScreen(QWidget):
         brand_text.setSpacing(2)
         title = QLabel("PicMedic")
         title.setStyleSheet("font-size: 20px; font-weight: 700; margin: 0; padding: 0;")
-        subtitle = QLabel("사진을 치료해줄게요")
-        subtitle.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 12.5px; margin: 0; padding: 0;")
+        self.subtitle_label = QLabel("사진을 치료해줄게요")
+        self.subtitle_label.setStyleSheet(
+            f"color: {COLORS['text_secondary']}; font-size: 12.5px; margin: 0; padding: 0;"
+        )
         brand_text.addWidget(title)
-        brand_text.addWidget(subtitle)
+        brand_text.addWidget(self.subtitle_label)
         header_row.addLayout(brand_text)
         header_row.setAlignment(brand_text, Qt.AlignVCenter)
         header_row.addStretch(1)
+
+        self.theme_toggle = ThemeToggle()
+        self.theme_toggle.setChecked(theme.is_dark_mode())
+        self.theme_toggle.setToolTip("다크 모드")
+        self.theme_toggle.toggled.connect(self._on_theme_toggled)
+        header_row.addWidget(self.theme_toggle, alignment=Qt.AlignVCenter)
+
         content_layout.addLayout(header_row)
 
-        hint = QLabel("사진/폴더를 원하는 카드에 바로 끌어놓으세요 — 클릭해서 선택할 수도 있어요.")
-        hint.setWordWrap(True)
-        hint.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 12px;")
-        content_layout.addWidget(hint)
+        self.hint_label = QLabel("사진/폴더를 원하는 카드에 바로 끌어놓으세요 — 클릭해서 선택할 수도 있어요.")
+        self.hint_label.setWordWrap(True)
+        self.hint_label.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 12px;")
+        content_layout.addWidget(self.hint_label)
 
         self.scan_card = DropActionCard(
             _scan_icon_pixmap(COLORS["primary"]),
@@ -297,6 +397,22 @@ class HomeScreen(QWidget):
 
         outer.addWidget(content, alignment=Qt.AlignHCenter)
         outer.addStretch(1)
+
+    def _on_theme_toggled(self, checked: bool) -> None:
+        # 홈 화면은 MainWindow의 central widget이라 재생성(재진입) 없이 계속
+        # 떠있으므로, 인라인 setStyleSheet/아이콘 픽스맵으로 색을 굳혀둔
+        # 요소들은 여기서 직접 새로 칠해줘야 한다. 나머지 화면(검사/복구 등)은
+        # 세션 창을 새로 열 때(gui/scan_session_window.py) get_stylesheet()로
+        # 최신 팔레트를 받는다.
+        theme.set_dark_mode(checked)
+        self.subtitle_label.setStyleSheet(
+            f"color: {COLORS['text_secondary']}; font-size: 12.5px; margin: 0; padding: 0;"
+        )
+        self.hint_label.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 12px;")
+        self.scan_card.refresh_theme(_scan_icon_pixmap(COLORS["primary"]))
+        self.diagnose_card.refresh_theme(_diagnose_icon_pixmap(COLORS["primary"]))
+        self.convert_card.refresh_theme(_convert_icon_pixmap(COLORS["primary"]))
+        self.organize_card.refresh_theme(_organize_icon_pixmap(COLORS["primary"]))
 
     # --- 내부 로직 -----------------------------------------------------
 

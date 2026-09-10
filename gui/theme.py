@@ -2,11 +2,21 @@
 gui/theme.py
 
 전체 화면에서 공통으로 쓰는 색상/스타일시트(QSS).
+
+다크모드: COLORS는 항상 "지금 켜진 팔레트"를 담은 같은 dict 객체를 가리킨다 —
+set_dark_mode()가 이 객체의 내용물만 clear()/update()로 바꿔치기하므로,
+`from gui.theme import COLORS`로 이 dict를 가져다 쓰는 모든 화면 파일에서
+호출 시점마다 COLORS['xxx']를 읽기만 하면(변수에 미리 캐싱하지만 않으면)
+따로 손댈 필요 없이 새 팔레트가 반영된다. 반면 APP_STYLESHEET처럼 f-string으로
+한 번에 굳혀놓는 문자열은 그럴 수 없어서 get_stylesheet() 함수로 바꿨다 —
+토글 시점에 새로 만들어서 열려있는 모든 창에 다시 적용한다(_refresh_open_windows).
 """
+
+from PySide6.QtCore import QSettings
 
 from utils.assets import asset_path
 
-COLORS = {
+LIGHT_COLORS = {
     # 버터 · 아이보리 · 톤온톤 잉크 테마
     "bg": "#F7F1E4",
     "surface": "#FFFDF8",
@@ -21,18 +31,69 @@ COLORS = {
     "muted": "#A79A82",
     "selection": "#F1E6C6",
     "dashed": "#D8C9A0",
+    "on_primary": "#2A2420",
 }
 
-STATUS_COLORS = {
-    "정상": COLORS["success"],
-    "형식_불일치": COLORS["warning"],
-    "부분_손상": COLORS["warning"],
-    "손상": COLORS["danger"],
-    "지원되지_않는_형식": COLORS["muted"],
-    "이미지가_아닌_파일": COLORS["muted"],
-    "알_수_없음": COLORS["muted"],
-    "복구_완료": COLORS["primary"],
+DARK_COLORS = {
+    # 같은 버터 골드 포인트 컬러를 유지한 채 톤온톤 잉크를 어둡게 뒤집은 팔레트.
+    "bg": "#1E1A15",
+    "surface": "#2A241C",
+    "border": "#3D362A",
+    "text": "#EDE6D6",
+    "text_secondary": "#A79A82",
+    "primary": "#D9B54A",
+    "primary_hover": "#E8C765",
+    "success": "#8FA06B",
+    "warning": "#D4934F",
+    "danger": "#C77A6C",
+    "muted": "#7A7060",
+    "selection": "#3A3222",
+    "dashed": "#4A4230",
+    # 버튼 배경(primary, 골드)이 두 테마에서 똑같은 값이라 그 위에 얹는 글자색도
+    # 고정 — light COLORS['text']를 따라가게 두면 다크모드에서 밝은 글자가
+    # 골드 배경 위에 올라가 대비가 떨어진다(2026-09-10, 사용자 리포트).
+    "on_primary": "#2A2420",
 }
+
+_SETTINGS_KEY = "appearance/dark_mode"
+
+
+def _load_dark_preference() -> bool:
+    settings = QSettings("PicMedic", "PicMedic")
+    return bool(settings.value(_SETTINGS_KEY, False, type=bool))
+
+
+def _save_dark_preference(dark: bool) -> None:
+    settings = QSettings("PicMedic", "PicMedic")
+    settings.setValue(_SETTINGS_KEY, dark)
+
+
+_dark_mode = _load_dark_preference()
+
+# 다른 파일들이 `from gui.theme import COLORS`로 가져가는 바로 그 dict 객체.
+# 재할당하지 않고 내용물만 바꿔치기해야 이미 import해간 곳에서도 갱신이 보인다.
+COLORS = dict(DARK_COLORS if _dark_mode else LIGHT_COLORS)
+
+
+def is_dark_mode() -> bool:
+    return _dark_mode
+
+
+def _build_status_colors() -> dict:
+    return {
+        "정상": COLORS["success"],
+        "형식_불일치": COLORS["warning"],
+        "부분_손상": COLORS["warning"],
+        "손상": COLORS["danger"],
+        "지원되지_않는_형식": COLORS["muted"],
+        "이미지가_아닌_파일": COLORS["muted"],
+        "알_수_없음": COLORS["muted"],
+        "복구_완료": COLORS["primary"],
+    }
+
+
+# COLORS와 같은 이유로 재할당 대신 내용물만 바꿔치기(STATUS_COLORS.clear()/update()).
+STATUS_COLORS = _build_status_colors()
 
 STATUS_DOT = {
     "정상": "●",              # ●
@@ -52,7 +113,15 @@ STATUS_DOT = {
 # Qt QSS의 url()은 백슬래시를 이스케이프로 해석하므로 슬래시로 바꿔준다.
 _COMBO_ARROW_URL = asset_path("combo_arrow.png").replace("\\", "/")
 
-APP_STYLESHEET = f"""
+
+def get_stylesheet() -> str:
+    """지금 켜진 팔레트(COLORS)로 QSS를 새로 만들어 반환 — 다크모드 토글마다 다시
+    호출해서 열려있는 모든 창에 setStyleSheet()로 재적용한다."""
+    return _build_stylesheet()
+
+
+def _build_stylesheet() -> str:
+    return f"""
 QWidget {{
     background-color: {COLORS['bg']};
     color: {COLORS['text']};
@@ -108,7 +177,7 @@ QPushButton:hover {{
 
 QPushButton#Primary {{
     background-color: {COLORS['primary']};
-    color: {COLORS['text']};
+    color: {COLORS['on_primary']};
     border: none;
     font-weight: 600;
     padding: 10px 20px;
@@ -120,7 +189,7 @@ QPushButton#Primary:hover {{
 
 QPushButton#Primary:disabled {{
     background-color: {COLORS['muted']};
-    color: {COLORS['text']};
+    color: {COLORS['on_primary']};
 }}
 
 QPushButton#Danger {{
@@ -301,3 +370,37 @@ QMenu::separator {{
     margin: 4px 8px;
 }}
 """
+
+
+# experiments/* 프로토타입들이 여전히 `from gui.theme import APP_STYLESHEET`로
+# 가져다 쓰므로 import 시점 스냅샷을 하나 남겨둔다 — 실제 앱(gui/main_window.py,
+# gui/scan_session_window.py)은 토글 후에도 최신 팔레트를 받도록 get_stylesheet()를
+# 직접 호출한다.
+APP_STYLESHEET = get_stylesheet()
+
+
+def set_dark_mode(dark: bool) -> None:
+    global _dark_mode
+    _dark_mode = dark
+    COLORS.clear()
+    COLORS.update(DARK_COLORS if dark else LIGHT_COLORS)
+    STATUS_COLORS.clear()
+    STATUS_COLORS.update(_build_status_colors())
+    _save_dark_preference(dark)
+    _refresh_open_windows()
+
+
+def _refresh_open_windows() -> None:
+    from PySide6.QtWidgets import QApplication
+
+    from utils.native_titlebar import apply_titlebar_theme
+
+    app = QApplication.instance()
+    if app is None:
+        return
+    stylesheet = get_stylesheet()
+    for widget in app.topLevelWidgets():
+        # setStyleSheet()를 한 번이라도 받았던(=앱 테마를 쓰는) 최상위 창만 다시 칠한다.
+        if widget.styleSheet():
+            widget.setStyleSheet(stylesheet)
+            apply_titlebar_theme(widget, COLORS["bg"], COLORS["text"])

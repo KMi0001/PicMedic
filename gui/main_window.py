@@ -10,7 +10,8 @@ from __future__ import annotations
 
 from PySide6.QtWidgets import QMainWindow
 
-from gui.theme import APP_STYLESHEET
+from gui.theme import COLORS, get_stylesheet
+from utils.native_titlebar import apply_titlebar_theme
 from gui.home_screen import HomeScreen
 from gui.scan_session_window import ScanSessionWindow, _info_dialog
 
@@ -20,7 +21,8 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("PicMedic — 사진 진단 · 복구 · 정리")
         self.resize(760, 600)
-        self.setStyleSheet(APP_STYLESHEET)
+        self.setStyleSheet(get_stylesheet())
+        apply_titlebar_theme(self, COLORS["bg"], COLORS["text"])
 
         self.home_screen = HomeScreen()
         self.setCentralWidget(self.home_screen)

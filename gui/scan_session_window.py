@@ -25,7 +25,8 @@ from gui.common_dialogs import (
 )
 from gui.scanning_screen import ScanningScreen
 from gui.result_screen import ResultScreen
-from gui.theme import APP_STYLESHEET
+from gui.theme import COLORS, get_stylesheet
+from utils.native_titlebar import apply_titlebar_theme
 from gui.detail_screen import DetailScreen
 from gui.recovery_screen import RecoveryScreen
 from gui.recovery_result_screen import RecoveryResultScreen
@@ -151,7 +152,8 @@ class ScanSessionWindow(QWidget):
         self._organize_paths: list[str] | None = None  # land_on_organize일 때만 채워짐 — 카드 클릭 시 스캔에 씀
         self._pending_organize_destination = None  # 스캔이 끝나면 열 화면(콜백) — _ensure_scanned_then
         self.setWindowFlags(Qt.Window)
-        self.setStyleSheet(APP_STYLESHEET)
+        self.setStyleSheet(get_stylesheet())
+        apply_titlebar_theme(self, COLORS["bg"], COLORS["text"])
         self.setWindowTitle("PicMedic — 사진 진단 · 복구 · 정리")
         self.resize(*self._SCANNING_SIZE)
 
