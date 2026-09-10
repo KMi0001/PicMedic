@@ -6,6 +6,10 @@ gui/denoise_dialog.py
 "디블러/디노이즈" 하나였다가, NAFNet의 디블러/디노이즈 가중치가 서로 다른
 데이터셋으로 학습된 별도 모델이라(core/denoise.py 상단 설명 참고) 기능을
 분리했다.
+
+gui/deblur_dialog.py와 같은 이유로 core/denoise.py의 사전/사후 안전장치
+(DenoiseNotRecommendedError·DenoiseResultUnstableError)를 no_effect_exception에
+걸어둔다 — 망가진 결과를 사용자에게 아예 보여주지 않는다.
 """
 
 from __future__ import annotations
@@ -29,6 +33,7 @@ _CONFIG = SingleAIActionConfig(
     run_action=denoise.denoise_image,
     cancelled_exception=denoise.DenoiseCancelled,
     estimate_range=lambda w, h: (denoise.estimate_seconds(w, h),) * 2 if w and h else None,
+    no_effect_exception=(denoise.DenoiseNotRecommendedError, denoise.DenoiseResultUnstableError),
 )
 
 

@@ -14,6 +14,19 @@ core/deblur.py와 동일한 원칙.
 필요 자산: assets/denoise/ 아래 NAFNet-SIDD-width32.pth(scripts/
 fetch_denoise_assets.py로 받는다, 구글드라이브 호스팅이라 gdown 필요). 없으면
 is_available()이 False라 GUI 쪽에서 버튼을 감춘다.
+
+안전장치(2026-09-11, 유료화 준비 검토 중 core/deblur.py와 나란히 추가): 디블러와
+같은 아키텍처 계열(NAFNet)이라 같은 종류의 도메인 밖 발산 위험이 있는데, 정작
+디노이즈엔 안전장치가 없었다 — RESTORATION_QUALITY_PLAN.md P0 항목.
+사전 점검은 core.quality_diagnosis가 쓰는 것과 같은 노이즈 지표(중앙 크롭 +
+미디언필터 잔차 stddev, NOISE_RESIDUAL_STDDEV_THRESHOLD)를 그대로 재사용 —
+이미 실측 튜닝된 상수라 새로 정할 필요 없음.
+사후 점검은 디블러처럼 과거 사고 사례의 실측 비율을 따라간 게 아니다(디노이즈의
+실제 발산 사례가 아직 보고된 적이 없어 재현 불가) — 대신 "디노이징은 정의상
+출력의 edge variance를 입력보다 늘려선 안 된다"는 원리적 불변식을 쓴다
+(experiments/denoise_safety_prototype/measure.py 실측: 정상 케이스 ratio
+0.14~0.99, 전부 1 미만). 나중에 실제 발산 사례가 보고되면 그 실측치로
+임계값을 다시 맞출 것.
 """
 
 from __future__ import annotations
@@ -54,6 +67,61 @@ class DenoiseCancelled(Exception):
     팝업 없이 조용히 취소 처리를 할 수 있게)."""
 
 
+class DenoiseNotRecommendedError(Exception):
+    """사전 점검 실패: core.quality_diagnosis 기준으로 "노이즈 추정"이 아닌,
+    이미 노이즈가 적은 사진일 때. core/deblur.py의 DeblurNotRecommendedError와
+    같은 이유 — SIDD 전용 가중치라 노이즈 없는 입력엔 도메인을 벗어난다."""
+
+
+class DenoiseResultUnstableError(Exception):
+    """사후 점검 실패: 출력의 edge variance가 입력보다 늘어났을 때 — 노이즈를
+    "제거"하는 모델이라면 이런 일이 있어서는 안 된다(원리적으로 출력은 입력보다
+    같거나 매끈해야 함). 늘어났다면 모델이 도메인 밖 입력에 발산해 오히려
+    노이즈/아티팩트를 더한 신호로 보고 저장하지 않는다."""
+
+
+# experiments/denoise_safety_prototype/measure.py 실측: 정상 케이스(합성 노이즈
+# 입력 포함) ratio 0.14~0.99 — 전부 1 미만. 디노이징이 정상 작동하면 출력이
+# 입력보다 매끈해지거나 같아야 한다는 원리적 불변식이라, 여유를 크게 둬도
+# (1.5배) 정상 케이스를 오탐할 일은 없다.
+_RESULT_EDGE_VARIANCE_RATIO_LIMIT = 1.5
+# 원본이 극단적으로 밋밋해(분모가 0에 가까워) 비율이 인위적으로 폭주하는 것을
+# 방지 — core/deblur.py와 동일한 안전장치, 같은 값.
+_RESULT_EDGE_VARIANCE_RATIO_FLOOR = 50.0
+
+
+def _measure_noise_stddev(bgr_image) -> float:
+    """core.quality_diagnosis.assess_quality_issues()와 같은 공식(중앙
+    NOISE_CROP_SIZE 크롭 + 3x3 미디언필터 잔차 stddev)으로 노이즈 정도를 잰다.
+    파일을 다시 열어 재계산하지 않고 이미 메모리에 있는 BGR 배열로 계산한다 —
+    core/deblur.py._measure_edge_variance()와 같은 이유(HEIC 등)."""
+    import cv2
+    from PIL import Image, ImageChops, ImageFilter, ImageStat
+
+    from core.quality_diagnosis import _center_crop, NOISE_CROP_SIZE
+
+    rgb = cv2.cvtColor(bgr_image, cv2.COLOR_BGR2RGB)
+    gray = Image.fromarray(rgb).convert("L")
+    sample = _center_crop(gray, NOISE_CROP_SIZE)
+    denoised = sample.filter(ImageFilter.MedianFilter(size=3))
+    residual = ImageChops.difference(sample, denoised)
+    return ImageStat.Stat(residual).stddev[0]
+
+
+def _measure_edge_variance(bgr_image) -> float:
+    """core/deblur.py._measure_edge_variance()와 완전히 동일 — 사후 점검용
+    edge variance."""
+    import cv2
+    from PIL import Image
+
+    from core.quality_diagnosis import _edge_variance, QUALITY_ANALYSIS_MAX_SIDE
+
+    rgb = cv2.cvtColor(bgr_image, cv2.COLOR_BGR2RGB)
+    gray = Image.fromarray(rgb).convert("L")
+    gray.thumbnail((QUALITY_ANALYSIS_MAX_SIDE, QUALITY_ANALYSIS_MAX_SIDE))
+    return _edge_variance(gray)
+
+
 def _get_model():
     """NAFNet(SIDD 구성) 인스턴스를 지연 생성하고 캐싱한다(모듈 전역, 프로세스
     수명 동안 재사용 — 117MB 체크포인트 로딩을 매번 반복하지 않는다)."""
@@ -68,6 +136,8 @@ def _get_model():
     import torch
     from basicsr.models.archs.NAFNet_arch import NAFNet
 
+    from core.torch_device import resolve_device
+
     # options/test/SIDD/NAFNet-width32.yml의 network_g 설정과 정확히 일치해야
     # state_dict가 로드된다(core/deblur.py의 GoPro 설정과 다름).
     net = NAFNet(img_channel=3, width=32, middle_blk_num=12, enc_blk_nums=[2, 2, 4, 8], dec_blk_nums=[2, 2, 2, 2])
@@ -75,7 +145,7 @@ def _get_model():
     net.load_state_dict(ckpt["params"], strict=True)
     net.eval()
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = resolve_device()
     net = net.to(device)
     _model_cache = (net, device)
     return _model_cache
@@ -106,13 +176,6 @@ def denoise_image(
 
     src_path = Path(input_path)
 
-    report(1, 3, "모델 준비 중")
-    check_cancel()
-    net, device = _get_model()
-
-    check_cancel()
-    report(2, 3, "보정 중")
-
     import cv2
     import numpy as np
     import torch
@@ -131,6 +194,21 @@ def denoise_image(
     if src_img is None:
         raise ValueError("이미지를 읽을 수 없습니다(지원하지 않는 형식이거나 손상된 파일).")
 
+    from core.quality_diagnosis import NOISE_RESIDUAL_STDDEV_THRESHOLD
+
+    input_noise_stddev = _measure_noise_stddev(src_img)
+    if input_noise_stddev <= NOISE_RESIDUAL_STDDEV_THRESHOLD:
+        raise DenoiseNotRecommendedError("이 사진은 노이즈가 적어서 디노이즈 효과가 크지 않을 것 같아요.")
+
+    report(1, 3, "모델 준비 중")
+    check_cancel()
+    net, device = _get_model()
+
+    check_cancel()
+    report(2, 3, "보정 중")
+
+    input_edge_var = _measure_edge_variance(src_img)
+
     img_rgb = cv2.cvtColor(src_img, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
     tensor = torch.from_numpy(img_rgb.transpose(2, 0, 1)).unsqueeze(0).to(device)
 
@@ -139,6 +217,13 @@ def denoise_image(
 
     out_np = out.squeeze(0).clamp(0, 1).cpu().numpy().transpose(1, 2, 0)
     out_bgr = cv2.cvtColor((out_np * 255).astype(np.uint8), cv2.COLOR_RGB2BGR)
+
+    output_edge_var = _measure_edge_variance(out_bgr)
+    denom = max(input_edge_var, _RESULT_EDGE_VARIANCE_RATIO_FLOOR)
+    if output_edge_var / denom > _RESULT_EDGE_VARIANCE_RATIO_LIMIT:
+        raise DenoiseResultUnstableError(
+            "보정 결과가 비정상적으로 나와서 저장하지 않았어요. 이 사진에는 디노이즈가 맞지 않는 것 같아요."
+        )
 
     check_cancel()
     report(3, 3, "저장 중")

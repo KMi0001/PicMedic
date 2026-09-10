@@ -18,6 +18,20 @@ torch/facexlib/vendor 모듈은 이 파일 최상단이 아니라 함수 안에�
 필요 자산: assets/face_restore/ 아래 RestoreFormer++.ckpt + facexlib 가중치
 2개(scripts/fetch_face_restore_assets.py로 받는다). 없으면 is_available()이
 False라 GUI 쪽에서 버튼을 감춘다.
+
+안전장치(2026-09-11, 유료화 준비 검토 중 추가):
+- 사전 점검(AnimalPhotoError) — core.photo_category의 CLIP 분류로 사진 전체가
+  "동물 사진"이면 아예 실행하지 않는다. RestoreFormer++는 사람 얼굴 전용으로
+  학습돼서 고양이/강아지 얼굴에 돌리면 사람 이목구비처럼 그럴듯하지만 실제와
+  다른 디테일을 그려 넣을 위험이 있다. 사람+반려동물이 함께 나온 사진은
+  전체 분류가 "인물 사진"으로 나와 이 점검을 통과하고 기존 얼굴 탐지에 맡긴다 —
+  얼굴 단위로 동물/사람을 구분해 선택적으로 제외하려면 RestoreFormer 내부
+  파이프라인(vendor/restoreformer)을 직접 고쳐야 해서 더 큰 작업이라 이번엔
+  포함하지 않았다(RESTORATION_QUALITY_PLAN.md 참고).
+- 사후 점검(FaceTooSmallError) — 찾은 얼굴이 전부 core.quality_diagnosis
+  .MIN_FACE_CROP_SIZE보다 작으면 저장하지 않는다. 디테일 정보가 거의 없는
+  작은 얼굴에 GAN 기반 복원을 돌리면 "복원"이 아니라 사실상 "창작"에 가까워져
+  다른 사람처럼 보이는 눈/치아 등이 생길 위험이 있다.
 """
 
 from __future__ import annotations
@@ -76,6 +90,16 @@ class NoFaceFoundError(Exception):
     없다"는 안내로 GUI에서 다르게 처리하기 위해 구분한다."""
 
 
+class AnimalPhotoError(Exception):
+    """사전 점검 실패: core.photo_category의 CLIP 분류가 사진 전체를 "동물
+    사진"으로 판단했을 때. 모듈 상단 설명 참고."""
+
+
+class FaceTooSmallError(Exception):
+    """사후 점검 실패: 찾은 얼굴이 전부 core.quality_diagnosis.MIN_FACE_CROP_SIZE
+    보다 작을 때. 모듈 상단 설명 참고."""
+
+
 def _get_restorer():
     """RestoreFormer 인스턴스를 지연 생성하고 캐싱한다(모듈 전역, 프로세스
     수명 동안 재사용 — 체크포인트 로딩이 몇 초 걸리므로 매번 새로 만들지
@@ -89,10 +113,11 @@ def _get_restorer():
         if vendor_str not in sys.path:
             sys.path.insert(0, vendor_str)
 
-    import torch
     from RestoreFormer.RestoreFormer import RestoreFormer
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    from core.torch_device import resolve_device
+
+    device = resolve_device()
     _restorer_cache = RestoreFormer(
         model_path=str(_CKPT_PATH),
         upscale=1,
@@ -117,7 +142,8 @@ def restore_face(
     (현재 단계, 전체 단계, 단계 설명)을 받는다 — Real-ESRGAN의 %와 달리
     RestoreFormer++는 세밀한 진행률을 안 주므로 3단계로만 안내한다.
     should_cancel()이 True를 반환하면 EnhancementCancelled를 던진다.
-    얼굴을 하나도 못 찾으면 NoFaceFoundError를 던진다."""
+    얼굴을 하나도 못 찾으면 NoFaceFoundError를, 동물 사진이면 AnimalPhotoError를,
+    찾은 얼굴이 전부 너무 작으면 FaceTooSmallError를 던진다."""
     if not is_available():
         raise RuntimeError("얼굴 복원에 필요한 파일을 찾을 수 없습니다.")
 
@@ -131,6 +157,22 @@ def restore_face(
 
     src_path = Path(input_path)
 
+    try:
+        import pillow_heif
+
+        pillow_heif.register_heif_opener()
+    except ImportError:
+        pass
+
+    from core.photo_category import classify_photo
+
+    try:
+        category = classify_photo(str(src_path))
+    except Exception:
+        category = None
+    if category is not None and category.label == "동물 사진":
+        raise AnimalPhotoError("이 사진은 동물 사진으로 보여서 얼굴 복원을 건너뛰었어요. 얼굴 복원은 사람 얼굴에만 적용돼요.")
+
     report(1, 3, "모델 준비 중")
     check_cancel()
     restorer = _get_restorer()
@@ -143,9 +185,7 @@ def restore_face(
 
     if src_path.suffix.lower() in _HEIC_EXTENSIONS:
         from PIL import Image
-        import pillow_heif
 
-        pillow_heif.register_heif_opener()
         with Image.open(src_path) as img:
             rgb = np.array(img.convert("RGB"))
         src_img = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
@@ -160,6 +200,20 @@ def restore_face(
     )
     if not cropped_faces:
         raise NoFaceFoundError("사진에서 얼굴을 찾지 못했습니다.")
+
+    # face_helper.det_faces는 [x1, y1, x2, y2, confidence] 원본 좌표 bbox 목록
+    # (facexlib.utils.face_restoration_helper.FaceRestoreHelper) — enhance()가
+    # 이미 복원까지 마친 뒤에야 확인 가능해서(내부 파이프라인을 안 건드리는 한
+    # 미리 걸러낼 수 없다), 계산 낭비를 감수하고 사후에만 판단한다.
+    from core.quality_diagnosis import MIN_FACE_CROP_SIZE
+
+    det_faces = getattr(restorer.face_helper, "det_faces", [])
+    has_usable_face = any(
+        (bbox[2] - bbox[0]) >= MIN_FACE_CROP_SIZE and (bbox[3] - bbox[1]) >= MIN_FACE_CROP_SIZE
+        for bbox in det_faces
+    )
+    if det_faces and not has_usable_face:
+        raise FaceTooSmallError("찾은 얼굴이 너무 작아서 복원 결과를 신뢰하기 어려워요.")
 
     check_cancel()
     report(3, 3, "저장 중")

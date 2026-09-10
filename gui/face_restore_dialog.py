@@ -5,7 +5,10 @@ gui/face_restore_dialog.py
 공용 확인→진행→결과 다이얼로그에 이 기능만의 문구/함수를 config로 넘긴다.
 다른 둘과 다른 점: 예상 소요 시간이 해상도가 아니라 얼굴 수 기반 범위라
 estimate_range가 width/height를 무시하고 항상 같은 범위를 돌려주고, 얼굴을
-못 찾았을 때는 실패가 아니라 "효과 없음" 안내로 처리한다(no_effect_exception).
+못 찾았을 때(+동물 사진/얼굴이 너무 작을 때)는 실패가 아니라 "효과 없음"
+안내로 처리한다(no_effect_exception). 세 예외마다 안내 문구가 달라서
+no_effect_message는 지정하지 않는다 — None이면 각 예외 자신의 메시지를
+그대로 보여준다(gui/single_ai_action.py 참고).
 """
 
 from __future__ import annotations
@@ -31,8 +34,11 @@ _CONFIG = SingleAIActionConfig(
     run_action=face_restorer.restore_face,
     cancelled_exception=face_restorer.FaceRestorationCancelled,
     estimate_range=lambda w, h: face_restorer.estimate_seconds_range(),
-    no_effect_exception=face_restorer.NoFaceFoundError,
-    no_effect_message="사진에서 얼굴을 찾지 못해 복원할 수 없습니다.",
+    no_effect_exception=(
+        face_restorer.NoFaceFoundError,
+        face_restorer.AnimalPhotoError,
+        face_restorer.FaceTooSmallError,
+    ),
 )
 
 
