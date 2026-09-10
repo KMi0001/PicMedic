@@ -49,6 +49,7 @@ from PySide6.QtWidgets import (
     QFrame,
     QScrollArea,
     QSizePolicy,
+    QStackedWidget,
     QTableWidget,
     QTableWidgetItem,
     QHeaderView,
@@ -64,6 +65,24 @@ from gui.trash_worker import TrashMoveWorker
 from utils.file_utils import format_file_size
 
 SKIP_LABEL = "이 조합은 정리하지 않음(건너뛰기)"
+
+
+class _CurrentOnlyStack(QStackedWidget):
+    """gui/organize_hub_screen.py::_CurrentOnlyStack와 같은 이유로 필요 — 기본
+    QStackedWidget은 숨겨진 페이지도 sizeHint에 반영해서, empty_label만 보여줄
+    때도 scroll_area(stretch=1)가 있던 자리만큼 빈 공간을 남긴다. 게다가
+    setVisible()만으로 감추면(예전 방식) wordWrap 라벨이 그 남는 공간을 예측
+    불가능하게 늘어나 먹어버리는 문제까지 있었다(2026-09-10, 사용자 리포트 —
+    "카드형태 버튼이 세로로 늘어나는 현상", 실측: empty_label이 184px로 부풀며
+    위치도 아래로 밀림). setCurrentWidget()으로 완전히 바꿔치기해야 둘 다 해결된다."""
+
+    def sizeHint(self):
+        widget = self.currentWidget()
+        return widget.sizeHint() if widget else super().sizeHint()
+
+    def minimumSizeHint(self):
+        widget = self.currentWidget()
+        return widget.minimumSizeHint() if widget else super().minimumSizeHint()
 
 
 class _ClickableLabel(QLabel):
@@ -259,7 +278,6 @@ class DuplicateScreen(QWidget):
         self.empty_label = QLabel("중복된 파일이 없습니다.")
         self.empty_label.setStyleSheet(f"color: {COLORS['text_secondary']}; padding: 24px;")
         self.empty_label.setAlignment(Qt.AlignCenter)
-        outer.addWidget(self.empty_label)
 
         self.scroll_area = QScrollArea()
         self.scroll_area.setWidgetResizable(True)
@@ -276,7 +294,11 @@ class DuplicateScreen(QWidget):
         self._list_layout.setSpacing(10)
         self._list_layout.addStretch(1)
         self.scroll_area.setWidget(self._list_container)
-        outer.addWidget(self.scroll_area, stretch=1)
+
+        self.list_stack = _CurrentOnlyStack()
+        self.list_stack.addWidget(self.empty_label)
+        self.list_stack.addWidget(self.scroll_area)
+        outer.addWidget(self.list_stack, stretch=1)
 
         # "선택한 파일"이라고 하면 체크/라디오로 고른(=남길) 파일이 옮겨진다는
         # 뜻으로 오해하기 쉽다(gui/similar_screen.py와 같은 문제,
@@ -394,8 +416,7 @@ class DuplicateScreen(QWidget):
         self.group_chip.set_value(group_count)
         self.file_chip.set_value(file_count)
         self.cluster_chip.set_value(len(self._cluster_entries))
-        self.empty_label.setVisible(not has_any)
-        self.scroll_area.setVisible(has_any)
+        self.list_stack.setCurrentWidget(self.scroll_area if has_any else self.empty_label)
         self.cleanup_btn.setEnabled(has_any)
 
         self._cluster_section.setVisible(bool(self._cluster_entries))

@@ -33,6 +33,7 @@ from PySide6.QtWidgets import (
     QFrame,
     QScrollArea,
     QSizePolicy,
+    QStackedWidget,
 )
 
 from gui.common_dialogs import confirm_dialog, info_dialog, ProgressDialog
@@ -43,6 +44,24 @@ from gui.trash_worker import TrashMoveWorker
 
 THUMB_SIZE = 150
 DEFAULT_THRESHOLD = 10
+
+
+class _CurrentOnlyStack(QStackedWidget):
+    """gui/organize_hub_screen.py::_CurrentOnlyStack와 같은 이유로 필요 — 기본
+    QStackedWidget은 숨겨진 페이지도 sizeHint에 반영해서, empty_label만 보여줄
+    때도 scroll_area(stretch=1)가 있던 자리만큼 빈 공간을 남긴다. 게다가
+    setVisible()만으로 감추면(예전 방식) wordWrap 라벨이 그 남는 공간을 예측
+    불가능하게 늘어나 먹어버리는 문제까지 있었다(2026-09-10, 사용자 리포트 —
+    "카드형태 버튼이 세로로 늘어나는 현상", gui/duplicate_screen.py와 같은
+    원인/수정). setCurrentWidget()으로 완전히 바꿔치기해야 둘 다 해결된다."""
+
+    def sizeHint(self):
+        widget = self.currentWidget()
+        return widget.sizeHint() if widget else super().sizeHint()
+
+    def minimumSizeHint(self):
+        widget = self.currentWidget()
+        return widget.minimumSizeHint() if widget else super().minimumSizeHint()
 
 # 그룹 안에서 서로 다른 폴더를 뱃지 색으로 구분하기 위한 팔레트 — 테마 색만
 # 재사용(새 색을 추가하지 않음). 그룹 하나에 폴더가 팔레트 크기보다 많으면
@@ -258,7 +277,7 @@ class SimilarScreen(QWidget):
 
         hint = QLabel(
             "완전히 같지는 않지만 비슷해 보이는 사진들이에요 — 오탐일 수 있으니 썸네일을 직접 보고 판단해주세요. "
-            "남기고 싶은 사진에 체크하세요(여러 장 가능) — 아무것도 체크하지 않으면 이 그룹은 그대로 둬요."
+            "지우고 싶은 사진에 체크하세요(여러 장 가능) — 아무것도 체크하지 않으면 이 그룹은 그대로 둬요."
         )
         hint.setWordWrap(True)
         hint.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 12px;")
@@ -267,7 +286,6 @@ class SimilarScreen(QWidget):
         self.empty_label = QLabel("유사한 사진이 없습니다.")
         self.empty_label.setStyleSheet(f"color: {COLORS['text_secondary']}; padding: 24px;")
         self.empty_label.setAlignment(Qt.AlignCenter)
-        outer.addWidget(self.empty_label)
 
         self.scroll_area = QScrollArea()
         self.scroll_area.setWidgetResizable(True)
@@ -281,12 +299,20 @@ class SimilarScreen(QWidget):
         self._list_layout.setSpacing(10)
         self._list_layout.addStretch(1)
         self.scroll_area.setWidget(self._list_container)
-        outer.addWidget(self.scroll_area, stretch=1)
 
-        # "선택한 파일"이라고 하면 체크한(=남길) 파일을 옮긴다는 뜻으로
-        # 오해하기 쉽다(2026-09-09, 사용자 리포트 — "반대 아니야?") — 실제로는
-        # 체크 "안 한" 파일이 옮겨지므로 문구를 그에 맞게 정확히 쓴다.
-        self.cleanup_btn = QPushButton("체크 안 한 파일 임시 휴지통으로 이동")
+        self.list_stack = _CurrentOnlyStack()
+        self.list_stack.addWidget(self.empty_label)
+        self.list_stack.addWidget(self.scroll_area)
+        outer.addWidget(self.list_stack, stretch=1)
+
+        # 처음엔 체크=남기기, 건너뛰기 판단은 "체크 안 한 파일이 옮겨짐"이었는데
+        # (2026-09-09) 사진이 많은 그룹에서 지우고 싶은 몇 장만 빼고 나머지
+        # 전부를 일일이 체크해야 해서 오히려 불편했다(2026-09-10, 사용자 리포트
+        # — "선택 안 한게 많으니까 삭제할 수가 없음") — 체크=지우기로 뒤집어서
+        # 지울 몇 장만 체크하면 되게 바꿨다. gui/duplicate_screen.py의 라디오
+        # (남길 파일 하나 고르기)는 그룹 성격이 달라(정확 중복은 결국 하나만
+        # 남기는 게 목적) 그대로 둔다.
+        self.cleanup_btn = QPushButton("체크한 파일 임시 휴지통으로 이동")
         self.cleanup_btn.setObjectName("Danger")
         self.cleanup_btn.setEnabled(False)
         self.cleanup_btn.clicked.connect(self._on_cleanup_clicked)
@@ -366,8 +392,7 @@ class SimilarScreen(QWidget):
 
         self.group_chip.set_value(group_count)
         self.file_chip.set_value(file_count)
-        self.empty_label.setVisible(not has_any)
-        self.scroll_area.setVisible(has_any)
+        self.list_stack.setCurrentWidget(self.scroll_area if has_any else self.empty_label)
         self.cleanup_btn.setEnabled(has_any)
 
     def _build_group_card(self, idx: int, group: list) -> tuple[QFrame, list[QCheckBox]]:
@@ -386,12 +411,15 @@ class SimilarScreen(QWidget):
         note.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 11px;")
         layout.addWidget(note)
 
-        # 사진마다 체크박스로 "남기기"를 고른다(2026-09-09, 사용자 요청 —
-        # "1장 이상 남기고 싶으면?"). 라디오+별도 "건너뛰기" 대신, 아무것도
-        # 체크 안 하거나(지울 게 정해지지 않음) 전부 체크하면(지울 게 없음)
-        # 자동으로 건너뛰기와 같은 뜻이 된다 — _on_cleanup_clicked 참고.
-        # 기본값은 전부 체크 해제(오탐 가능성이 있어 완전 중복보다도 더
-        # 보수적으로).
+        # 사진마다 체크박스로 "지우기"를 고른다(2026-09-09, 사용자 요청 —
+        # "1장 이상 남기고 싶으면?" 당시엔 체크=남기기였다가, 2026-09-10
+        # 사용자 리포트로 체크=지우기로 뒤집었다 — 그룹 안 대부분은 남기고
+        # 소수만 지우는 경우가 많아, 지울 몇 장만 체크하는 쪽이 더 적은
+        # 클릭으로 끝난다). 라디오+별도 "건너뛰기" 대신, 아무것도 체크
+        # 안 하거나(지울 게 없음) 전부 체크하면(남길 게 없음) 자동으로
+        # 건너뛰기와 같은 뜻이 된다 — _on_cleanup_clicked 참고. 기본값은
+        # 전부 체크 해제(오탐 가능성이 있어 완전 중복보다도 더 보수적으로
+        # — 아무것도 안 건드리는 쪽이 기본).
         #
         # 사진을 가로로 나란히 놓아야 서로 다른 점이 눈에 더 잘 들어온다는
         # 피드백으로 세로 목록에서 바꿨다 — 사진도 더 키우고(THUMB_SIZE),
@@ -431,8 +459,8 @@ class SimilarScreen(QWidget):
 
             check_row = QHBoxLayout()
             check_row.setAlignment(Qt.AlignHCenter)
-            checkbox = QCheckBox("이 파일 남기기")
-            checkbox.setToolTip("이 파일을 남깁니다")
+            checkbox = QCheckBox("이 파일 지우기")
+            checkbox.setToolTip("이 파일을 임시 휴지통으로 옮깁니다")
             checkbox.setStyleSheet("font-size: 11px;")
             checkboxes.append(checkbox)
             check_row.addWidget(checkbox)
@@ -484,9 +512,9 @@ class SimilarScreen(QWidget):
         entry_refs: list[_GroupEntry] = []
 
         for entry in self._entries:
-            keep_infos = [info for info, cb in zip(entry.group, entry.checkboxes) if cb.isChecked()]
-            remove_infos = [info for info, cb in zip(entry.group, entry.checkboxes) if not cb.isChecked()]
-            # 아무것도 체크 안 함(keep_infos 없음) 또는 전부 체크(지울 게
+            remove_infos = [info for info, cb in zip(entry.group, entry.checkboxes) if cb.isChecked()]
+            keep_infos = [info for info, cb in zip(entry.group, entry.checkboxes) if not cb.isChecked()]
+            # 아무것도 체크 안 함(remove_infos 없음) 또는 전부 체크(남길 게
             # 없음) 둘 다 "이 그룹은 건드리지 않음"과 같은 뜻이다 — 별도
             # "건너뛰기" 컨트롤 없이 체크 상태만으로 판단한다.
             if not keep_infos or not remove_infos:
@@ -502,7 +530,7 @@ class SimilarScreen(QWidget):
 
         total_to_remove = sum(len(infos) for _, infos, _ in to_process)
         if not total_to_remove:
-            info_dialog(self, "정리할 파일을 선택하지 않았어요.\n남길 파일을 먼저 골라주세요.")
+            info_dialog(self, "정리할 파일을 선택하지 않았어요.\n지울 파일을 먼저 체크해주세요.")
             return
 
         confirmed = confirm_dialog(

@@ -15,7 +15,7 @@ gui/date_organize_screen.py의 그룹 카드를 누르면 여는 화면. 위쪽�
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QFrame,
@@ -62,6 +62,13 @@ class DateGroupDetailScreen(QWidget):
         self._thumb_cache: dict[str, object] = {}  # path -> QImage | None
         self._pending_cells: dict[str, list[ClickableThumbnail]] = {}
         self._worker: ThumbnailLoadWorker | None = None
+        # QStackedWidget(gui/scan_session_window.py) 안에서 아직 한 번도 안 보인
+        # 채로 set_group()이 먼저 불리면, _relayout_grid()가 scroll_area의 낡은
+        # (또는 0에 가까운) width로 열 개수를 계산해버려 썸네일이 한 줄에 몰려
+        # 보일 수 있다 — gui/organize_hub_screen.py에서 같은 원인으로 고친 것과
+        # 동일한 패턴(2026-09-10, 사용자 리포트 — "이거 계속 재현되고 있어").
+        # 처음 실제로 보일 때 한 번 더 강제로 다시 계산한다.
+        self._relaid_out_once = False
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(24, 20, 24, 16)
@@ -99,6 +106,11 @@ class DateGroupDetailScreen(QWidget):
         preview_row.addWidget(self.preview_image, stretch=1)
 
         info_wrap = QWidget()
+        # 이 QWidget이 바로 옆 QFrame#Card(surface색) 위에 얹히는데, 기본 QWidget
+        # 규칙(gui/theme.py)이 COLORS['bg']를 불투명하게 칠해버려서 카드 안에
+        # 색이 다른 네모 얼룩처럼 보인다(라이트 테마는 bg/surface가 비슷해 안
+        # 보였지만 다크 테마에서 두드러짐, 2026-09-10 사용자 리포트) — 투명하게.
+        info_wrap.setStyleSheet("background: transparent;")
         info_wrap.setMaximumWidth(INFO_COL_WIDTH)
         info_col = QVBoxLayout(info_wrap)
         info_col.setContentsMargins(0, 0, 0, 0)
@@ -244,6 +256,19 @@ class DateGroupDetailScreen(QWidget):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
+        self._relayout_grid()
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        if not self._relaid_out_once:
+            self._relaid_out_once = True
+            # 지금 바로 다시 계산하면 아직 QStackedWidget이 이 위젯에 최종
+            # geometry를 넘기기 전일 수 있어(같은 이벤트 처리 중) 한 틱 미룬다
+            # (gui/organize_hub_screen.py::_force_relayout과 같은 이유).
+            QTimer.singleShot(0, self._force_relayout)
+
+    def _force_relayout(self) -> None:
+        self._last_columns = -1  # 캐시된 열 개수를 무시하고 강제로 다시 계산
         self._relayout_grid()
 
     def _relayout_grid(self):
