@@ -33,6 +33,37 @@ from pathlib import Path
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 _CKPT_PATH = _PROJECT_ROOT / "assets" / "photo_category" / "ViT-B-32.pt"
 
+# CLIP이 실제로 보는 입력 크기. preprocess가 어차피 여기까지 줄이므로, 그보다
+# 큰 해상도로 디코딩하는 건 전부 버리는 일이다 — 아래 load_image_for_clip 참고.
+CLIP_INPUT_SIZE = 224
+
+
+def load_image_for_clip(path, preprocess):
+    """사진 한 장을 CLIP 입력 텐서로 만든다. photo_category(사진 진단 카테고리)와
+    cat_finder(고양이 찾기)가 같은 자산·같은 전처리를 쓰므로 여기 하나로 둔다.
+
+    핵심은 `Image.draft()` — libjpeg에게 "이 크기 이상이면 되니 축소해서
+    디코딩하라"고 알려주면 1/2·1/4·1/8 스케일로 바로 디코딩한다(요청 크기보다
+    작아지지는 않는다). CLIP은 224x224만 보는데 예전엔 4032x3024를 전부
+    디코딩한 뒤 224로 줄이고 있었다.
+
+    2026-09-11 실측(4032x3024, 디테일 많은 사진 기준):
+      - 디코드+전처리 128.9ms -> 25.4ms (5.1배). 단색에 가까운 사진은 16배까지.
+      - 같은 사진의 임베딩 코사인 유사도 0.9996 — 판정 임계값(0.4/0.6)에서
+        결과가 바뀔 여지가 없다. tests/test_photo_category.py에 회귀 테스트로
+        고정해둠(자산이 있을 때만 실행).
+    이 병목 때문에 "고양이 찾기"의 GPU 이득이 1.4배로 눌려 있었다 — 순전파는
+    GPU 4.9ms / CPU 61.8ms인데 그 앞단이 129ms였기 때문(RESTORATION_QUALITY_PLAN.md 5-9).
+
+    draft()는 JPEG 등 일부 형식에서만 동작하고 나머지(PNG/HEIC)에서는 조용히
+    아무 일도 하지 않는다 — 그래서 형식을 따로 분기할 필요가 없다.
+    """
+    from PIL import Image
+
+    with Image.open(path) as img:
+        img.draft("RGB", (CLIP_INPUT_SIZE, CLIP_INPUT_SIZE))
+        return preprocess(img.convert("RGB")).unsqueeze(0)
+
 # 영어 프롬프트로 정의 — CLIP 텍스트 인코더가 주로 영어로 학습돼 한국어
 # 문장보다 정확도가 높다(실측 확인). 화면에는 왼쪽 한국어 라벨만 보여준다.
 # 2026-09-07: 동물/야경/셀카 3개 추가(5→8개) — 카테고리가 늘수록 서로 헷갈리는
@@ -110,12 +141,10 @@ def classify_photo(path: str) -> CategoryResult:
         return CategoryResult(label=None, confidence=0.0)
 
     import torch
-    from PIL import Image
 
     model, preprocess, labels, text_features, device = _get_model()
 
-    with Image.open(path) as img:
-        tensor = preprocess(img.convert("RGB")).unsqueeze(0).to(device)
+    tensor = load_image_for_clip(path, preprocess).to(device)
 
     with torch.no_grad():
         image_features = model.encode_image(tensor)

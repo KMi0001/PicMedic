@@ -118,23 +118,25 @@ pyinstaller --noconfirm --windowed --onefile --name PicMedic --icon assets/icon.
   저장소의 `logs/`를 씁니다.
 - 기본 복구 저장 위치는 원본 사진이 있는 폴더 옆 `Recovered/`입니다(실행 파일 위치와 무관)
 - 두 번째 빌드부터는 `PicMedic.spec`이 위 설정을 기억하고 있어 `pyinstaller PicMedic.spec`만 실행해도 됩니다
-- **GPU 가속이 필요하면 빌드 전에 CUDA 빌드 torch를 따로 설치하세요.**
-  `pip install -r requirements.txt`만 하면 보통 CPU 전용 torch가 깔리고(2026-09-11
-  실측: 이 저장소 dev 환경도 원래 `torch==2.14.0+cpu`였음), 그 상태로 빌드하면
-  exe에도 CPU 전용 torch가 담겨서 `core/torch_device.py`의 GPU 자동 감지가 있으나
-  마나가 됩니다. 설치된 torch 버전과 정확히 맞는 CUDA 빌드로 torch·torchvision을
-  둘 다 다시 설치하세요(torchvision은 버전을 안 박으면 기존 CPU 빌드가 그대로
-  남아있을 수 있어 `--force-reinstall` 권장):
+- ⚠️ **배포 빌드는 CPU 전용 torch로 합니다 — CUDA 빌드 torch를 설치한 채로 빌드하지 마세요.**
+  빌드에는 "그 환경에 설치돼 있는" torch가 그대로 담기는데, CUDA 빌드는 NVIDIA
+  런타임 DLL(`torch_cuda.dll` 1,060MB, `cublasLt` 531MB, `cudnn` 513MB …)까지 통째로
+  들어가 **패키지가 5,659MB가 됩니다**(2026-09-11 실측). CPU 전용이면 약 2GB입니다.
+  얻는 이득에 비해 3.5GB는 너무 비싸다고 판단해 CPU로 확정했습니다 —
+  RESTORATION_QUALITY_PLAN.md 5-1·5-9 참고.
   ```bash
-  pip install torch==<버전>+cuXXX torchvision --index-url https://download.pytorch.org/whl/cuXXX --force-reinstall --no-deps
+  pip install torch==<버전>+cpu torchvision==<버전>+cpu --index-url https://download.pytorch.org/whl/cpu --force-reinstall --no-deps
   ```
-  `cuXXX`는 타깃 GPU 드라이버에 맞는 CUDA 버전(`cu121`/`cu124`/`cu126`/`cu128` 등) —
-  **`cu121`/`cu124`엔 없어도 `cu126`/`cu128`엔 최신 Python 버전용 휠이 있을 수 있으니
-  여러 인덱스를 다 확인하세요**(2026-09-11: 처음에 cu121/124만 보고 "Python 3.14는
-  지원 안 됨"이라 잘못 결론 냈다가, cu126에서 정확히 맞는 휠을 찾아 실제 설치·
-  GPU 가속 실측까지 성공했음 — RESTORATION_QUALITY_PLAN.md 5-2 참고). 설치 후
-  `python -c "import torch; print(torch.cuda.is_available())"`로 `True`가 나오는지
-  확인하세요.
+  빌드 전에 확인:
+  ```bash
+  python -c "import torch; print(torch.__version__, torch.cuda.is_available())"
+  ```
+  `+cpu ... False`가 나와야 합니다. `+cuXXX ... True`가 나오면 그 상태로 빌드했을 때
+  5GB 넘는 결과물이 나옵니다.
+  - GPU 가속 자체는 코드에서 없앤 게 아닙니다. [core/torch_device.py](core/torch_device.py)가
+    CUDA → MPS → CPU 순으로 자동 감지하므로, **CUDA torch를 깐 환경에서는 개발 중에
+    그대로 GPU를 씁니다**(macOS Apple Silicon의 MPS는 추가 용량 없이 계속 동작).
+    바뀐 건 "배포 빌드에 CUDA 런타임을 넣지 않는다" 하나뿐입니다.
 - 재빌드 전 이전 산출물을 지우려면: `rm -rf build dist`
 
 ## .app 빌드 (macOS 배포용)

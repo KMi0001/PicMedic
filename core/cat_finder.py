@@ -95,12 +95,14 @@ def detect_cat(path: str) -> CatDetectionResult:
         return CatDetectionResult(is_cat=False, confidence=0.0)
 
     import torch
-    from PIL import Image
+
+    from core.photo_category import load_image_for_clip
 
     model, preprocess, text_features, device = _get_model()
 
-    with Image.open(path) as img:
-        tensor = preprocess(img.convert("RGB")).unsqueeze(0).to(device)
+    # 축소 디코딩으로 사진을 읽는다 — 이 기능은 라이브러리 전체(수만 장)를 도는
+    # 유일한 AI 기능이라 장당 비용이 그대로 총 시간이 된다(load_image_for_clip 주석 참고).
+    tensor = load_image_for_clip(path, preprocess).to(device)
 
     with torch.no_grad():
         image_features = model.encode_image(tensor)
