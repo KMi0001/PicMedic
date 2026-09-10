@@ -32,6 +32,7 @@ from gui.common_dialogs import confirm_dialog as _confirm_dialog, ProgressDialog
 from gui.result_screen import SummaryChip
 from gui.theme import COLORS, STATUS_COLORS
 from models.file_info import FileInfo, FileStatus
+from utils import trash
 from utils.file_utils import DEFAULT_SUFFIX
 
 # 상태 카드 순서 + 라벨. NORMAL부터 심각도 순으로, "지원 안 함" 계열은 뒤에 묶는다.
@@ -103,6 +104,7 @@ class RecoveryWorker(QThread):
         suffix: str = DEFAULT_SUFFIX,
         target_format: str = DEFAULT_CONVERT_FORMAT,
         quality: int = 90,
+        replace_original: bool = False,
         parent=None,
     ):
         super().__init__(parent)
@@ -112,6 +114,7 @@ class RecoveryWorker(QThread):
         self.suffix = suffix
         self.target_format = target_format
         self.quality = quality
+        self.replace_original = replace_original
         self._cancel_requested = False
 
     def cancel(self):
@@ -127,6 +130,7 @@ class RecoveryWorker(QThread):
             target_format=self.target_format,
             quality=self.quality,
             should_cancel=lambda: self._cancel_requested,
+            replace_original=self.replace_original,
         )
         self.finished_batch.emit(outcomes)
 
@@ -240,29 +244,38 @@ class RecoveryScreen(QWidget):
         self.format_combo.currentTextChanged.connect(self._on_mode_changed)
         self._on_mode_changed()
 
-        output_label = QLabel("저장 위치")
-        output_label.setStyleSheet(SECTION_HEADER_STYLE)
-        card_layout.addWidget(output_label)
+        self.output_label = QLabel("저장 위치")
+        self.output_label.setStyleSheet(SECTION_HEADER_STYLE)
+        card_layout.addWidget(self.output_label)
 
         output_row = QHBoxLayout()
         self.output_edit = QLineEdit()
         output_row.addWidget(self.output_edit)
-        browse_btn = QPushButton("찾아보기")
-        browse_btn.clicked.connect(self._browse_output)
-        output_row.addWidget(browse_btn)
+        self.browse_btn = QPushButton("찾아보기")
+        self.browse_btn.clicked.connect(self._browse_output)
+        output_row.addWidget(self.browse_btn)
         card_layout.addLayout(output_row)
 
-        suffix_label = QLabel("파일명에 추가할 문구")
-        suffix_label.setStyleSheet(SECTION_HEADER_STYLE)
-        card_layout.addWidget(suffix_label)
+        self.suffix_label = QLabel("파일명에 추가할 문구")
+        self.suffix_label.setStyleSheet(SECTION_HEADER_STYLE)
+        card_layout.addWidget(self.suffix_label)
 
         self.suffix_edit = QLineEdit(DEFAULT_SUFFIX)
         card_layout.addWidget(self.suffix_edit)
 
-        keep_original_note = QLabel("원본 파일은 항상 그대로 보존되며, 복구 결과는 별도 폴더에 새 파일로 저장됩니다.")
-        keep_original_note.setWordWrap(True)
-        keep_original_note.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 11px;")
-        card_layout.addWidget(keep_original_note)
+        self.keep_original_note = QLabel(
+            "원본 파일은 항상 그대로 보존되며, 복구 결과는 별도 폴더에 새 파일로 저장됩니다."
+        )
+        self.keep_original_note.setWordWrap(True)
+        self.keep_original_note.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 11px;")
+        card_layout.addWidget(self.keep_original_note)
+
+        # 2026-09-10, 사용자 요청 — 기본은 항상 OFF(원본 보존)로 두고, 켰을 때만
+        # 원본을 그 폴더의 임시휴지통으로 옮기고 결과물이 원본이 있던 자리를
+        # 대신하게 한다(core/converter.py::_recover_file_replacing_original).
+        self.replace_original_check = QCheckBox("완료 후 원본을 임시휴지통으로 옮기고, 결과물이 그 자리를 대신하게 하기")
+        self.replace_original_check.toggled.connect(self._on_replace_original_toggled)
+        card_layout.addWidget(self.replace_original_check)
 
         self.verify_check = QCheckBox("복구 후 파일 검증")
         self.verify_check.setChecked(True)
@@ -313,6 +326,9 @@ class RecoveryScreen(QWidget):
             self.convert_radio.setChecked(True)
 
         self.format_combo.setCurrentText(DEFAULT_CONVERT_FORMAT)
+        # 매번 안전한 기본값(OFF)에서 시작 — 이전 파일들에서 켜뒀던 채로 이번
+        # 파일들에 실수로 적용되는 일이 없게 한다.
+        self.replace_original_check.setChecked(False)
 
         default_dir = self.settings.value("last_output_dir", "")
         if not default_dir and files:
@@ -326,6 +342,26 @@ class RecoveryScreen(QWidget):
         self._on_mode_changed()  # radio 상태가 이전과 같아 toggled가 안 울려도 제목/화질 표시는 갱신되게
 
     # --- 내부 로직 -----------------------------------------------------
+
+    def _on_replace_original_toggled(self, checked: bool):
+        # 켜지면 "저장 위치"/"파일명에 추가할 문구"는 안 쓰인다 — 결과가 항상
+        # 원본이 있던 그 폴더에, 원본 이름 그대로(확장자만 결과에 맞게) 저장되기
+        # 때문(core/converter.py::_recover_file_replacing_original). 값 자체는
+        # 지우지 않고 비활성화만 해서, 다시 끄면 이전에 입력해둔 값이 그대로 남게 한다.
+        self.output_label.setEnabled(not checked)
+        self.output_edit.setEnabled(not checked)
+        self.browse_btn.setEnabled(not checked)
+        self.suffix_label.setEnabled(not checked)
+        self.suffix_edit.setEnabled(not checked)
+        if checked:
+            self.keep_original_note.setText(
+                "원본은 그 폴더의 \"임시휴지통\"으로 옮겨지고, 복구 결과가 원본이 있던 자리를 대신합니다. "
+                "필요하면 임시휴지통에서 원본을 다시 꺼내올 수 있어요."
+            )
+        else:
+            self.keep_original_note.setText(
+                "원본 파일은 항상 그대로 보존되며, 복구 결과는 별도 폴더에 새 파일로 저장됩니다."
+            )
 
     def _on_mode_changed(self):
         is_convert = self.convert_radio.isChecked()
@@ -346,12 +382,17 @@ class RecoveryScreen(QWidget):
     def _start_recovery(self):
         if not self.files:
             return
-        output_dir = self.output_edit.text().strip()
-        if not output_dir:
+        replace_original = self.replace_original_check.isChecked()
+        # replace_original이면 저장 위치칸은 안 쓰인다(파일마다 원본이 있던
+        # 폴더로 감) — 빈 문자열로 비워서 아래 결과 화면에 옛날 입력값이
+        # "저장 위치"인 것처럼 잘못 보이지 않게 한다.
+        output_dir = "" if replace_original else self.output_edit.text().strip()
+        if not replace_original and not output_dir:
             self.status_label.setText("저장 위치를 입력해주세요.")
             return
+        if not replace_original:
+            self.settings.setValue("last_output_dir", output_dir)
 
-        self.settings.setValue("last_output_dir", output_dir)
         mode = RecoveryMode.RESTORE_EXTENSION if self.restore_radio.isChecked() else RecoveryMode.CONVERT
         suffix = self.suffix_edit.text().strip() or DEFAULT_SUFFIX
         target_format = self.format_combo.currentText()
@@ -375,7 +416,13 @@ class RecoveryScreen(QWidget):
         self._cancel_requested = False
 
         self.worker = RecoveryWorker(
-            self.files, mode, output_dir, suffix=suffix, target_format=target_format, quality=quality
+            self.files,
+            mode,
+            output_dir,
+            suffix=suffix,
+            target_format=target_format,
+            quality=quality,
+            replace_original=replace_original,
         )
         self.worker.progress.connect(self._on_progress)
         self.worker.finished_batch.connect(lambda outcomes: self._on_finished(outcomes, output_dir))
@@ -414,12 +461,21 @@ class RecoveryScreen(QWidget):
         self.recovery_finished.emit(outcomes, output_dir)
 
     def _delete_outputs(self, outcomes):
-        # 원본은 core/converter.py가 항상 별도 폴더에만 쓰므로 여기서 지우는 건 취소
+        # 보통은 core/converter.py가 항상 별도 폴더에만 쓰므로 여기서 지우는 건 취소
         # 시점까지 만들어진 결과물 사본뿐 — 원본 파일은 영향받지 않는다. 개별 파일
         # 삭제 실패(권한 등)는 배치 취소 자체를 막을 이유가 없어 조용히 넘어간다.
+        # "원본 삭제" 옵션이 켜져 있던 항목(replaced_original_trash_path가 있음)은
+        # 원본이 이미 임시휴지통으로 옮겨간 상태라, 결과물만 지우면 그 폴더에서
+        # 사진이 통째로 사라져 버린다 — 그런 항목은 결과물을 지우면서 원본도
+        # 같이 제자리로 되돌린다(취소=완전히 되돌리기).
         for outcome in outcomes:
             if outcome.success and outcome.output_path:
                 try:
                     Path(outcome.output_path).unlink(missing_ok=True)
                 except OSError:
                     pass
+            if outcome.replaced_original_trash_path:
+                try:
+                    trash.restore_from_trash(Path(outcome.replaced_original_trash_path))
+                except (ValueError, OSError):
+                    pass  # 되돌리기 실패해도 원본 자체는 임시휴지통에 안전하게 남아있다

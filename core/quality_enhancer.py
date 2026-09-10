@@ -27,6 +27,7 @@ from typing import Callable, Optional
 
 from PIL import Image
 
+from utils import trash
 from utils.file_utils import unique_recovered_path
 
 _ASSETS_DIR = Path(__file__).resolve().parent.parent / "assets" / "realesrgan"
@@ -135,3 +136,42 @@ def enhance_quality(
         dest = unique_recovered_path(Path(output_dir), src_path.name, ".png", suffix=suffix)
         dest.write_bytes(tmp_out.read_bytes())
         return str(dest)
+
+
+def enhance_quality_replacing_original(
+    input_path: str,
+    *,
+    progress_callback: Optional[Callable[[float], None]] = None,
+    should_cancel: Optional[Callable[[], bool]] = None,
+) -> tuple[str, str]:
+    """"원본 삭제" 옵션(사용자가 명시적으로 켠 경우에만, 2026-09-10 요청)을 위한
+    경로 — core/converter.py::_recover_file_replacing_original과 같은 방식.
+    원본을 그 파일이 있던 폴더의 임시휴지통으로 먼저 옮겨 자리를 비운 뒤, 그
+    자리에(원본 이름 + .png) 업스케일 결과를 저장해서 "대체"한다. 실패하거나
+    취소되면(EnhancementCancelled 포함) 옮겨둔 원본을 즉시 되돌리고 그대로
+    다시 던진다. 반환값은 (결과 경로, 원본이 옮겨간 임시휴지통 경로) — 호출부가
+    "원본(이동 전) 미리보기"를 계속 보여주거나, 나중에 되돌려야 할 때 씀."""
+    original_path = Path(input_path)
+    output_dir = original_path.parent
+    trashed_path = trash.move_to_trash(original_path, reason="화질 개선 — 원본 대체")
+
+    try:
+        result_path = enhance_quality(
+            str(trashed_path), str(output_dir), progress_callback=progress_callback, should_cancel=should_cancel
+        )
+    except Exception:
+        try:
+            trash.restore_from_trash(trashed_path)
+        except (ValueError, OSError):
+            pass  # 되돌리기 실패해도 원본 자체는 임시휴지통에 안전하게 남아있다
+        raise
+
+    # unique_recovered_path는 항상 "_upscaled" 같은 문구를 붙인다 — 원본은 이미
+    # 치웠으니 필요 없어서, 결과를 "원본 이름 + .png"로 다시 이름 붙인다
+    # (core/converter.py::_recover_file_replacing_original과 같은 이유).
+    produced = Path(result_path)
+    desired = output_dir / f"{original_path.stem}{produced.suffix}"
+    if desired != produced and not desired.exists():
+        produced.rename(desired)
+        result_path = str(desired)
+    return result_path, str(trashed_path)

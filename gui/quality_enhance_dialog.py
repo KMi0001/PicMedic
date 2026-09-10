@@ -16,6 +16,7 @@ from PIL import Image
 from PySide6.QtCore import Qt, QThread, QUrl, Signal
 from PySide6.QtGui import QDesktopServices, QImage, QPixmap
 from PySide6.QtWidgets import (
+    QCheckBox,
     QDialog,
     QFileDialog,
     QFrame,
@@ -42,10 +43,11 @@ def _format_seconds(seconds: float) -> str:
     return f"{seconds / 60:.1f}분"
 
 
-def _confirm_enhance(parent: QWidget, message_html: str, initial_output_dir: str) -> str | None:
+def _confirm_enhance(parent: QWidget, message_html: str, initial_output_dir: str) -> tuple[str, bool] | None:
     """화질 개선 확인 팝업. gui/common_dialogs.py::confirm_dialog와 같은 카드
-    스타일이지만, 저장 위치를 그 자리에서 바꿀 수 있는 줄이 하나 더 있다.
-    확인을 누르면 (그때 기준) 저장 위치 문자열을, 취소면 None을 반환한다."""
+    스타일이지만, 저장 위치를 그 자리에서 바꿀 수 있는 줄과 "원본 삭제" 체크박스가
+    하나 더 있다. 확인을 누르면 (저장 위치, 원본 삭제 여부) 튜플을, 취소면
+    None을 반환한다."""
     dialog = QDialog(parent)
     dialog.setWindowTitle("PicMedic")
     dialog.setWindowModality(Qt.WindowModal)
@@ -79,6 +81,15 @@ def _confirm_enhance(parent: QWidget, message_html: str, initial_output_dir: str
     path_row.addWidget(change_btn)
     text_col.addLayout(path_row)
 
+    # 2026-09-10, 사용자 요청 — 기본은 항상 OFF(원본 보존)이고, 켰을 때만 원본을
+    # 그 폴더의 임시휴지통으로 옮기고 결과물이 원본이 있던 자리를 대신하게 한다
+    # (core/quality_enhancer.py::enhance_quality_replacing_original). 켜지면
+    # "저장 위치"는 안 쓰이므로 그 줄을 비활성화해서 알려준다.
+    text_col.addSpacing(10)
+    replace_check = QCheckBox("완료 후 원본을 임시휴지통으로 옮기고, 결과물이 그 자리를 대신하게 하기")
+    replace_check.setStyleSheet("font-size: 11px;")
+    text_col.addWidget(replace_check)
+
     text_col.addSpacing(12)
     btn_row = QHBoxLayout()
     btn_row.addStretch(1)
@@ -100,12 +111,18 @@ def _confirm_enhance(parent: QWidget, message_html: str, initial_output_dir: str
             state["output_dir"] = chosen
             path_label.setText(chosen)
 
+    def on_replace_toggled(checked: bool):
+        path_caption.setEnabled(not checked)
+        path_label.setEnabled(not checked)
+        change_btn.setEnabled(not checked)
+
     change_btn.clicked.connect(on_change_clicked)
+    replace_check.toggled.connect(on_replace_toggled)
     cancel_btn.clicked.connect(dialog.reject)
     confirm_btn.clicked.connect(dialog.accept)
 
     if dialog.exec() == QDialog.Accepted:
-        return state["output_dir"]
+        return state["output_dir"], replace_check.isChecked()
     return None
 
 
@@ -212,25 +229,36 @@ class _EnhanceWorker(QThread):
     succeeded = Signal(str)
     failed = Signal(str)
 
-    def __init__(self, input_path: str, output_dir: str, parent=None):
+    def __init__(self, input_path: str, output_dir: str, replace_original: bool = False, parent=None):
         super().__init__(parent)
         self._input_path = input_path
         self._output_dir = output_dir
+        self._replace_original = replace_original
         self._cancel_requested = False
+        # replace_original=True로 성공했을 때만 채워짐 — 원본이 실제로 옮겨간
+        # 임시휴지통 경로(원본 미리보기를 계속 보여줄 때 씀).
+        self.trashed_original_path: str | None = None
 
     def cancel(self):
         self._cancel_requested = True
 
     def run(self):
         try:
-            result_path = quality_enhancer.enhance_quality(
-                self._input_path,
-                self._output_dir,
-                progress_callback=self.progress.emit,
-                should_cancel=lambda: self._cancel_requested,
-            )
+            if self._replace_original:
+                result_path, self.trashed_original_path = quality_enhancer.enhance_quality_replacing_original(
+                    self._input_path,
+                    progress_callback=self.progress.emit,
+                    should_cancel=lambda: self._cancel_requested,
+                )
+            else:
+                result_path = quality_enhancer.enhance_quality(
+                    self._input_path,
+                    self._output_dir,
+                    progress_callback=self.progress.emit,
+                    should_cancel=lambda: self._cancel_requested,
+                )
         except quality_enhancer.EnhancementCancelled:
-            return  # 취소는 에러가 아니므로 failed를 쏘지 않고 조용히 끝낸다
+            return  # 취소는 에러가 아니므로 failed를 쏘지 않고 조용히 끝낸다(원본은 자동 복원됨)
         except Exception as exc:  # noqa: BLE001 - 백그라운드 스레드 예외를 신호로 넘기기 위함
             self.failed.emit(str(exc))
             return
@@ -266,12 +294,13 @@ def run_quality_enhancement(
     message_html = "<br>".join(message_lines)
 
     initial_output_dir = str(Path(path).parent / "Enhanced")
-    output_dir = _confirm_enhance(parent, message_html, initial_output_dir)
-    if output_dir is None:
+    confirmed = _confirm_enhance(parent, message_html, initial_output_dir)
+    if confirmed is None:
         return
+    output_dir, replace_original = confirmed
 
     progress_dialog = ProgressDialog(parent)
-    worker = _EnhanceWorker(path, output_dir, parent)
+    worker = _EnhanceWorker(path, output_dir, replace_original=replace_original, parent=parent)
     filename = Path(path).name
 
     def on_progress(pct: float):
@@ -279,7 +308,13 @@ def run_quality_enhancement(
 
     def on_succeeded(result_path: str):
         progress_dialog.accept()
-        result_dialog = _EnhanceResultDialog(path, result_path, quality_enhancer.SCALE, output_dir, parent)
+        # replace_original이면 path 자리는 이미 결과물로 대체돼서 원본이 더는
+        # 거기 없다 — 비교 화면엔 원본이 실제로 옮겨간 임시휴지통 경로를 보여준다.
+        original_for_compare = worker.trashed_original_path or path
+        result_output_dir = str(Path(result_path).parent) if replace_original else output_dir
+        result_dialog = _EnhanceResultDialog(
+            original_for_compare, result_path, quality_enhancer.SCALE, result_output_dir, parent
+        )
         result_dialog.exec()
 
     def on_failed(message: str):

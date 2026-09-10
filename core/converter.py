@@ -5,11 +5,15 @@ PRD 10장 "복구 기능", 11장 "이미지 변환", 15장 "복구 결과 검증
 
 원칙(PRD 24장 "안전성"):
     Never modify original files by default.
-    -> 이 모듈은 항상 output_dir 아래에 '새 파일'을 만들고, 원본은 절대 건드리지 않는다.
+    -> 이 모듈은 기본적으로 항상 output_dir 아래에 '새 파일'을 만들고, 원본은 절대
+       건드리지 않는다. replace_original=True(사용자가 명시적으로 켠 경우에만,
+       2026-09-10 요청)일 때만 예외로, 원본을 그 폴더의 임시휴지통으로 옮기고
+       결과물이 원본이 있던 자리를 대신한다 — _recover_file_replacing_original 참고.
 """
 
 from __future__ import annotations
 
+import dataclasses
 import errno
 import shutil
 from dataclasses import dataclass
@@ -21,7 +25,7 @@ from PIL import Image, ImageFile
 
 from core.analyzer import analyze_file, HEIF_SUPPORT
 from models.file_info import FileInfo, FileStatus
-from utils import logger
+from utils import logger, trash
 from utils.file_utils import unique_recovered_path
 
 # 파일 잠금(다른 프로그램에서 사용 중)은 Windows에서 별도 예외 타입이 없고
@@ -88,6 +92,10 @@ class RecoveryOutcome:
     target_format: Optional[str] = None  # CONVERT 모드일 때 실제로 저장한 형식 (JPEG/PNG/WEBP)
     abort_batch: bool = False  # PRD 23.5: 저장 공간 부족 시 이 파일 이후로는 배치를 중단해야 함
     skipped: bool = False  # 처리할 내용이 없어 건너뛴 경우 (예: 이미 정상인 파일의 확장자 복원)
+    # replace_original=True로 성공했을 때만 채워짐 — 원본이 실제로 옮겨간 임시휴지통 경로.
+    # 호출부가 나중에(예: 취소 후 "삭제하고 되돌리기") trash.restore_from_trash()로 원본을
+    # 되돌려야 할 수 있어서, 어느 경로를 되돌릴지 정확히 알 수 있게 기록해둔다.
+    replaced_original_trash_path: Optional[str] = None
 
     @property
     def label(self) -> str:
@@ -184,6 +192,53 @@ def convert_to_format(
     return outcome
 
 
+def _recover_file_replacing_original(
+    info: FileInfo,
+    mode: RecoveryMode,
+    target_format: str = DEFAULT_CONVERT_FORMAT,
+    quality: int = 90,
+) -> RecoveryOutcome:
+    """"원본 삭제" 옵션(사용자가 명시적으로 켠 경우에만)을 위한 경로 — 원본을
+    그 파일이 있던 폴더의 임시휴지통으로 먼저 옮겨 자리를 비운 뒤, 그 자리에
+    (원본과 같은 폴더, suffix 없이) 복구/변환 결과를 새로 저장해서 "대체"한다.
+    실패하면 옮겨둔 원본을 즉시 되돌린다 — 사진이 폴더에서 사라져 보이기만
+    하고 아무것도 안 남는 순간이 없게 하기 위함."""
+    original_path = Path(info.path)
+    output_dir = original_path.parent
+    try:
+        trashed_path = trash.move_to_trash(original_path, reason=f"{mode.value} — 원본 대체")
+    except OSError as exc:
+        return RecoveryOutcome(
+            original=info, mode=mode, error_message=f"원본을 임시휴지통으로 옮기지 못해 중단했습니다: {exc}"
+        )
+
+    # 원본은 이제 trashed_path에 있으므로, 복구/변환은 거기서 읽어야 한다 —
+    # info는 화면에 보여줄 "원래 경로"를 유지해야 하니 얕은 복사로 path만 바꾼다.
+    source_info = dataclasses.replace(info, path=str(trashed_path))
+    outcome = recover_file(source_info, mode, output_dir, suffix="", target_format=target_format, quality=quality)
+    outcome.original = info
+
+    if outcome.success and outcome.output_path:
+        # unique_recovered_path는 suffix가 비어도 항상 "_recovered" 같은 기본
+        # 문구를 붙인다(다른 흐름에서 suffix 입력칸이 실수로 비었을 때 원본과
+        # 이름이 겹치는 걸 막기 위한 안전장치라 건드리지 않는다) — 여기서는
+        # 원본을 이미 치웠으니 굳이 그 문구가 필요 없어, 결과 자체를 "원본
+        # 이름 + 새 확장자"로 다시 이름 붙여서 진짜 "그 자리를 대신"하게 한다.
+        produced = Path(outcome.output_path)
+        desired = output_dir / f"{original_path.stem}{produced.suffix}"
+        if desired != produced and not desired.exists():
+            produced.rename(desired)
+            outcome.output_path = str(desired)
+        outcome.replaced_original_trash_path = str(trashed_path)
+
+    if not outcome.success:
+        try:
+            trash.restore_from_trash(trashed_path)
+        except (ValueError, OSError):
+            pass  # 복원까지 실패해도 원본 자체는 임시휴지통에 안전하게 남아있다(수동 복원 가능)
+    return outcome
+
+
 def recover_file(
     info: FileInfo,
     mode: RecoveryMode,
@@ -219,18 +274,24 @@ def recover_batch(
     target_format: str = DEFAULT_CONVERT_FORMAT,
     quality: int = 90,
     should_cancel: Optional[Callable[[], bool]] = None,  # core/scanner.py::scan_paths와 같은 취소 방식
+    replace_original: bool = False,  # True면 output_dir/suffix를 무시하고 _recover_file_replacing_original 사용
 ) -> list[RecoveryOutcome]:
-    """PRD FR-005 '일괄 복구'. suffix는 복구 파일명 뒤에 붙는 문구 (기본값 'recovered')."""
-    output_dir = Path(output_dir)
+    """PRD FR-005 '일괄 복구'. suffix는 복구 파일명 뒤에 붙는 문구 (기본값 'recovered').
+    replace_original=True면 파일마다 원본이 있던 폴더에 결과물을 저장하고 원본은
+    그 폴더의 임시휴지통으로 옮긴다(사용자가 명시적으로 켠 경우에만 — 기본 False)."""
+    output_dir = Path(output_dir) if output_dir else None
     outcomes = []
     total = len(files)
     for idx, info in enumerate(files, start=1):
         if should_cancel and should_cancel():
             break
         try:
-            outcome = recover_file(
-                info, mode, output_dir, suffix=suffix, target_format=target_format, quality=quality
-            )
+            if replace_original:
+                outcome = _recover_file_replacing_original(info, mode, target_format=target_format, quality=quality)
+            else:
+                outcome = recover_file(
+                    info, mode, output_dir, suffix=suffix, target_format=target_format, quality=quality
+                )
         except Exception as exc:  # 개별 파일 실패가 전체 배치를 막지 않도록
             outcome = RecoveryOutcome(original=info, mode=mode, error_message=str(exc))
         outcomes.append(outcome)

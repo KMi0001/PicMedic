@@ -90,9 +90,9 @@ class RecoveryResultScreen(QWidget):
         self.output_label.setStyleSheet(f"color: {COLORS['text_secondary']}; margin-top: 8px;")
         card_layout.addWidget(self.output_label)
 
-        open_folder_btn = QPushButton("폴더 열기")
-        open_folder_btn.clicked.connect(self._open_folder)
-        card_layout.addWidget(open_folder_btn)
+        self.open_folder_btn = QPushButton("폴더 열기")
+        self.open_folder_btn.clicked.connect(self._open_folder)
+        card_layout.addWidget(self.open_folder_btn)
 
         done_btn = QPushButton("결과 목록으로 돌아가기")
         done_btn.setObjectName("Primary")
@@ -115,7 +115,14 @@ class RecoveryResultScreen(QWidget):
         self.partial_chip.set_value(partial)
         self.skipped_chip.set_value(skipped)
         self.fail_chip.set_value(fail)
-        self.output_label.setText(f"저장 위치:\n{output_dir}")
+        # output_dir이 빈 문자열인 건 "원본 삭제(대체)" 옵션을 쓴 경우뿐이다
+        # (gui/recovery_screen.py::_start_recovery) — 파일마다 원래 있던
+        # 폴더로 갔으므로 하나의 "저장 위치"로 보여줄 게 없다.
+        if output_dir:
+            self.output_label.setText(f"저장 위치:\n{output_dir}")
+        else:
+            self.output_label.setText("저장 위치: 사진마다 원래 있던 폴더(원본은 그 폴더의 임시휴지통으로 이동)")
+        self.open_folder_btn.setVisible(bool(output_dir))
 
     def _success_lines(self) -> list[str]:
         return [
