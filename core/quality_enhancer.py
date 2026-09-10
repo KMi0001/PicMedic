@@ -108,6 +108,16 @@ def enhance_quality(
             stdout=subprocess.DEVNULL,
             stderr=subprocess.PIPE,
             text=True,
+            # realesrgan-ncnn-vulkan은 콘솔 앱이라, console=False로 빌드한 GUI
+            # 실행 파일(PicMedic.spec)에서 그냥 띄우면 검은 콘솔 창이 같이 뜬다.
+            # CREATE_NO_WINDOW는 Windows에만 있는 상수라 getattr로 가져온다
+            # (macOS/Linux에서는 0 = 플래그 없음, CLAUDE.md의 OS 분기 최소화).
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            # text=True인데 encoding을 안 주면 로캘 인코딩(한글 Windows는 cp949)으로
+            # 디코딩해서, exe가 cp949로 못 읽는 바이트를 뱉으면 진행률을 읽는 루프가
+            # UnicodeDecodeError로 죽는다. 진행률 표시용 출력이라 깨진 글자는 버린다.
+            encoding="utf-8",
+            errors="replace",
         )
         stderr_lines: list[str] = []
         cancelled = False

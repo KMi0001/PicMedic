@@ -27,6 +27,7 @@ class ScanWorker(QThread):
     progress = Signal(int, int, str)           # current, total, filename
     finished_scan = Signal(object, bool, list)  # ScanResult, cancelled, remaining_paths
     heavy_format_detected = Signal()            # HEIC/HEIF 발견 시 1회만(core/scanner.py 참고)
+    failed = Signal(str)                        # 예상 못한 예외 (아래 run() 참고)
 
     def __init__(self, paths: list[str], parent=None):
         super().__init__(parent)
@@ -37,18 +38,27 @@ class ScanWorker(QThread):
         self._cancel_requested = True
 
     def run(self):
-        result, remaining_paths = scan_paths(
-            self.paths,
-            recursive=True,
-            progress_callback=lambda cur, total, name: self.progress.emit(cur, total, name),
-            should_cancel=lambda: self._cancel_requested,
-            on_heavy_format=self.heavy_format_detected.emit,
-        )
+        # QThread.run()에서 예외가 그대로 새어나가면 finished_scan이 영영 발생하지
+        # 않아서, 진행 화면이 에러 한 줄 없이 멈춘 채로 남는다(사용자에겐 "응답
+        # 없음"으로 보임). gui/single_ai_action.py::_Worker와 같은 패턴으로,
+        # 실패도 반드시 신호 하나로 끝나게 한다. (2026-09-11 리뷰)
+        try:
+            result, remaining_paths = scan_paths(
+                self.paths,
+                recursive=True,
+                progress_callback=lambda cur, total, name: self.progress.emit(cur, total, name),
+                should_cancel=lambda: self._cancel_requested,
+                on_heavy_format=self.heavy_format_detected.emit,
+            )
+        except Exception as exc:  # noqa: BLE001 - 백그라운드 스레드 예외를 신호로 넘기기 위함
+            self.failed.emit(str(exc))
+            return
         self.finished_scan.emit(result, self._cancel_requested, remaining_paths)
 
 
 class ScanningScreen(QWidget):
     scan_finished = Signal(object, bool, int, list)  # ScanResult, cancelled, planned_total, remaining_paths
+    scan_failed = Signal(str)  # 검사가 예상 못한 오류로 끝난 경우 (ScanWorker.failed 참고)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -131,6 +141,7 @@ class ScanningScreen(QWidget):
         self.worker = ScanWorker(paths)
         self.worker.progress.connect(self._on_progress)
         self.worker.finished_scan.connect(self._on_finished)
+        self.worker.failed.connect(self._on_failed)
         self.worker.heavy_format_detected.connect(self._on_heavy_format_detected)
         self.worker.start()
 
@@ -159,6 +170,11 @@ class ScanningScreen(QWidget):
         if not cancelled:
             self.progress_bar.setValue(100)
         self.scan_finished.emit(result, cancelled, self._planned_total, remaining_paths)
+
+    def _on_failed(self, message: str):
+        self._timer.stop()
+        self.cancel_btn.setEnabled(False)
+        self.scan_failed.emit(message)
 
     def _on_cancel(self):
         if self.worker:

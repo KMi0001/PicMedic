@@ -63,6 +63,27 @@ def run():
         check("텍스트 포맷에 Detected 포함", "Detected: HEIC" in text)
         check("텍스트 포맷에 Result 포함", "Result: 성공" in text)
 
+        # 4) 로그를 못 쓰는 위치여도 예외가 밖으로 새면 안 된다 (2026-09-11 리뷰)
+        #
+        # 패키징된 실행 파일이 MS 스토어(MSIX/WindowsApps)나 Program Files처럼
+        # 읽기 전용 폴더에 설치되면 로그 폴더를 만들 수 없다. 그런데 log_scan()은
+        # core/scanner.py::scan_paths가 검사를 다 마친 직후 try 없이 부르는
+        # 지점이라, 여기서 예외가 나면 검사 결과가 통째로 날아가고 진행 화면이
+        # 멈춘 것처럼 보인다. 로그는 부가 기능이므로 조용히 실패해야 한다.
+        blocker = tmp / "blocked"
+        blocker.write_text("파일이라 이 아래로는 폴더를 못 만든다", encoding="utf-8")
+        saved_dir, saved_file = logger.LOG_DIR, logger.LOG_FILE
+        logger.LOG_DIR = blocker / "logs"  # 파일 하위 경로 -> mkdir이 실패한다
+        logger.LOG_FILE = logger.LOG_DIR / "picmedic_log.jsonl"
+        try:
+            logger.log_scan(str(tmp), ScanResult(total=1, normal=1))
+            wrote_without_raising = True
+        except Exception:
+            wrote_without_raising = False
+        check("쓰기 불가 경로에서도 log_scan()이 예외를 던지지 않는다", wrote_without_raising)
+        check("쓰기 불가 경로에서 read_recent_entries()는 빈 목록", logger.read_recent_entries() == [])
+        logger.LOG_DIR, logger.LOG_FILE = saved_dir, saved_file
+
     print(f"\n총 {passed + failed}개 중 {passed}개 통과, {failed}개 실패")
     return failed == 0
 

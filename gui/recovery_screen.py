@@ -28,7 +28,7 @@ from PySide6.QtWidgets import (
 )
 
 from core.converter import RecoveryMode, recover_batch, CONVERT_TARGET_FORMATS, DEFAULT_CONVERT_FORMAT
-from gui.common_dialogs import confirm_dialog as _confirm_dialog, ProgressDialog
+from gui.common_dialogs import confirm_dialog as _confirm_dialog, info_dialog as _info_dialog, ProgressDialog
 from gui.result_screen import SummaryChip
 from gui.theme import COLORS, STATUS_COLORS
 from models.file_info import FileInfo, FileStatus
@@ -95,6 +95,7 @@ def _convert_icon_pixmap(color: str, size: int = 26) -> QPixmap:
 class RecoveryWorker(QThread):
     progress = Signal(int, int, str)
     finished_batch = Signal(list)  # list[RecoveryOutcome]
+    failed = Signal(str)  # 예상 못한 예외 (아래 run() 참고)
 
     def __init__(
         self,
@@ -121,17 +122,25 @@ class RecoveryWorker(QThread):
         self._cancel_requested = True
 
     def run(self):
-        outcomes = recover_batch(
-            self.files,
-            self.mode,
-            self.output_dir,
-            progress_callback=lambda cur, total, name: self.progress.emit(cur, total, name),
-            suffix=self.suffix,
-            target_format=self.target_format,
-            quality=self.quality,
-            should_cancel=lambda: self._cancel_requested,
-            replace_original=self.replace_original,
-        )
+        # 예외가 새어나가면 finished_batch가 발생하지 않고, 그러면 아래
+        # _on_finished()의 progress_dialog.accept()도 안 불려서 모달 진행 팝업이
+        # 영영 닫히지 않는다 — 앱 전체가 멈춘 것처럼 보인다. 실패도 반드시
+        # 신호 하나로 끝나게 한다. (2026-09-11 리뷰)
+        try:
+            outcomes = recover_batch(
+                self.files,
+                self.mode,
+                self.output_dir,
+                progress_callback=lambda cur, total, name: self.progress.emit(cur, total, name),
+                suffix=self.suffix,
+                target_format=self.target_format,
+                quality=self.quality,
+                should_cancel=lambda: self._cancel_requested,
+                replace_original=self.replace_original,
+            )
+        except Exception as exc:  # noqa: BLE001 - 백그라운드 스레드 예외를 신호로 넘기기 위함
+            self.failed.emit(str(exc))
+            return
         self.finished_batch.emit(outcomes)
 
 
@@ -447,6 +456,7 @@ class RecoveryScreen(QWidget):
         )
         self.worker.progress.connect(self._on_progress)
         self.worker.finished_batch.connect(lambda outcomes: self._on_finished(outcomes, output_dir))
+        self.worker.failed.connect(self._on_failed)
         self.worker.start()
 
         # 진행 중에는 모달 팝업만 응답하게 만들어, 배치 작업 중 설정을 바꾸거나 뒤로 가서
@@ -463,6 +473,14 @@ class RecoveryScreen(QWidget):
         if self.worker:
             self.worker.cancel()
         self._cancel_requested = True
+
+    def _on_failed(self, message: str):
+        # 모달 진행 팝업을 반드시 먼저 닫는다(RecoveryWorker.run 주석 참고).
+        # 원본은 core/converter.py가 어느 경로로 실패하든 보존하거나 되돌리므로,
+        # 여기서는 설정 화면에 그대로 남아 다시 시도할 수 있게만 해준다.
+        self.progress_dialog.accept()
+        self.start_btn.setEnabled(True)
+        _info_dialog(self, f"복구 중 예상하지 못한 오류가 발생했습니다.\n\n{message}")
 
     def _on_finished(self, outcomes, output_dir: str):
         self.progress_dialog.accept()

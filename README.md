@@ -70,7 +70,7 @@ python tests/test_ai_restoration.py
 python tests/test_quality_diagnosis.py
 python tests/test_photo_category.py
 ```
-모두 [PASS]로 통과해야 합니다 (총 205개 케이스 — 실측 확인, 심볼릭 링크 생성
+모두 [PASS]로 통과해야 합니다 (총 230개 케이스 — 2026-09-11 실측 확인, 심볼릭 링크 생성
 권한이 없는 환경 기준). `test_scanner.py`는 심볼릭 링크를 만들 권한이 없는
 환경(예: 개발자 모드가 꺼진 Windows)에서는 순환 테스트 일부가 [SKIP]으로
 표시되고, 권한이 있으면 그만큼 케이스 수가 더 늘어납니다.
@@ -106,7 +106,12 @@ pyinstaller --noconfirm --windowed --onefile --name PicMedic --icon assets/icon.
   감싸세요, exe 파일 하나만 떼어가면 실행되지 않습니다.
 - `--collect-all pillow_heif`가 반드시 필요합니다 (HEIC/HEIF 디코딩용 네이티브 DLL을 exe 안에 포함시키기 위함, 빠지면 HEIC 관련 기능이 조용히 실패함)
 - `--icon assets/icon.ico`는 exe 파일 자체의 아이콘, `--add-data "assets;assets"`는 실행 중 창 아이콘(`main.py`에서 읽음)을 위해 필요합니다
-- 로그(`logs/`)와 기본 복구 저장 위치는 실행 파일 기준 경로를 사용하므로, exe를 옮기면 그 위치에 새로 생성됩니다
+- 로그는 **사용자별 앱 데이터 폴더**에 쌓입니다(Windows `%LOCALAPPDATA%\PicMedic\logs\`,
+  macOS `~/Library/Application Support/PicMedic/logs/`). 예전엔 실행 파일 옆에 썼는데,
+  MS 스토어(MSIX)나 Program Files처럼 읽기 전용 위치에 설치되면 쓰기가 막혀 검사가
+  통째로 실패했습니다(2026-09-11 수정). 개발 실행(`python main.py`)은 예전처럼
+  저장소의 `logs/`를 씁니다.
+- 기본 복구 저장 위치는 원본 사진이 있는 폴더 옆 `Recovered/`입니다(실행 파일 위치와 무관)
 - 두 번째 빌드부터는 `PicMedic.spec`이 위 설정을 기억하고 있어 `pyinstaller PicMedic.spec`만 실행해도 됩니다
 - **GPU 가속이 필요하면 빌드 전에 CUDA 빌드 torch를 따로 설치하세요.**
   `pip install -r requirements.txt`만 하면 보통 CPU 전용 torch가 깔리고(2026-09-11
@@ -148,7 +153,11 @@ pyinstaller --noconfirm PicMedic-mac.spec
 ## 로그 (FR-006)
 
 스캔 1회, 복구 파일 1개마다 `logs/picmedic_log.jsonl`에 한 줄씩(JSON Lines) 자동 기록됩니다.
-(`logs/` 폴더는 첫 실행 시 자동 생성되며 git에는 포함하지 않습니다.)
+(`logs/` 폴더는 첫 실행 시 자동 생성되며 git에는 포함하지 않습니다. 위치는 개발 실행이면
+저장소 안, 패키징된 실행 파일이면 사용자별 앱 데이터 폴더 — 위 "exe 빌드" 절 참고.)
+
+로그 기록은 부가 기능이라, 어떤 이유로든 쓰기에 실패해도 진행 중인 검사·복구를
+중단시키지 않고 조용히 넘어갑니다.
 
 ## 기획서 / 다음 단계
 

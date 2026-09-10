@@ -13,6 +13,8 @@ detector.py 로 실제 파일 형식을 알아낸 뒤, Pillow로 실제 디코�
 from __future__ import annotations
 
 import hashlib
+import threading
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -52,6 +54,32 @@ MIME_TYPE_MAP = {
 # 아주 작은 파일(헤더조차 없음)이나 텍스트로만 채워진 파일은
 # "손상된 이미지"가 아니라 "애초에 이미지가 아닌 파일"로 본다.
 MIN_PLAUSIBLE_IMAGE_BYTES = 16
+
+# Pillow의 LOAD_TRUNCATED_IMAGES는 이미지별 옵션이 아니라 프로세스 전역 플래그다.
+# gui/main_window.py는 세션 창을 여러 개 동시에 띄우는 게 설계 목표라(여러 폴더
+# 동시 검사), 이 플래그를 켜고 끄는 곳이 둘 이상이면 서로의 판정을 오염시킨다:
+#   - 창 A가 복구 중(플래그 True)일 때 창 B의 _try_decode 1차 시도가 들어가면,
+#     잘린 파일이 그대로 읽혀 "부분_손상"이어야 할 파일이 "정상"으로 나온다.
+#   - 반대로 A가 플래그를 되돌리는 순간 B의 2차 시도가 걸리면, 부분 복구가
+#     가능한 파일이 "손상"(복구 불가)으로 나온다.
+# 그래서 이 플래그를 만지는 모든 디코딩을 아래 decode_mode()로만 하도록 하고,
+# 락으로 직렬화한다. 검사 창이 하나뿐인 보통의 경우엔 경합이 없어 성능 차이가
+# 없고, 창을 여러 개 띄운 경우에만 디코딩이 순서대로 처리된다 — 그 경우는
+# 지금까지 애초에 틀린 결과가 나오던 상황이라 잃는 게 없다. (2026-09-11 리뷰)
+_DECODE_LOCK = threading.RLock()
+
+
+@contextmanager
+def decode_mode(truncated: bool):
+    """LOAD_TRUNCATED_IMAGES를 원하는 값으로 고정한 채 디코딩한다. 위 _DECODE_LOCK
+    주석 참고 — 이 컨텍스트 밖에서 이 플래그를 직접 건드리면 안 된다."""
+    with _DECODE_LOCK:
+        previous = ImageFile.LOAD_TRUNCATED_IMAGES
+        ImageFile.LOAD_TRUNCATED_IMAGES = truncated
+        try:
+            yield
+        finally:
+            ImageFile.LOAD_TRUNCATED_IMAGES = previous
 
 
 def _compute_file_hash(path: Path) -> Optional[str]:
@@ -96,9 +124,11 @@ def _try_decode(path: Path) -> _DecodeResult:
     """Pillow로 완전 디코딩을 시도하고, 실패하면 손상 허용 모드로 재시도한다."""
     result = _DecodeResult()
 
-    # 1차: 정상 디코딩 시도
+    # 1차: 정상 디코딩 시도. 이 판정의 핵심은 "잘린 이미지는 여기서 실패해야
+    # 한다"는 것이라, 플래그가 꺼져 있음을 우연에 맡기지 않고 명시적으로 끈다
+    # (_DECODE_LOCK 주석 참고 — 예전엔 다른 스레드가 켜둔 값을 그대로 물려받았다).
     try:
-        with Image.open(path) as img:
+        with decode_mode(False), Image.open(path) as img:
             img.load()
             result.readable = True
             result.width, result.height = img.size
@@ -111,9 +141,8 @@ def _try_decode(path: Path) -> _DecodeResult:
         result.error = str(first_error)
 
     # 2차: 잘린/손상된 이미지라도 읽을 수 있는 만큼 읽어본다 (부분 손상 판별용)
-    ImageFile.LOAD_TRUNCATED_IMAGES = True
     try:
-        with Image.open(path) as img:
+        with decode_mode(True), Image.open(path) as img:
             img.load()
             result.readable = True
             result.partial = True
@@ -125,8 +154,6 @@ def _try_decode(path: Path) -> _DecodeResult:
     except Exception as second_error:
         result.readable = False
         result.error = result.error or str(second_error)
-    finally:
-        ImageFile.LOAD_TRUNCATED_IMAGES = False
 
     return result
 
@@ -285,7 +312,11 @@ def analyze_file(path: str | Path) -> FileInfo:
 
     # --- 케이스 A: 시그니처로 형식을 전혀 판별하지 못한 경우 ---
     if detected_format is None:
-        head = path.open("rb").read(64)
+        # detector._read_head와 같은 방식으로 연다 — 예전엔 여기만 with 없이
+        # path.open()을 써서 핸들이 GC 시점까지 열린 채 남았다(수만 장 스캔에서
+        # 핸들 고갈 위험). 읽기 실패는 아래 _looks_like_non_image가 빈 bytes를
+        # "이미지 아님"으로 처리하므로 그대로 넘긴다.
+        head = detector._read_head(path, 64)
         if info.file_size < MIN_PLAUSIBLE_IMAGE_BYTES or _looks_like_non_image(head):
             info.status = FileStatus.NOT_AN_IMAGE
             info.readable = False

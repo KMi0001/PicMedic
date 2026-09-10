@@ -12,10 +12,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from PIL import Image
+from PIL import Image, ImageFile
 import pillow_heif
 
-from core.analyzer import analyze_file
+from core.analyzer import analyze_file, decode_mode
 from models.file_info import FileStatus, RecoveryPossibility
 
 
@@ -123,6 +123,60 @@ def run():
         info = analyze_file(p)
         check("GIF(.jpg 위장) -> status=형식_불일치", info.status == FileStatus.MISMATCH, info.summary())
         check("GIF(.jpg 위장) -> 복구가능", info.recoverable == RecoveryPossibility.RECOVERABLE)
+
+        # 8) LOAD_TRUNCATED_IMAGES 오염 방지 (2026-09-11 리뷰에서 발견한 버그)
+        #
+        # 이 플래그는 Pillow 프로세스 전역이라, 다른 세션 창이 복구(형식 변환)를
+        # 도는 동안엔 True로 켜져 있다. 예전 코드는 _try_decode 1차 시도가 그
+        # 값을 그대로 물려받아서, 잘린 파일이 아무 문제 없이 읽히고 "정상"으로
+        # 판정됐다 — 진단 결과가 옆 창의 작업 타이밍에 따라 달라졌다는 뜻이다.
+        # 아래는 그 상황(다른 스레드가 켜둔 상태)을 그대로 재현한다.
+        #
+        # 절단 비율이 중요하다: 60%는 "손상 허용 모드에서는 읽히고 정상 모드에서는
+        # 실패하는" 구간이라 부분_손상이 나온다. 이 구간이어야 옛 코드가 실제로
+        # 정상으로 오판했다(실측 확인 — 200바이트만 남기면 양쪽 모드 다 실패해서
+        # 그냥 손상이 나오고, 그러면 이 테스트가 버그를 못 잡는다).
+        truncated = tmp / "truncated_while_converting.jpg"
+        truncated.write_bytes(raw[: int(len(raw) * 0.6)])  # 위 3)에서 만든 정상 200x200 JPEG
+
+        baseline = analyze_file(truncated).status
+        check(
+            "60% 절단 JPEG은 부분_손상으로 판정된다(아래 오염 테스트의 전제)",
+            baseline == FileStatus.PARTIAL_CORRUPTION,
+            baseline.value,
+        )
+        ImageFile.LOAD_TRUNCATED_IMAGES = True
+        try:
+            polluted = analyze_file(truncated).status
+        finally:
+            ImageFile.LOAD_TRUNCATED_IMAGES = False
+        check(
+            "다른 작업이 LOAD_TRUNCATED_IMAGES를 켜둬도 잘린 파일이 '정상'으로 안 바뀜",
+            polluted == baseline and polluted != FileStatus.NORMAL,
+            f"평소={baseline.value} / 켜둔 상태={polluted.value}",
+        )
+        check(
+            "analyze_file은 LOAD_TRUNCATED_IMAGES를 원래 값으로 되돌려 놓는다",
+            ImageFile.LOAD_TRUNCATED_IMAGES is False,
+        )
+
+        # 9) decode_mode()가 중첩/예외 상황에서도 이전 값을 정확히 복원하는지
+        with decode_mode(True):
+            inner_on = ImageFile.LOAD_TRUNCATED_IMAGES
+            with decode_mode(False):
+                inner_off = ImageFile.LOAD_TRUNCATED_IMAGES
+            restored_after_nesting = ImageFile.LOAD_TRUNCATED_IMAGES
+        check("decode_mode(True) 안에서는 플래그가 켜져 있다", inner_on is True)
+        check("decode_mode(False)로 중첩하면 꺼진다", inner_off is False)
+        check("중첩에서 빠져나오면 바깥 값(True)으로 복원된다", restored_after_nesting is True)
+        check("컨텍스트를 다 빠져나오면 원래 값(False)으로 복원된다", ImageFile.LOAD_TRUNCATED_IMAGES is False)
+
+        try:
+            with decode_mode(True):
+                raise RuntimeError("디코딩 중 예외")
+        except RuntimeError:
+            pass
+        check("예외로 빠져나가도 플래그가 복원된다", ImageFile.LOAD_TRUNCATED_IMAGES is False)
 
     print(f"\n총 {passed + failed}개 중 {passed}개 통과, {failed}개 실패")
     return failed == 0

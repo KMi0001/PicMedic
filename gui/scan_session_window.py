@@ -52,6 +52,7 @@ class _OrganizeWorker(QThread):
 
     progress = Signal(int, int, str)
     finished_batch = Signal(list)  # list[core.date_organizer.OrganizeOutcome]
+    failed = Signal(str)  # 예상 못한 예외 (아래 run() 참고)
 
     def __init__(self, run_fn, mode: str, output_root: str, parent=None):
         super().__init__(parent)
@@ -64,10 +65,17 @@ class _OrganizeWorker(QThread):
         self._cancel_requested = True
 
     def run(self):
-        outcomes = self._run_fn(
-            progress_callback=lambda cur, total, name: self.progress.emit(cur, total, name),
-            should_cancel=lambda: self._cancel_requested,
-        )
+        # gui/recovery_screen.py::RecoveryWorker.run과 같은 이유 — 예외가 새어나가면
+        # finished_batch가 안 와서 모달 진행 팝업(organize_progress_dialog)이 영영
+        # 닫히지 않는다. (2026-09-11 리뷰)
+        try:
+            outcomes = self._run_fn(
+                progress_callback=lambda cur, total, name: self.progress.emit(cur, total, name),
+                should_cancel=lambda: self._cancel_requested,
+            )
+        except Exception as exc:  # noqa: BLE001 - 백그라운드 스레드 예외를 신호로 넘기기 위함
+            self.failed.emit(str(exc))
+            return
         self.finished_batch.emit(outcomes)
 
 
@@ -79,6 +87,7 @@ class _LightListWorker(QThread):
     "즉시"는 아님."""
 
     finished_listing = Signal(object)  # ScanResult (가벼운 FileInfo만 채워짐)
+    failed = Signal(str)  # 예상 못한 예외 (아래 run() 참고)
 
     def __init__(self, paths: list[str], parent=None):
         super().__init__(parent)
@@ -89,7 +98,13 @@ class _LightListWorker(QThread):
         self._cancel_requested = True
 
     def run(self):
-        result = list_image_files(self._paths, should_cancel=lambda: self._cancel_requested)
+        # _OrganizeWorker.run과 같은 이유 — 실패해도 반드시 신호 하나로 끝나야
+        # light_scan_progress_dialog(모달)가 닫힌다. (2026-09-11 리뷰)
+        try:
+            result = list_image_files(self._paths, should_cancel=lambda: self._cancel_requested)
+        except Exception as exc:  # noqa: BLE001 - 백그라운드 스레드 예외를 신호로 넘기기 위함
+            self.failed.emit(str(exc))
+            return
         self.finished_listing.emit(result)
 
 
@@ -233,6 +248,7 @@ class ScanSessionWindow(QWidget):
     def _wire_signals(self):
         # Scanning -> Result / (홈으로)
         self.scanning_screen.scan_finished.connect(self._on_scan_finished)
+        self.scanning_screen.scan_failed.connect(self._on_scan_failed)
 
         # Result -> Detail / Recovery / 홈
         self.result_screen.file_selected.connect(self._open_detail)
@@ -348,6 +364,7 @@ class ScanSessionWindow(QWidget):
         "결과 화면 이후로는 창 크기를 다시 건드리지 않는다" 원칙."""
         self._light_scan_worker = _LightListWorker(paths, self)
         self._light_scan_worker.finished_listing.connect(self._on_light_scan_finished)
+        self._light_scan_worker.failed.connect(self._on_light_scan_failed)
         self.light_scan_progress_dialog.start("사진 목록을 모으는 중")
         # 총 개수를 미리 알 수 없어(진단처럼 파일마다 처리하는 게 아니라 폴더
         # 순회 자체) 퍼센트 대신 바쁨(busy) 표시로 보여준다.
@@ -359,6 +376,18 @@ class ScanSessionWindow(QWidget):
     def _on_light_scan_cancel_requested(self):
         if self._light_scan_worker is not None:
             self._light_scan_worker.cancel()
+
+    def _on_light_scan_failed(self, message: str):
+        """"정리 > 고양이 찾기" 빠른 목록 수집이 실패한 경우 — _on_light_scan_finished와
+        같은 뒷정리(모달 닫기, 바 범위 원복, 워커 정리)를 하고 허브로 돌려보낸다."""
+        self.light_scan_progress_dialog.accept()
+        self.light_scan_progress_dialog.bar.setRange(0, 100)
+        worker = self._light_scan_worker
+        self._light_scan_worker = None
+        if worker is not None:
+            worker.wait()
+        _info_dialog(self, f"사진 목록을 모으는 중 예상하지 못한 오류가 발생했습니다.\n\n{message}")
+        self.stack.setCurrentWidget(self.organize_hub_screen)
 
     def _on_light_scan_finished(self, result):
         self.light_scan_progress_dialog.accept()
@@ -394,6 +423,27 @@ class ScanSessionWindow(QWidget):
         self.resize(*self._SCANNING_SIZE)
         self.stack.setCurrentWidget(self.scanning_screen)
         self.scanning_screen.start_scan(self._current_scan_paths)
+
+    def _on_scan_failed(self, message: str):
+        """검사가 예상 못한 오류로 끝난 경우(gui/scanning_screen.py::ScanWorker.run
+        참고). 진행 화면에 그대로 두면 사용자가 빠져나갈 방법이 없으므로,
+        안내하고 들어온 곳(정리 허브 또는 창 닫기)으로 돌려보낸다."""
+        from_organize_hub = self._pending_organize_destination is not None or self._organize_paths is not None
+        self._pending_organize_destination = None
+        self._resume_base_result = None
+        self._resume_base_planned_total = 0
+
+        # 워커 스레드가 완전히 끝나기 전에 close()를 부르면 아래 closeEvent가
+        # isRunning()을 보고 닫기를 막아버려서, 오히려 멈춘 검사 화면에 갇힌다.
+        worker = getattr(self.scanning_screen, "worker", None)
+        if worker is not None:
+            worker.wait()
+
+        _info_dialog(self, f"검사 중 예상하지 못한 오류가 발생했습니다.\n\n{message}")
+        if from_organize_hub:
+            self.stack.setCurrentWidget(self.organize_hub_screen)
+        else:
+            self.close()
 
     def _on_scan_finished(self, result, cancelled: bool, planned_total: int, remaining_paths: list):
         if self._resume_base_result is not None:
@@ -606,6 +656,7 @@ class ScanSessionWindow(QWidget):
         self._organize_worker = _OrganizeWorker(run_fn, mode, output_root, self)
         self._organize_worker.progress.connect(self._on_organize_progress)
         self._organize_worker.finished_batch.connect(self._on_organize_finished)
+        self._organize_worker.failed.connect(self._on_organize_failed)
 
         title = "이동하는 중" if mode == "move" else "복사하는 중"
         self.organize_progress_dialog.start(title)
@@ -664,6 +715,19 @@ class ScanSessionWindow(QWidget):
     def _on_organize_cancel_requested(self):
         if self._organize_worker is not None:
             self._organize_worker.cancel()
+
+    def _on_organize_failed(self, message: str):
+        """정리(날짜별/도시별/고양이) 실행이 예상 못한 오류로 끝난 경우 —
+        모달 진행 팝업을 먼저 닫아야 앱이 멈춘 것처럼 보이지 않는다.
+        core/date_organizer.py는 파일을 옮기기 전에 실패하면 원본을 그대로
+        두므로, 여기서는 안내만 하고 허브로 돌려보낸다."""
+        self.organize_progress_dialog.accept()
+        worker = self._organize_worker
+        self._organize_worker = None
+        if worker is not None:
+            worker.wait()
+        _info_dialog(self, f"정리 중 예상하지 못한 오류가 발생했습니다.\n\n{message}")
+        self.stack.setCurrentWidget(self.organize_hub_screen)
 
     def _on_organize_finished(self, outcomes):
         self.organize_progress_dialog.accept()

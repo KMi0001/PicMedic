@@ -46,7 +46,7 @@ exe = EXE(
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=True,
+    upx=False,  # torch/CUDA DLL은 UPX 압축 시 로딩 실패·백신 오탐 사례가 많고, macOS는 코드서명/공증과 충돌한다 (2026-09-11 리뷰)
     upx_exclude=[],
     runtime_tmpdir=None,
     console=False,
@@ -62,7 +62,7 @@ coll = COLLECT(
     a.binaries,
     a.datas,
     strip=False,
-    upx=True,
+    upx=False,  # torch/CUDA DLL은 UPX 압축 시 로딩 실패·백신 오탐 사례가 많고, macOS는 코드서명/공증과 충돌한다 (2026-09-11 리뷰)
     upx_exclude=[],
     name='PicMedic',
 )

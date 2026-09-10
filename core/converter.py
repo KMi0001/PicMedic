@@ -21,9 +21,9 @@ from enum import Enum
 from pathlib import Path
 from typing import Callable, Optional
 
-from PIL import Image, ImageFile
+from PIL import Image
 
-from core.analyzer import analyze_file, HEIF_SUPPORT
+from core.analyzer import analyze_file, HEIF_SUPPORT, decode_mode
 from models.file_info import FileInfo, FileStatus
 from utils import logger, trash
 from utils.file_utils import unique_recovered_path
@@ -163,20 +163,19 @@ def convert_to_format(
         output_path = unique_recovered_path(output_dir, info.filename, ext, suffix=suffix)
         # 부분 손상 파일(analyzer가 "부분_손상/부분_복구_가능"으로 판정한 것)도 시도는 되게
         # 하려면, 분석 때와 마찬가지로 잘린 이미지를 끝까지 읽어보는 모드를 켜야 한다.
-        # 이 플래그는 Pillow 프로세스 전역 설정이라, try/finally로 반드시 되돌려놓는다.
-        ImageFile.LOAD_TRUNCATED_IMAGES = True
-        try:
-            with Image.open(info.path) as img:
-                img.load()
-                if target_format not in ALPHA_CAPABLE_FORMATS and img.mode in ("RGBA", "P", "LA"):
-                    # 출력 형식이 알파 채널을 지원하지 않으면 저장 전에 RGB로 눌러야 한다 (예: JPEG)
-                    img = img.convert("RGB")
-                save_kwargs = {}
-                if target_format in ("JPEG", "WEBP"):
-                    save_kwargs["quality"] = quality
-                img.save(output_path, format=target_format, **save_kwargs)
-        finally:
-            ImageFile.LOAD_TRUNCATED_IMAGES = False
+        # 이 플래그는 Pillow 프로세스 전역 설정이라 직접 만지지 않고 analyzer의
+        # decode_mode()로만 켠다 — 여기서 켜둔 동안 다른 창의 검사가 이 값을
+        # 물려받아 잘린 파일을 "정상"으로 오판하던 문제가 있었다(core/analyzer.py의
+        # _DECODE_LOCK 주석 참고, 2026-09-11).
+        with decode_mode(True), Image.open(info.path) as img:
+            img.load()
+            if target_format not in ALPHA_CAPABLE_FORMATS and img.mode in ("RGBA", "P", "LA"):
+                # 출력 형식이 알파 채널을 지원하지 않으면 저장 전에 RGB로 눌러야 한다 (예: JPEG)
+                img = img.convert("RGB")
+            save_kwargs = {}
+            if target_format in ("JPEG", "WEBP"):
+                save_kwargs["quality"] = quality
+            img.save(output_path, format=target_format, **save_kwargs)
     except OSError as exc:
         outcome.error_message, outcome.abort_batch = _classify_os_error(exc, "변환 실패")
         return outcome
