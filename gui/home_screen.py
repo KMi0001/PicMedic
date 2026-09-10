@@ -2,255 +2,207 @@
 gui/home_screen.py
 
 PRD 16장 "Screen 01 — Home" 구현.
+
+2026-09-10, 사용자 요청으로 재구성: "최근 검사" 목록을 없애고, 검사/진단/정리
+3개 액션을 각각 독립된 드래그앤드롭 카드로 노출한다(experiments/
+home_redesign_prototype에서 스크린샷으로 검증받은 안, B안 변형). "정리"는
+스캔 없이 곧장 정리 허브 화면(gui/organize_hub_screen.py)으로 랜딩한다
+(gui/scan_session_window.py::ScanSessionWindow의 land_on_organize) — 허브의
+카드(중복/유사/날짜별/도시별) 중 하나를 실제로 고를 때 그제서야 전체
+스캔을 시작하고, "고양이 찾기"는 그 스캔과 무관하게 항상 가벼운 자체 경로를
+쓴다(사진 3만 장 규모에서 "정리"가 항상 무거운 진단 스캔부터 돌던 문제를
+해결). "진단"은 원래도 스캔 없이 사진 한 장만 바로 분석하는 별도 흐름이었고
+그대로 유지 — 카드에 여러 장/폴더가 오면 "한 장만" 안내만 새로 추가했다.
+
+"최근 검사"와 함께 있던 복구 결과 재방문 기능(record_recovery_outcome)도
+같이 없앴다 — 복구 직후 폴더 열기는 gui/recovery_result_screen.py에 이미
+있어서 핵심 기능 손실은 없다.
 """
 
 from __future__ import annotations
 
-import json
-from datetime import datetime
 from pathlib import Path
 
-from PySide6.QtCore import Qt, Signal, QSettings, QStandardPaths, QPointF, QRectF, QUrl
-from PySide6.QtGui import QPixmap, QPainter, QPainterPath, QPen, QColor, QDesktopServices
+from PySide6.QtCore import Qt, Signal, QSettings, QStandardPaths, QPointF, QRectF
+from PySide6.QtGui import QCursor, QPixmap, QPainter, QPen, QColor
 from PySide6.QtWidgets import (
     QWidget,
     QVBoxLayout,
     QHBoxLayout,
-    QGridLayout,
     QLabel,
     QPushButton,
     QFrame,
     QFileDialog,
     QDialog,
+    QMenu,
 )
 
-from core.converter import RecoveryMode
 from core.scanner import SCANNABLE_EXTENSIONS
-from gui.icons import status_icon_pixmap
+from gui.common_dialogs import info_dialog
+from gui.convert_dialog import run_convert
 from gui.quality_diagnosis_dialog import run_quality_diagnosis
-from gui.result_screen import SummaryChip
-from gui.theme import COLORS, STATUS_COLORS
+from gui.theme import COLORS
 from gui.trash_screen import TrashScreen
+from utils import trash
 from utils.assets import asset_path
 
-MAX_RECENT = 5
-RECENT_SCANS_KEY = "recent_scans_v2"  # 이전 버전(단순 경로 문자열 목록)과 형식이 달라 키를 분리함
 CONTENT_WIDTH = 520
 
 _IMAGE_FILTER_PATTERN = " ".join(f"*{ext}" for ext in sorted(SCANNABLE_EXTENSIONS))
 IMAGE_FILE_FILTER = f"이미지 파일 ({_IMAGE_FILTER_PATTERN});;모든 파일 (*)"
 
 
-def _image_icon_pixmap(color: str, size: int = 28) -> QPixmap:
-    """선택 카드 아이콘: 목업과 동일한 '사진' 아웃라인(폴더 이모지 대신 벡터로 그림)."""
+def _outline_icon(color: str, size: int, draw) -> QPixmap:
+    """스트로크만 있는 아웃라인 벡터 아이콘 공통 뼈대 — gui/result_screen.py::
+    _outline_icon과 같은 스타일(정리 화면 아이콘들도 파일마다 이 패턴을 따로
+    복붙해서 씀, 새 abstraction을 안 만드는 게 이 코드베이스 관례)."""
     scale = size / 24.0
     pixmap = QPixmap(size, size)
     pixmap.fill(Qt.transparent)
-
     painter = QPainter(pixmap)
     painter.setRenderHint(QPainter.Antialiasing)
     pen = QPen(QColor(color))
-    pen.setWidthF(1.7 * scale)
+    pen.setWidthF(1.8 * scale)
     pen.setCapStyle(Qt.RoundCap)
     pen.setJoinStyle(Qt.RoundJoin)
     painter.setPen(pen)
     painter.setBrush(Qt.NoBrush)
-
-    frame = QRectF(3 * scale, 4 * scale, 18 * scale, 16 * scale)
-    painter.drawRoundedRect(frame, 2.5 * scale, 2.5 * scale)
-    painter.drawEllipse(QPointF(8.5 * scale, 9.5 * scale), 1.5 * scale, 1.5 * scale)
-
-    mountains = QPainterPath()
-    mountains.moveTo(4 * scale, 16.5 * scale)
-    mountains.lineTo(9 * scale, 11.5 * scale)
-    mountains.lineTo(12.5 * scale, 15 * scale)
-    mountains.lineTo(17 * scale, 10 * scale)
-    mountains.lineTo(20 * scale, 13.5 * scale)
-    painter.drawPath(mountains)
-
+    draw(painter, scale)
     painter.end()
     return pixmap
 
 
-class SelectionCard(QFrame):
-    """파일/폴더 선택 버튼과 드래그 앤 드롭 영역을 하나로 묶은 카드."""
+def _scan_icon_pixmap(color: str, size: int = 26) -> QPixmap:
+    """검사 = 돋보기 (gui/result_screen.py::_search_icon_pixmap과 동일 모양)."""
+
+    def draw(p, s):
+        p.drawEllipse(QPointF(10.5 * s, 10.5 * s), 6.5 * s, 6.5 * s)
+        p.drawLine(QPointF(15.2 * s, 15.2 * s), QPointF(20 * s, 20 * s))
+
+    return _outline_icon(color, size, draw)
+
+
+def _diagnose_icon_pixmap(color: str, size: int = 26) -> QPixmap:
+    """진단 = 맥박(EKG) 선 — 화질을 "측정"한다는 인상."""
+
+    def draw(p, s):
+        pts = [(2, 13), (6, 13), (8, 7), (11, 19), (14, 5), (16, 13), (22, 13)]
+        p.drawPolyline([QPointF(x * s, y * s) for x, y in pts])
+
+    return _outline_icon(color, size, draw)
+
+
+def _organize_icon_pixmap(color: str, size: int = 26) -> QPixmap:
+    """정리 = 폴더 안에 가지런한 줄 — "가지런히 정리됨"의 인상."""
+
+    def draw(p, s):
+        p.drawRoundedRect(QRectF(2 * s, 6 * s, 20 * s, 14 * s), 2 * s, 2 * s)
+        p.drawLine(QPointF(2 * s, 6 * s), QPointF(8 * s, 6 * s))
+        for y in (11, 14.5, 18):
+            p.drawLine(QPointF(6 * s, y * s), QPointF(18 * s, y * s))
+
+    return _outline_icon(color, size, draw)
+
+
+def _convert_icon_pixmap(color: str, size: int = 26) -> QPixmap:
+    """변환 = 서로 반대 방향을 가리키는 화살표 두 개 — gui/recovery_screen.py::
+    _convert_icon_pixmap과 같은 모양(그 화면 "복구/변환"의 "변환" 절반과
+    같은 의미라 아이콘을 맞춤)."""
+
+    def draw(p, s):
+        p.drawLine(QPointF(4 * s, 8 * s), QPointF(17 * s, 8 * s))
+        p.drawLine(QPointF(13 * s, 4 * s), QPointF(17 * s, 8 * s))
+        p.drawLine(QPointF(13 * s, 12 * s), QPointF(17 * s, 8 * s))
+        p.drawLine(QPointF(20 * s, 16 * s), QPointF(7 * s, 16 * s))
+        p.drawLine(QPointF(11 * s, 12 * s), QPointF(7 * s, 16 * s))
+        p.drawLine(QPointF(11 * s, 20 * s), QPointF(7 * s, 16 * s))
+
+    return _outline_icon(color, size, draw)
+
+
+class DropActionCard(QFrame):
+    """검사/진단/정리 액션 카드 — 각각 독립된 드래그앤드롭 타겟이자 클릭
+    진입점이다(2026-09-10, 사용자 요청으로 공용 드롭존을 없애고 카드 3개
+    각각에 드롭 기능을 넣는 안으로 확정 — experiments/home_redesign_prototype
+    에서 스크린샷으로 검증됨). 드래그가 카드 위에 있는 동안만 점선 테두리로
+    강조해서 "여기 놓으면 이 액션"이라는 걸 명확히 한다."""
 
     paths_dropped = Signal(list)
-    file_requested = Signal()
-    folder_requested = Signal()
+    clicked = Signal()
 
-    def __init__(self, parent=None):
+    def __init__(self, icon_pixmap: QPixmap, title: str, desc: str, emphasize: bool = False, parent=None):
         super().__init__(parent)
-        self.setObjectName("SelectionCard")
+        self.setObjectName("Card")
+        self.setCursor(Qt.PointingHandCursor)
         self.setAcceptDrops(True)
+        self._emphasize = emphasize
+        self._apply_style(active=False)
 
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(28, 32, 28, 32)
-        layout.setSpacing(8)
-        layout.setAlignment(Qt.AlignCenter)
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(20, 16, 20, 16)
+        layout.setSpacing(16)
 
-        icon = QLabel()
-        icon.setFixedSize(64, 64)
-        icon.setAlignment(Qt.AlignCenter)
-        icon.setStyleSheet(
-            f"background-color: {COLORS['selection']}; border-radius: 32px;"
-        )
-        icon.setPixmap(_image_icon_pixmap(COLORS["primary"], size=28))
-        layout.addWidget(icon, alignment=Qt.AlignCenter)
+        icon_label = QLabel()
+        icon_label.setFixedSize(52, 52)
+        icon_label.setAlignment(Qt.AlignCenter)
+        icon_label.setStyleSheet(f"background-color: {COLORS['selection']}; border-radius: 26px;")
+        icon_label.setPixmap(icon_pixmap)
+        layout.addWidget(icon_label)
 
-        heading = QLabel("파일이나 폴더를 선택하세요")
-        heading.setAlignment(Qt.AlignCenter)
-        heading.setStyleSheet("font-size: 15px; font-weight: 600; background: transparent;")
-        layout.addWidget(heading)
+        text_col = QVBoxLayout()
+        text_col.setSpacing(3)
+        title_label = QLabel(title)
+        title_label.setStyleSheet("font-size: 15px; font-weight: 700; background: transparent;")
+        text_col.addWidget(title_label)
+        desc_label = QLabel(desc)
+        desc_label.setWordWrap(True)
+        desc_label.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 11.5px; background: transparent;")
+        text_col.addWidget(desc_label)
+        layout.addLayout(text_col, 1)
 
-        hint = QLabel("이 영역에 끌어놓아도 됩니다")
-        hint.setAlignment(Qt.AlignCenter)
-        hint.setStyleSheet(
-            f"color: {COLORS['text_secondary']}; font-size: 12px; background: transparent;"
-        )
-        layout.addWidget(hint)
-
-        layout.addSpacing(6)
-
-        btn_row = QHBoxLayout()
-        btn_row.setSpacing(10)
-        btn_row.addStretch(1)
-
-        file_btn = QPushButton("파일 선택")
-        file_btn.clicked.connect(self.file_requested.emit)
-        btn_row.addWidget(file_btn)
-
-        folder_btn = QPushButton("폴더 선택")
-        folder_btn.setObjectName("Primary")
-        folder_btn.clicked.connect(self.folder_requested.emit)
-        btn_row.addWidget(folder_btn)
-
-        btn_row.addStretch(1)
-        layout.addLayout(btn_row)
+        hint_label = QLabel("여기로 끌어놓기\n또는 클릭")
+        hint_label.setAlignment(Qt.AlignCenter)
+        hint_label.setStyleSheet(f"color: {COLORS['muted']}; font-size: 10.5px; background: transparent;")
+        layout.addWidget(hint_label)
 
     def dragEnterEvent(self, event):
         if event.mimeData().hasUrls():
             event.acceptProposedAction()
-            self.setStyleSheet(f"border: 2px dashed {COLORS['primary']}; border-radius: 16px;")
+            self._apply_style(active=True)
 
     def dragLeaveEvent(self, event):
-        self.setStyleSheet("")
+        self._apply_style(active=False)
 
     def dropEvent(self, event):
-        self.setStyleSheet("")
+        self._apply_style(active=False)
         urls = event.mimeData().urls()
         paths = [url.toLocalFile() for url in urls if url.toLocalFile()]
         if paths:
             self.paths_dropped.emit(paths)
-
-
-def _status_icon_pixmap(ok: bool, accent: str, size: int = 24) -> QPixmap:
-    """완료(✓)/중단(⚠) 상태 아이콘 — gui/icons.py의 공용 아이콘을 감싼 것.
-    호출부(최근 검사 목록 등)가 여전히 bool로 부르고 있어 그 형태는 유지한다."""
-    return status_icon_pixmap("success" if ok else "warning", accent, size)
-
-
-class _RecentRow(QFrame):
-    """최근 검사 카드 안의 클릭 가능한 한 행."""
-
-    clicked = Signal()
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setObjectName("RecentRow")
-        self.setCursor(Qt.PointingHandCursor)
 
     def mouseReleaseEvent(self, event):
         if event.button() == Qt.LeftButton:
             self.clicked.emit()
         super().mouseReleaseEvent(event)
 
-
-class RecentCard(QFrame):
-    """최근 검사 목록을 상태 아이콘 + 화살표가 있는 카드형 행으로 보여준다."""
-
-    entry_activated = Signal(dict)
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setObjectName("Card")
-        self._layout = QVBoxLayout(self)
-        self._layout.setContentsMargins(0, 0, 0, 0)
-        self._layout.setSpacing(0)
-
-    def set_entries(self, entries: list[dict]) -> None:
-        while self._layout.count():
-            item = self._layout.takeAt(0)
-            widget = item.widget()
-            if widget:
-                widget.deleteLater()
-
-        if not entries:
-            placeholder = QLabel("최근 검사 기록이 없습니다.")
-            placeholder.setStyleSheet(f"color: {COLORS['muted']}; padding: 16px;")
-            self._layout.addWidget(placeholder)
-            return
-
-        for idx, entry in enumerate(entries):
-            row = self._build_row(
-                entry, is_first=(idx == 0), is_last=(idx == len(entries) - 1)
+    def _apply_style(self, active: bool) -> None:
+        if active:
+            self.setStyleSheet(
+                f"QFrame#Card {{ border: 2px dashed {COLORS['primary']}; border-radius: 14px; "
+                f"background-color: {COLORS['selection']}; }}"
             )
-            self._layout.addWidget(row)
-
-    def _build_row(self, entry: dict, is_first: bool, is_last: bool) -> QFrame:
-        ok = entry.get("status") == "completed"
-        accent = COLORS["success"] if ok else COLORS["warning"]
-
-        row = _RecentRow()
-        border = "none" if is_last else f"1px solid {COLORS['border']}"
-        # 카드(RecentCard)의 border-radius:12px와 맞춰서, 첫/마지막 행의 바깥쪽 모서리만
-        # 둥글게 해준다 — 안 그러면 행의 사각 배경이 카드의 둥근 모서리 밖으로 삐져나와 덮어버림.
-        radius_css = "border-radius: 0;"
-        if is_first and is_last:
-            radius_css = "border-radius: 12px;"
-        elif is_first:
-            radius_css = "border-top-left-radius: 12px; border-top-right-radius: 12px;"
-        elif is_last:
-            radius_css = "border-bottom-left-radius: 12px; border-bottom-right-radius: 12px;"
-        row.setStyleSheet(
-            f"QFrame#RecentRow {{ background-color: {COLORS['surface']}; border: none; "
-            f"border-bottom: {border}; {radius_css} }}"
-            f"QFrame#RecentRow:hover {{ background-color: {COLORS['bg']}; }}"
+            return
+        border = f"2px solid {COLORS['primary']}" if self._emphasize else f"1px solid {COLORS['border']}"
+        self.setStyleSheet(
+            f"QFrame#Card {{ border: {border}; border-radius: 14px; background-color: {COLORS['surface']}; }}"
         )
-        row.clicked.connect(lambda entry=entry: self.entry_activated.emit(entry))
-
-        row_layout = QHBoxLayout(row)
-        row_layout.setContentsMargins(18, 13, 18, 13)
-        row_layout.setSpacing(12)
-
-        dot = QLabel()
-        dot.setFixedSize(24, 24)
-        dot.setPixmap(_status_icon_pixmap(ok, accent))
-        row_layout.addWidget(dot)
-
-        text_col = QVBoxLayout()
-        text_col.setSpacing(1)
-        name = QLabel(entry.get("label", ""))
-        name.setStyleSheet("font-weight: 500; font-size: 13.5px; background: transparent;")
-        status_label = QLabel(_status_line(entry))
-        status_label.setStyleSheet(f"color: {accent}; font-size: 12px; background: transparent;")
-        text_col.addWidget(name)
-        text_col.addWidget(status_label)
-        row_layout.addLayout(text_col, 1)
-
-        chevron = QLabel("›")  # ›
-        chevron.setStyleSheet(
-            f"color: {COLORS['muted']}; font-size: 16px; font-weight: 700; background: transparent;"
-        )
-        row_layout.addWidget(chevron)
-
-        return row
 
 
 class HomeScreen(QWidget):
-    """검사할 폴더/파일을 선택하는 첫 화면"""
+    """검사·진단·정리 중 뭘 할지 고르는 첫 화면."""
 
-    paths_chosen = Signal(list)  # list[str] — 파일 1개 이상 / 폴더 1개
+    paths_chosen = Signal(list)        # 검사 — ScanSessionWindow를 열고 끝나면 검사 결과 화면으로
+    organize_requested = Signal(list)  # 정리 — 스캔 없이 곧장 정리 허브로 랜딩(land_on_organize)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -264,7 +216,7 @@ class HomeScreen(QWidget):
         content.setFixedWidth(CONTENT_WIDTH)
         content_layout = QVBoxLayout(content)
         content_layout.setContentsMargins(0, 0, 0, 0)
-        content_layout.setSpacing(20)
+        content_layout.setSpacing(16)
 
         header_row = QHBoxLayout()
         header_row.setSpacing(6)
@@ -289,45 +241,62 @@ class HomeScreen(QWidget):
         header_row.addLayout(brand_text)
         header_row.setAlignment(brand_text, Qt.AlignVCenter)
         header_row.addStretch(1)
-
         content_layout.addLayout(header_row)
 
-        self.selection_card = SelectionCard()
-        self.selection_card.paths_dropped.connect(self._on_paths_chosen)
-        self.selection_card.file_requested.connect(self._choose_file)
-        self.selection_card.folder_requested.connect(self._choose_folder)
-        content_layout.addWidget(self.selection_card)
+        hint = QLabel("사진/폴더를 원하는 카드에 바로 끌어놓으세요 — 클릭해서 선택할 수도 있어요.")
+        hint.setWordWrap(True)
+        hint.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 12px;")
+        content_layout.addWidget(hint)
 
-        recent_label = QLabel("최근 검사")
-        recent_label.setStyleSheet("font-weight: 600;")
-        content_layout.addWidget(recent_label)
+        self.scan_card = DropActionCard(
+            _scan_icon_pixmap(COLORS["primary"]),
+            "검사",
+            "손상·형식 오류를 찾아 복구까지 도와드려요",
+            emphasize=True,
+        )
+        self.scan_card.paths_dropped.connect(self._on_scan_paths_chosen)
+        self.scan_card.clicked.connect(lambda: self._show_pick_menu(self._on_scan_paths_chosen))
+        content_layout.addWidget(self.scan_card)
 
-        self.recent_card = RecentCard()
-        self.recent_card.entry_activated.connect(self._show_recent_summary)
-        content_layout.addWidget(self.recent_card)
+        self.diagnose_card = DropActionCard(
+            _diagnose_icon_pixmap(COLORS["primary"]),
+            "진단",
+            "사진 한 장의 화질(흐림·노이즈)을 봐요",
+        )
+        self.diagnose_card.paths_dropped.connect(self._on_diagnose_paths_dropped)
+        self.diagnose_card.clicked.connect(self._open_diagnose)
+        content_layout.addWidget(self.diagnose_card)
 
-        # 스캔 세션(gui/scan_session_window.py) 없이도 바로 쓰고 싶다는 요청으로
-        # 하단에 둔 바로가기들 — 임시 휴지통은 세션과 무관한 전역 폴더 보기라
-        # 기존 스타일(흰 배경) 그대로, 사진 진단은 자주 쓸 기능이라 메인
-        # 색상으로 눈에 띄게 한다. 화질개선/얼굴복원/디블러/디노이즈 개별
-        # 바로가기는 뺐다 — 이제 "사진 진단" 결과에서 추천받은 것만 실행하는
-        # 흐름으로 통일(2026-09-07, 사용자 요청).
+        self.convert_card = DropActionCard(
+            _convert_icon_pixmap(COLORS["primary"]),
+            "변환",
+            "사진 형식을 다른 형식으로 바꿔요 (여러 장도 가능)",
+        )
+        self.convert_card.paths_dropped.connect(self._on_convert_paths_chosen)
+        self.convert_card.clicked.connect(lambda: self._show_pick_menu(self._on_convert_paths_chosen))
+        content_layout.addWidget(self.convert_card)
+
+        self.organize_card = DropActionCard(
+            _organize_icon_pixmap(COLORS["primary"]),
+            "정리",
+            "중복·날짜·도시·고양이 찾기로 정리해요",
+        )
+        self.organize_card.paths_dropped.connect(self._on_organize_paths_chosen)
+        self.organize_card.clicked.connect(
+            lambda: self._show_pick_menu(self._on_organize_paths_chosen)
+        )
+        content_layout.addWidget(self.organize_card)
+
         bottom_row = QHBoxLayout()
         bottom_row.setSpacing(10)
         trash_btn = QPushButton("임시 휴지통")
         trash_btn.clicked.connect(self._open_trash)
         bottom_row.addWidget(trash_btn)
-
-        self.diagnose_btn = QPushButton("사진 진단")
-        self.diagnose_btn.setObjectName("Primary")
-        self.diagnose_btn.clicked.connect(self._open_diagnose)
-        bottom_row.addWidget(self.diagnose_btn)
+        bottom_row.addStretch(1)
         content_layout.addLayout(bottom_row)
 
         outer.addWidget(content, alignment=Qt.AlignHCenter)
         outer.addStretch(1)
-
-        self._refresh_recent_list()
 
     # --- 내부 로직 -----------------------------------------------------
 
@@ -343,45 +312,99 @@ class HomeScreen(QWidget):
         if directory:
             self.settings.setValue("last_browse_dir", directory)
 
-    def _choose_file(self):
+    def _show_pick_menu(self, on_chosen) -> None:
+        """카드를 클릭했을 때 "파일 선택"/"폴더 선택" 중 고르게 하는 작은 메뉴 —
+        카드마다 버튼을 두 개씩 늘어놓으면 좁아 보여서, 클릭했을 때만 잠깐
+        띄운다. 카드 모서리 고정 위치가 아니라 마우스 우클릭 컨텍스트
+        메뉴처럼 커서 위치에서 뜨게 한다(2026-09-10, 사용자 리포트 — "팝업이
+        어색하다")."""
+        menu = QMenu(self)
+        file_action = menu.addAction("파일 선택...")
+        folder_action = menu.addAction("폴더 선택...")
+        chosen = menu.exec(QCursor.pos())
+        if chosen is file_action:
+            self._pick_files(on_chosen)
+        elif chosen is folder_action:
+            self._pick_folder(on_chosen)
+
+    def _pick_files(self, on_chosen) -> None:
         start_dir = self._default_browse_dir()
         file_paths, _ = QFileDialog.getOpenFileNames(
-            self, "검사할 사진 파일 선택 (여러 개 선택 가능)", start_dir, IMAGE_FILE_FILTER
+            self, "사진 파일 선택 (여러 개 선택 가능)", start_dir, IMAGE_FILE_FILTER
         )
         if file_paths:
             self._remember_browse_dir(str(Path(file_paths[0]).parent))
-            self._on_paths_chosen(file_paths)
+            on_chosen(file_paths)
 
-    def _choose_folder(self):
+    def _pick_folder(self, on_chosen) -> None:
         start_dir = self._default_browse_dir()
-        folder = QFileDialog.getExistingDirectory(self, "검사할 폴더 선택", start_dir)
+        folder = QFileDialog.getExistingDirectory(self, "폴더 선택", start_dir)
         if folder:
             self._remember_browse_dir(folder)
-            self._on_paths_chosen([folder])
+            on_chosen([folder])
 
-    def _on_paths_chosen(self, paths: list[str]):
+    def _on_scan_paths_chosen(self, paths: list[str]):
         valid = [p for p in paths if Path(p).exists()]
         if valid:
             self.paths_chosen.emit(valid)
 
+    def _on_organize_paths_chosen(self, paths: list[str]):
+        valid = [p for p in paths if Path(p).exists()]
+        if valid:
+            self.organize_requested.emit(valid)
+
+    def _on_convert_paths_chosen(self, paths: list[str]):
+        """검사 없이 곧장 "형식 변환"을 여는 진입점 — gui/convert_dialog.py가
+        폴더를 사진 파일로 펼치고 분석까지 다 처리한다. 여러 장/폴더 다 된다."""
+        valid = [p for p in paths if Path(p).exists()]
+        if valid:
+            run_convert(self, valid)
+
+    def _on_diagnose_paths_dropped(self, paths: list[str]):
+        """진단은 원래부터 사진 한 장만 다루는 흐름이라(gui/quality_diagnosis_dialog.py),
+        여러 장이나 폴더가 떨어지면 무엇을 골라야 할지 추측하지 않고 안내만
+        하고 끝낸다."""
+        valid = [p for p in paths if Path(p).exists()]
+        if len(valid) != 1 or Path(valid[0]).is_dir():
+            info_dialog(
+                self,
+                "진단은 사진 한 장만 가능해요 — 여러 장이나 폴더는 '검사'나 '정리'를 이용해주세요.",
+            )
+            return
+        self._run_diagnose(valid[0])
+
     def _open_trash(self):
         """세션(ScanSessionWindow) 없이도 임시 휴지통을 바로 볼 수 있게 하는
-        진입점 — utils/trash.py의 TRASH_DIR은 세션과 무관한 전역 폴더라 화면만
-        새로 하나 띄우면 된다."""
+        진입점. 2026-09-10부터 임시휴지통은 전역 폴더 하나가 아니라 정리했던
+        폴더마다 따로 생기므로(utils/trash.py), 먼저 어느 폴더의 임시휴지통을
+        볼지 "불러오기"로 고르게 한다 — 그 폴더 자체를 골라도(폴더 이름이
+        "임시휴지통"), 그 폴더를 담고 있는 상위 폴더를 골라도 되게 둘 다
+        받아준다."""
+        start_dir = self._default_browse_dir()
+        chosen = QFileDialog.getExistingDirectory(self, "임시휴지통이 있는 폴더 선택", start_dir)
+        if not chosen:
+            return
+        chosen_path = Path(chosen)
+        trash_path = (
+            chosen_path
+            if chosen_path.name == trash.TRASH_FOLDER_NAME
+            else chosen_path / trash.TRASH_FOLDER_NAME
+        )
+        if not trash_path.is_dir():
+            info_dialog(self, f'이 폴더에는 아직 "{trash.TRASH_FOLDER_NAME}"이 없어요.\n({chosen})')
+            return
+        self._remember_browse_dir(chosen)
+
         dialog = QDialog(self)
         dialog.setWindowTitle("임시 휴지통")
         dialog.setWindowModality(Qt.WindowModal)
         layout = QVBoxLayout(dialog)
         layout.setContentsMargins(0, 0, 0, 0)
         screen = TrashScreen()
+        screen.set_trash_dirs([trash_path])
         screen.refresh()
         screen.back_requested.connect(dialog.accept)
         layout.addWidget(screen)
-        # 카드 안 파일명/사유가 줄바꿈되더라도 너무 좁으면 계속 답답해
-        # 보인다(2026-09-09, 사용자 요청 — "그냥 화면 너비를 넓히면 되는게
-        # 아니야?") — 줄바꿈 자체는 gui/trash_screen.py에서 어떤 길이든
-        # 항상 되게 고쳤지만, 다이얼로그도 같이 넓혀서 애초에 줄바꿈이 덜
-        # 필요하게 한다.
         dialog.resize(760, 560)
         dialog.exec()
         # 다이얼로그가 닫히면 screen도 곧 없어지는데, 백그라운드 썸네일 로딩이
@@ -399,7 +422,9 @@ class HomeScreen(QWidget):
         if not path:
             return
         self._remember_browse_dir(str(Path(path).parent))
+        self._run_diagnose(path)
 
+    def _run_diagnose(self, path: str) -> None:
         width = height = None
         try:
             from PIL import Image
@@ -410,198 +435,3 @@ class HomeScreen(QWidget):
             pass  # 크기를 못 읽어도 예상 소요 시간 안내만 빠질 뿐 기능은 그대로 동작
 
         run_quality_diagnosis(self, path, width, height)
-
-    def _show_recent_summary(self, entry: dict):
-        """스캔을 다시 하지 않고, 그때 결과 요약을 팝업으로 보여준다."""
-        paths = entry.get("paths", [])
-        ok = entry.get("status") == "completed"
-        accent = COLORS["success"] if ok else COLORS["warning"]
-
-        dialog = QDialog(self)
-        dialog.setWindowTitle("최근 검사 결과")
-        # ApplicationModal(기본값)이면 검사 세션 창(gui/scan_session_window.py)이
-        # 여러 개 떠 있을 때 이 팝업 하나 때문에 전부 멈춘다 — 홈 창만 막는다.
-        dialog.setWindowModality(Qt.WindowModal)
-        layout = QVBoxLayout(dialog)
-        layout.setContentsMargins(24, 24, 24, 24)
-        layout.setSpacing(14)
-
-        # 최근 검사 목록 행과 같은 완료(✓)/중단(⚠) 아이콘을 크게 재사용해서
-        # 한눈에 결과 성격을 알 수 있게 한다 (DESIGN.md 아이콘 시스템 참고).
-        header_row = QHBoxLayout()
-        header_row.setSpacing(12)
-        icon_label = QLabel()
-        icon_label.setPixmap(_status_icon_pixmap(ok, accent, size=40))
-        header_row.addWidget(icon_label, alignment=Qt.AlignTop)
-
-        text_col = QVBoxLayout()
-        text_col.setSpacing(2)
-        title_label = QLabel(entry.get("label", ""))
-        title_label.setWordWrap(True)
-        title_label.setFixedWidth(240)
-        title_label.setStyleSheet("font-weight: 700; font-size: 15px;")
-        text_col.addWidget(title_label)
-
-        status_label = QLabel(_status_line(entry))
-        status_label.setStyleSheet(f"color: {accent}; font-weight: 600; font-size: 12.5px;")
-        text_col.addWidget(status_label)
-
-        meta_label = QLabel(f"검사 시각: {entry.get('timestamp', '-')}")
-        meta_label.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 11.5px;")
-        text_col.addWidget(meta_label)
-
-        header_row.addLayout(text_col, 1)
-        layout.addLayout(header_row)
-
-        # 상태별 개수 — 검사 결과 화면과 같은 SummaryChip 카드(DESIGN.md "상태 요약
-        # 카드"). 칸이 최대 6개까지 나올 수 있어 한 줄이 아니라 3열 그리드로 접는다.
-        chip_defs = (
-            ("normal", "정상", STATUS_COLORS["정상"]),
-            ("mismatch", "형식 불일치", STATUS_COLORS["형식_불일치"]),
-            ("partial_corruption", "부분 손상", STATUS_COLORS["부분_손상"]),
-            ("corrupted", "손상", STATUS_COLORS["손상"]),
-            ("unsupported", "지원 안 함", COLORS["muted"]),
-            ("not_an_image", "이미지 아님", COLORS["muted"]),
-        )
-        present = [(label, color, entry.get(key, 0)) for key, label, color in chip_defs if entry.get(key, 0)]
-        if present:
-            grid = QGridLayout()
-            grid.setSpacing(8)
-            for idx, (label, color, value) in enumerate(present):
-                chip = SummaryChip(label, color)
-                chip.set_value(value)
-                grid.addWidget(chip, idx // 3, idx % 3)
-            layout.addLayout(grid)
-
-        # 이 스캔을 기준으로 복구/변환까지 했었다면(main_window.py::_on_recovery_finished가
-        # record_recovery_outcome으로 기록) 결과와 저장 폴더 바로가기를 보여준다. 복구 이후
-        # 사용자가 폴더/파일을 옮기거나 지웠을 수 있으니, "복구했다는 기록"은 그대로 두되
-        # 폴더가 실제로 있는지는 열기를 누르는 시점에 확인한다.
-        recovery_dir = entry.get("recovery_output_dir")
-        if recovery_dir:
-            layout.addSpacing(2)
-            recovery_row = QHBoxLayout()
-            recovery_row.setSpacing(8)
-            recovery_icon = QLabel()
-            recovery_icon.setPixmap(_status_icon_pixmap(True, COLORS["success"], size=18))
-            recovery_row.addWidget(recovery_icon)
-            recovery_kind = "변환 완료" if entry.get("recovery_mode") == RecoveryMode.CONVERT.value else "복구 완료"
-            recovery_label = QLabel(f"{recovery_kind} · {entry.get('recovery_count', 0)}개")
-            recovery_label.setStyleSheet(f"color: {COLORS['success']}; font-weight: 600; font-size: 12.5px;")
-            recovery_row.addWidget(recovery_label)
-            recovery_row.addStretch(1)
-            open_folder_btn = QPushButton("폴더 열기")
-            recovery_row.addWidget(open_folder_btn)
-            layout.addLayout(recovery_row)
-
-            folder_missing_label = QLabel("폴더를 찾을 수 없습니다 — 이동되었거나 삭제된 것 같아요.")
-            folder_missing_label.setWordWrap(True)
-            folder_missing_label.setStyleSheet(f"color: {COLORS['danger']}; font-size: 11.5px;")
-            folder_missing_label.hide()
-            layout.addWidget(folder_missing_label)
-
-            def open_recovery_folder():
-                if Path(recovery_dir).exists():
-                    QDesktopServices.openUrl(QUrl.fromLocalFile(recovery_dir))
-                else:
-                    folder_missing_label.show()
-
-            open_folder_btn.clicked.connect(open_recovery_folder)
-
-        btn_row = QHBoxLayout()
-        rescan_btn = QPushButton("다시 검사")
-        close_btn = QPushButton("닫기")
-        close_btn.setObjectName("Primary")
-        btn_row.addWidget(rescan_btn)
-        btn_row.addWidget(close_btn)
-        layout.addLayout(btn_row)
-
-        def do_rescan():
-            dialog.accept()
-            valid = [p for p in paths if Path(p).exists()]
-            if valid:
-                self.paths_chosen.emit(valid)
-
-        rescan_btn.clicked.connect(do_rescan)
-        close_btn.clicked.connect(dialog.reject)
-        dialog.exec()
-
-    # --- 최근 검사 기록 (스캔이 끝난 뒤 main_window가 호출) -------------------
-
-    def record_scan_outcome(self, paths: list[str], result, cancelled: bool, planned_total: int) -> None:
-        """스캔 1회가 끝나면(완료든 취소든) 결과를 '최근 검사' 목록에 기록한다."""
-        if not paths or result.total == 0:
-            # 검증된 파일이 하나도 없는 스캔은 목록에 남길 의미가 없다
-            return
-
-        label = paths[0] if len(paths) == 1 else f"{len(paths)}개 파일 선택"
-        entry = {
-            "paths": paths,
-            "label": label,
-            "status": "cancelled" if cancelled else "completed",
-            "scanned": result.total,
-            "planned": planned_total or result.total,
-            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M"),
-            "normal": result.normal,
-            "mismatch": result.mismatch,
-            "partial_corruption": result.partial_corruption,
-            "corrupted": result.corrupted,
-            "unsupported": result.unsupported,
-            "not_an_image": result.not_an_image,
-        }
-
-        entries = self._load_recent_entries()
-        entries = [e for e in entries if e.get("paths") != paths]
-        entries.insert(0, entry)
-        entries = entries[:MAX_RECENT]
-        self._save_recent_entries(entries)
-        self._refresh_recent_list()
-
-    def record_recovery_outcome(self, paths: list[str], outcomes: list, output_dir: str) -> None:
-        """복구/변환이 끝나면(main_window.py::_on_recovery_finished) 같은 원본 경로(paths)로
-        기록된 '최근 검사' 항목에 결과 폴더를 남겨서, 최근 검사 팝업에서 바로 열 수 있게 한다.
-        같은 스캔을 여러 번 복구했으면 가장 최근 것만 남는다(이력 전체를 쌓지 않음)."""
-        recovered_count = sum(1 for o in outcomes if o.success)
-        if not paths or not recovered_count:
-            return
-
-        entries = self._load_recent_entries()
-        for entry in entries:
-            if entry.get("paths") == paths:
-                entry["recovery_output_dir"] = output_dir
-                entry["recovery_count"] = recovered_count
-                # 배치 하나는 항상 모드 하나(gui/recovery_screen.py::_start_recovery가
-                # RESTORE_EXTENSION/CONVERT 중 하나로만 recover_batch를 호출)라
-                # 첫 outcome의 mode만 봐도 된다 — "복구 완료"/"변환 완료" 문구를 결정.
-                entry["recovery_mode"] = outcomes[0].mode.value
-                self._save_recent_entries(entries)
-                self._refresh_recent_list()
-                return
-
-    def _load_recent_entries(self) -> list[dict]:
-        raw = self.settings.value(RECENT_SCANS_KEY, "")
-        if not raw:
-            return []
-        try:
-            data = json.loads(raw)
-        except (TypeError, json.JSONDecodeError):
-            return []
-        return data if isinstance(data, list) else []
-
-    def _save_recent_entries(self, entries: list[dict]) -> None:
-        self.settings.setValue(RECENT_SCANS_KEY, json.dumps(entries, ensure_ascii=False))
-
-    def _refresh_recent_list(self):
-        self.recent_card.set_entries(self._load_recent_entries())
-
-
-def _status_line(entry: dict) -> str:
-    status = entry.get("status")
-    scanned = entry.get("scanned", 0)
-    planned = entry.get("planned", scanned)
-
-    if status == "completed":
-        return f"완료 · {scanned:,}장"
-    elif status == "cancelled":
-        return f"중단됨 · {scanned:,}/{planned:,}"
-    return ""

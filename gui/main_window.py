@@ -30,15 +30,19 @@ class MainWindow(QMainWindow):
         self._sessions: list[ScanSessionWindow] = []
 
         self.home_screen.paths_chosen.connect(self._start_session)
+        self.home_screen.organize_requested.connect(self._start_organize_session)
 
-    def _start_session(self, paths: list):
+    def _start_organize_session(self, paths: list):
+        self._start_session(paths, land_on_organize=True)
+
+    def _start_session(self, paths: list, land_on_organize: bool = False):
         # parent를 안 주는 이유: Qt.Window 플래그를 가진 위젯이 부모까지 있으면
         # Windows에서 최대화는 되는데 테두리 드래그 리사이즈가 안 먹는 문제가
         # 있었다(2026-09-08, 사용자 리포트) — 그래서 완전히 독립된 창으로 띄우고
         # 스타일시트는 ScanSessionWindow가 직접 적용한다(gui/scan_session_window.py
         # 참고). 그 대신 Qt가 자동으로 자식 창을 닫아주지 않으므로, 아래
         # closeEvent()에서 열려있는 세션 창들을 직접 닫아준다.
-        session = ScanSessionWindow(self.home_screen, paths, parent=None)
+        session = ScanSessionWindow(paths, parent=None, land_on_organize=land_on_organize)
         session.closed.connect(self._on_session_closed)
         self._sessions.append(session)
         session.show()
@@ -69,8 +73,11 @@ class MainWindow(QMainWindow):
         for session in self._sessions:
             scan_worker = getattr(session.scanning_screen, "worker", None)
             recovery_worker = getattr(session.recovery_screen, "worker", None)
-            if (scan_worker is not None and scan_worker.isRunning()) or (
-                recovery_worker is not None and recovery_worker.isRunning()
+            light_scan_worker = session._light_scan_worker
+            if (
+                (scan_worker is not None and scan_worker.isRunning())
+                or (recovery_worker is not None and recovery_worker.isRunning())
+                or (light_scan_worker is not None and light_scan_worker.isRunning())
             ):
                 return True
         return False

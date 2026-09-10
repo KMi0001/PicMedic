@@ -95,12 +95,6 @@ QFrame#Card[selected="true"] {{
     background-color: {COLORS['selection']};
 }}
 
-QFrame#SelectionCard {{
-    background-color: {COLORS['surface']};
-    border: 2px dashed {COLORS['dashed']};
-    border-radius: 16px;
-}}
-
 QPushButton {{
     background-color: {COLORS['surface']};
     border: 1px solid {COLORS['border']};

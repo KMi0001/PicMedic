@@ -14,6 +14,7 @@ from typing import Callable, Iterable, Optional
 
 from core.analyzer import analyze_file
 from core.detector import MVP_SUPPORTED_EXTENSIONS, FUTURE_EXTENSIONS
+from models.file_info import FileInfo
 from models.scan_result import ScanResult
 from utils import logger
 
@@ -167,6 +168,28 @@ def scan_folder(
     )
 
 
+def _gather_candidate_files(
+    roots: Iterable[str | Path],
+    recursive: bool = True,
+    should_cancel: Optional[Callable[[], bool]] = None,
+) -> list[Path]:
+    """여러 경로에서 검사 대상 파일 목록만 모은다(같은 파일이 여러 경로로
+    중복 포함되면 한 번만). scan_paths()와 list_image_files() 둘 다 이걸로
+    파일을 모으고, 그다음 뭘 할지(analyze_file 전체 진단 vs 목록만)만 갈린다."""
+    files: list[Path] = []
+    seen: set[Path] = set()
+    for root in roots:
+        if should_cancel and should_cancel():
+            break
+        for path in iter_candidate_files(Path(root), recursive=recursive, should_cancel=should_cancel):
+            resolved = path.resolve()
+            if resolved in seen:
+                continue
+            seen.add(resolved)
+            files.append(path)
+    return files
+
+
 def scan_paths(
     roots: Iterable[str | Path],
     recursive: bool = True,
@@ -190,17 +213,7 @@ def scan_paths(
       끝까지 검사했다면 빈 리스트.
     """
     roots = list(roots)
-    files: list[Path] = []
-    seen: set[Path] = set()
-    for root in roots:
-        if should_cancel and should_cancel():
-            break
-        for path in iter_candidate_files(Path(root), recursive=recursive, should_cancel=should_cancel):
-            resolved = path.resolve()
-            if resolved in seen:
-                continue
-            seen.add(resolved)
-            files.append(path)
+    files = _gather_candidate_files(roots, recursive=recursive, should_cancel=should_cancel)
 
     result = _scan_files(
         files, progress_callback=progress_callback, should_cancel=should_cancel, on_heavy_format=on_heavy_format
@@ -209,3 +222,39 @@ def scan_paths(
 
     remaining_paths = [str(p) for p in files[result.total:]]
     return result, remaining_paths
+
+
+def list_image_files(
+    roots: Iterable[str | Path],
+    recursive: bool = True,
+    should_cancel: Optional[Callable[[], bool]] = None,
+) -> ScanResult:
+    """core/analyzer.py의 무거운 분석(파일 전체 SHA-256 해시 + 이미지 디코딩
+    + 퍼셉추얼 해시/EXIF)을 생략하고 파일 목록만 가볍게 모은다.
+
+    2026-09-10, 사용자 요청 — 사진 3만 장 규모에서 "정리 > 고양이 찾기"가
+    "검사"와 똑같이 느렸던 문제. core/cat_finder.py(CLIP)는 원본 이미지를
+    직접 읽으므로 손상 검사·해시가 전혀 필요 없어서, 이 함수로 만든
+    가벼운 ScanResult를 바로 넘기면 된다 — 대신 FileInfo의 status/width/
+    height/EXIF 등은 채워지지 않는다(gui/organize_hub_screen.py의 중복·
+    유사·날짜별·도시별처럼 그 값이 필요한 기능에는 이 결과를 쓰면 안 됨).
+    """
+    files = _gather_candidate_files(roots, recursive=recursive, should_cancel=should_cancel)
+    result = ScanResult()
+    for path in files:
+        if should_cancel and should_cancel():
+            break
+        try:
+            file_size = path.stat().st_size
+        except OSError:
+            file_size = 0
+        result.add(
+            FileInfo(
+                path=str(path),
+                filename=path.name,
+                extension=path.suffix.lower(),
+                file_size=file_size,
+                readable=True,
+            )
+        )
+    return result

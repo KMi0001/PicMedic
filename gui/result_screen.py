@@ -252,9 +252,6 @@ class ResultScreen(QWidget):
     recovery_requested = Signal(list)    # list[FileInfo] — 확장자 변환/복원
     rescan_requested = Signal()
     resume_requested = Signal()          # 중단된 검사를 나머지 파일부터 이어서 진행
-    organize_requested = Signal()        # "정리" — gui/organize_hub_screen.py로 이동
-    # 중복/유사/날짜별 각각으로 바로 이동하던 시그널 3개는 정리 허브 화면
-    # 하나로 합쳐졌다(2026-09-07, 사용자 요청) — gui/organize_hub_screen.py 참고.
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -435,13 +432,6 @@ class ResultScreen(QWidget):
         outer.addLayout(content_row, stretch=1)
 
         bottom_row = QHBoxLayout()
-        # "정리"는 선택한 파일이 아니라 검사 결과 전체에 대한 동작이라(중복/유사/
-        # 날짜별 등 여러 렌즈로 훑어보는 gui/organize_hub_screen.py로 이동),
-        # 선택 여부에 따라 활성화되는 오른쪽 버튼들과 분리해 왼쪽에 둔다.
-        self.organize_btn = QPushButton("정리")
-        self.organize_btn.clicked.connect(self.organize_requested.emit)
-        bottom_row.addWidget(self.organize_btn)
-
         self.selection_label = QLabel("선택된 파일 없음")
         self.selection_label.setStyleSheet(f"color: {COLORS['text_secondary']};")
         bottom_row.addWidget(self.selection_label)

@@ -198,3 +198,24 @@ def organize_by_city(
         return output_root / sanitize_folder_name(label)
 
     return _run_organize(groups, mode, dest_dir_for, progress_callback, should_cancel)
+
+
+def organize_cat_finder_results(
+    files: list[FileInfo],
+    mode: str,  # "copy" | "move"
+    output_root: str | Path,
+    progress_callback: Optional[Callable[[int, int, str], None]] = None,
+    should_cancel: Optional[Callable[[], bool]] = None,
+) -> list[OrganizeOutcome]:
+    """gui/cat_finder_screen.py("고양이 찾기")에서 찾은 사진들을 output_root
+    폴더 하나로 복사/이동한다(2026-09-10, 사용자 요청 — 날짜별/도시별처럼
+    "이 방식대로 정리하기" 추가). 날짜별/도시별과 달리 그룹으로 더 나누지
+    않는다 — 찾은 사진 전부가 이미 "고양이가 있다"는 하나의 기준으로
+    걸러진 결과라 하위 폴더가 필요 없다."""
+    output_root = Path(output_root)
+    groups = [("고양이 찾기", files)]
+
+    def dest_dir_for(label: str, files: list[FileInfo]) -> Path:
+        return output_root
+
+    return _run_organize(groups, mode, dest_dir_for, progress_callback, should_cancel)

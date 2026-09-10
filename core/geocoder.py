@@ -87,6 +87,52 @@ def _localize(name: str, cc: str) -> str:
     return f"{city}, {country}"
 
 
+# 대한민국 대략적인 경계 상자(제주/백령도/독도까지 여유 있게 포함) — 이
+# 안의 좌표는 반드시 한국 도시로만 매칭시키기 위한 기준(_in_korea_bbox 참고).
+_KR_LAT_RANGE = (32.5, 39.0)
+_KR_LON_RANGE = (124.0, 132.0)
+
+# 한국 도시만 담은 KD-tree — 처음 쓸 때 한 번만 만들어서 재사용(_get_kr_only_index).
+_kr_only_index: Optional[tuple] = None
+
+
+def _in_korea_bbox(lat: float, lon: float) -> bool:
+    return _KR_LAT_RANGE[0] <= lat <= _KR_LAT_RANGE[1] and _KR_LON_RANGE[0] <= lon <= _KR_LON_RANGE[1]
+
+
+def _get_kr_only_index():
+    """reverse_geocoder(rg_cities1000.csv)는 전세계 도시를 국경 구분 없이
+    순수 최근접(직선거리)으로만 찾는다 — 그래서 한국 서해안·도서 지역처럼
+    국내 도시 데이터가 듬성듬성한 지점은 바다 건너 중국/북한 도시가 기하
+    학적으로 더 가깝다고 잘못 판단할 수 있다(2026-09-10, 사용자 리포트 —
+    백령도 좌표를 넣으면 북한 도시로 매칭되는 걸로 재현 확인. 서해안 전반에서
+    같은 방식으로 중국 도시가 나올 수 있음).
+
+    고치는 방법: 좌표가 한국 영역 안(_in_korea_bbox)인데 결과가 다른 나라로
+    나오면, 한국 도시만 모아 만든 이 인덱스에서 다시 찾아 그 결과로 바꾼다.
+    reverse_geocoder가 이미 mode=1로 로드해둔 싱글턴(RGeocoder)의 locations를
+    그대로 재사용하므로 CSV를 다시 읽지 않는다."""
+    global _kr_only_index
+    if _kr_only_index is not None:
+        return _kr_only_index
+
+    import reverse_geocoder as rg
+    from scipy.spatial import cKDTree
+
+    geocoder = rg.RGeocoder(mode=1, verbose=False)  # 싱글턴 — 이미 만들어져 있으면 그대로 재사용
+    kr_locations = [loc for loc in geocoder.locations if loc["cc"] == "KR"]
+    coords = [(float(loc["lat"]), float(loc["lon"])) for loc in kr_locations]
+    tree = cKDTree(coords)
+    _kr_only_index = (tree, kr_locations)
+    return _kr_only_index
+
+
+def _nearest_kr_city(lat: float, lon: float) -> dict:
+    tree, kr_locations = _get_kr_only_index()
+    _, idx = tree.query((lat, lon), k=1)
+    return kr_locations[idx]
+
+
 def resolve_cities(coords: list[tuple[float, float]]) -> list[Optional[str]]:
     """coords(위도, 경도) 목록을 한 번에 한국어 도시 라벨로 매칭한다(주요
     도시만 번역, 나머지는 로마자 표기 — _localize 참고). 빈 목록이면 빈
@@ -99,4 +145,14 @@ def resolve_cities(coords: list[tuple[float, float]]) -> list[Optional[str]]:
     import reverse_geocoder as rg
 
     results = rg.search(coords, mode=1, verbose=False)
+
+    # 한국 영역 안 좌표인데 다른 나라로 매칭됐으면(_get_kr_only_index 참고)
+    # 한국 도시로만 다시 찾는다 — 국내 사진이 대부분일 거란 core/geocoder.py
+    # 전반의 전제와 같은 이유로, 해외는 이 보정을 하지 않는다(다른 나라의
+    # 국경 오탐까지 다 고치려면 나라마다 같은 보정이 필요한데 실사용 빈도가
+    # 훨씬 낮음).
+    for i, (lat, lon) in enumerate(coords):
+        if results[i]["cc"] != "KR" and _in_korea_bbox(lat, lon):
+            results[i] = _nearest_kr_city(lat, lon)
+
     return [_localize(r["name"], r["cc"]) for r in results]
