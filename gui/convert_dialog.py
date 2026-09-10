@@ -5,40 +5,57 @@ gui/convert_dialog.py
 scan_paths, 폴더 전체를 중복/손상 기준으로 훑는 무거운 배치 작업) 없이 사진
 파일/폴더를 바로 골라서 gui/recovery_screen.py의 "형식 변환" 모드를 연다.
 
-두 단계로 준비한다: (1) core/scanner.py::list_image_files로 폴더를 사진 파일
-목록만 가볍게 펼치고(순회 자체도 사진이 많으면 잠깐 걸릴 수 있어 바쁨 표시),
-(2) 각 파일을 core/analyzer.py::analyze_file()로 개별 분석한다 — 변환이 형식을
-알아야 하므로(HEIC 지원 여부 등) 이 분석 자체는 건너뛸 수 없지만, gui/
-scan_session_window.py처럼 폴더 전체의 중복/유사 묶음을 만드는 무거운 배치
-스캔과는 다르다(gui/scan_session_window.py::_LightListWorker와 같은 원칙).
+core/scanner.py::list_image_files로 폴더를 사진 파일 목록만 가볍게 펼치고
+끝낸다 — core/analyzer.py::analyze_file()(파일 전체 SHA-256 해시 + 손상
+판독까지 하는 무거운 개별 분석)은 일부러 건너뛴다. "형식 변환"(core/
+converter.py::convert_to_format)은 실제 변환 시점에 파일을 다시 직접 열어서
+처리할 뿐, 미리 분석해둔 해시/손상여부를 쓰지 않기 때문이다(2026-09-10,
+사용자 리포트 — "2225장이라 분석이 오래 걸려" → analyze_file 자체를 생략하는
+쪽으로 확정). 손상된 파일이 섞여 있어도 걸러내지 않고 그냥 시도하다가
+실패하면 결과 화면에 실패로 뜬다 — 변환은 원본을 건드리지 않으니(원본 삭제
+옵션을 켜지 않는 한) 안전하다.
+
+폴더 안에 확장자가 여러 종류 섞여 있으면(_filter_by_extension) 어떤 확장자만
+바꿀지 먼저 고르게 한다 — 그렇지 않으면 원치 않는 확장자까지 전부 변환
+대상이 된다(2026-09-10, 사용자 요청 — "특정 확장자만 바꾸고 싶은데").
+
 여러 장을 한 번에 골라도 된다 — gui/recovery_screen.py가 원래 배치 처리를
 지원한다.
 """
 
 from __future__ import annotations
 
-from pathlib import Path
+from collections import Counter
 
 from PySide6.QtCore import Qt, QThread, Signal
-from PySide6.QtWidgets import QDialog, QStackedWidget, QVBoxLayout, QWidget
+from PySide6.QtWidgets import (
+    QCheckBox,
+    QDialog,
+    QHBoxLayout,
+    QLabel,
+    QPushButton,
+    QStackedWidget,
+    QVBoxLayout,
+    QWidget,
+)
 
-from core.analyzer import analyze_file
 from core.converter import RecoveryMode
 from core.scanner import list_image_files
 from gui.common_dialogs import info_dialog, ProgressDialog
 from gui.recovery_result_screen import RecoveryResultScreen
 from gui.recovery_screen import RecoveryScreen
-from models.file_info import FileInfo, FileStatus
+from gui.theme import COLORS
+from models.file_info import FileInfo
+from models.scan_result import ScanResult
 
 
-class _ConvertPrepWorker(QThread):
-    """list_image_files(폴더 훑기) + analyze_file(파일마다 개별 분석) 두 단계를
-    순서대로 백그라운드에서 돈다. 총 개수를 미리 모르는 첫 단계는 progress를
-    쏘지 않고(호출부가 바쁨 표시로 보여줌), 두 번째 단계부터 (현재, 전체, 파일명)을 쏜다."""
+class _ListImagesWorker(QThread):
+    """core/scanner.py::list_image_files를 백그라운드에서 돈다 — 폴더 순회
+    자체도 사진이 수만 장이면 잠깐 걸릴 수 있어(디스크 I/O) 메인 스레드를
+    막지 않는다. 총 개수를 미리 모르므로(gui/scan_session_window.py::
+    _LightListWorker와 같은 이유) 진행률은 바쁨(busy) 표시로 보여준다."""
 
-    listing_started = Signal()
-    progress = Signal(int, int, str)
-    finished_batch = Signal(list)  # list[FileInfo]
+    finished_listing = Signal(object)  # ScanResult
 
     def __init__(self, paths: list[str], parent=None):
         super().__init__(parent)
@@ -49,64 +66,90 @@ class _ConvertPrepWorker(QThread):
         self._cancel_requested = True
 
     def run(self):
-        self.listing_started.emit()
-        scan_result = list_image_files(self._paths, should_cancel=lambda: self._cancel_requested)
-        file_paths = [Path(f.path) for f in scan_result.files]
-
-        result: list[FileInfo] = []
-        total = len(file_paths)
-        for idx, path in enumerate(file_paths, start=1):
-            if self._cancel_requested:
-                break
-            try:
-                info = analyze_file(path)
-            except Exception as exc:  # PRD 23.4: 개별 파일 오류가 전체 작업을 막아선 안 된다
-                info = FileInfo(
-                    path=str(path),
-                    filename=path.name,
-                    extension=path.suffix.lower(),
-                    status=FileStatus.UNKNOWN,
-                    error_message=f"분석 중 예외 발생: {exc}",
-                )
-            result.append(info)
-            self.progress.emit(idx, total, path.name)
-        self.finished_batch.emit(result)
+        result = list_image_files(self._paths, should_cancel=lambda: self._cancel_requested)
+        self.finished_listing.emit(result)
 
 
 def run_convert(parent: QWidget, paths: list[str]) -> None:
-    """paths(파일/폴더 혼합 가능)를 사진 파일로 펼치고 분석한 뒤, 검사 없이
-    곧장 "형식 변환" 화면을 연다."""
+    """paths(파일/폴더 혼합 가능)를 사진 파일로 펼친 뒤, 검사도 개별 분석도
+    없이 곧장 "형식 변환" 화면을 연다."""
     progress_dialog = ProgressDialog(parent)
-    worker = _ConvertPrepWorker(paths, parent)
+    worker = _ListImagesWorker(paths, parent)
 
-    def on_listing_started():
-        # 폴더 순회는 파일마다 처리하는 게 아니라 전체 개수를 미리 몰라서
-        # (gui/scan_session_window.py::_LightListWorker와 같은 이유) 퍼센트
-        # 대신 바쁨(busy) 표시로 보여준다.
-        progress_dialog.bar.setRange(0, 0)
-        progress_dialog.status_label.setText("폴더를 훑어보는 중...")
-
-    def on_progress(current: int, total: int, name: str):
-        progress_dialog.bar.setRange(0, 100)
-        progress_dialog.update_progress(current, total, name)
-
-    def on_finished(infos: list[FileInfo]):
+    def on_finished(result: ScanResult):
         progress_dialog.accept()
-        progress_dialog.bar.setRange(0, 100)  # 다음 실행을 위해 바쁨 표시 원상복구
         worker.wait()
-        if not infos:
+        files = list(result.files)
+        if not files:
             info_dialog(parent, "선택한 위치에서 사진 파일을 찾지 못했어요.")
             return
-        _open_convert_screen(parent, infos)
+        filtered = _filter_by_extension(parent, files)
+        if filtered:
+            _open_convert_screen(parent, filtered)
 
     progress_dialog.cancel_requested.connect(worker.cancel)
-    worker.listing_started.connect(on_listing_started)
-    worker.progress.connect(on_progress)
-    worker.finished_batch.connect(on_finished)
+    worker.finished_listing.connect(on_finished)
 
-    progress_dialog.start("사진 분석 중")
+    progress_dialog.start("사진 목록을 모으는 중")
+    progress_dialog.bar.setRange(0, 0)
+    progress_dialog.status_label.setText("폴더를 훑어보는 중...")
     worker.start()
     progress_dialog.exec()
+
+
+def _filter_by_extension(parent: QWidget, files: list[FileInfo]) -> list[FileInfo] | None:
+    """확장자가 한 종류뿐이면 그대로 files를 돌려준다(고를 게 없으므로 팝업
+    생략). 두 종류 이상이면 확장자별 개수를 보여주는 체크박스 팝업을 띄워서
+    고른 확장자만 걸러 돌려준다. 취소했거나 하나도 안 골랐으면 None."""
+    counts = Counter(f.extension.lower() for f in files)
+    if len(counts) <= 1:
+        return files
+
+    dialog = QDialog(parent)
+    dialog.setWindowTitle("PicMedic")
+    dialog.setWindowModality(Qt.WindowModal)
+    layout = QVBoxLayout(dialog)
+    layout.setContentsMargins(20, 20, 20, 20)
+    layout.setSpacing(12)
+
+    label = QLabel("어떤 확장자를 바꿀까요?")
+    label.setStyleSheet("font-weight: 700; font-size: 14px;")
+    layout.addWidget(label)
+
+    hint = QLabel("고른 확장자의 사진만 변환 대상이 돼요.")
+    hint.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 11px;")
+    layout.addWidget(hint)
+
+    checks: dict[str, QCheckBox] = {}
+    for ext, count in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0])):
+        label_text = ext if ext else "(확장자 없음)"
+        check = QCheckBox(f"{label_text}  —  {count}장")
+        check.setChecked(True)
+        layout.addWidget(check)
+        checks[ext] = check
+
+    btn_row = QHBoxLayout()
+    btn_row.addStretch(1)
+    cancel_btn = QPushButton("취소")
+    confirm_btn = QPushButton("변환하기")
+    confirm_btn.setObjectName("Primary")
+    confirm_btn.setDefault(True)
+    btn_row.addWidget(cancel_btn)
+    btn_row.addWidget(confirm_btn)
+    layout.addLayout(btn_row)
+
+    cancel_btn.clicked.connect(dialog.reject)
+    confirm_btn.clicked.connect(dialog.accept)
+
+    if dialog.exec() != QDialog.Accepted:
+        return None
+
+    selected_exts = {ext for ext, check in checks.items() if check.isChecked()}
+    filtered = [f for f in files if f.extension.lower() in selected_exts]
+    if not filtered:
+        info_dialog(parent, "선택한 확장자가 없어서 변환할 사진이 없어요.")
+        return None
+    return filtered
 
 
 def _open_convert_screen(parent: QWidget, files: list[FileInfo]) -> None:
