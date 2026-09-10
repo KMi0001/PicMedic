@@ -244,6 +244,27 @@ class RecoveryScreen(QWidget):
         self.format_combo.currentTextChanged.connect(self._on_mode_changed)
         self._on_mode_changed()
 
+        # 2026-09-10, 사용자 요청 — "저장 위치 지정(원본 보존)"과 "원본 삭제(대체)"는
+        # 서로 배타적인 선택지라 체크박스+비활성화 대신 라디오 버튼 두 개로 고르게
+        # 한다("저장 위치"는 원본 보존을 골랐을 때만 의미가 있어서 그 아래 둠).
+        # 기본은 항상 "원본 보존"이고, "원본 삭제"를 골랐을 때만 원본을 그 폴더의
+        # 임시휴지통으로 옮기고 결과물이 원본이 있던 자리를 대신한다
+        # (core/converter.py::_recover_file_replacing_original).
+        self.output_mode_label = QLabel("저장 방식")
+        self.output_mode_label.setStyleSheet(SECTION_HEADER_STYLE)
+        card_layout.addWidget(self.output_mode_label)
+
+        self.output_mode_group = QButtonGroup(self)
+        self.keep_original_radio = QRadioButton("원본 보존 — 별도 폴더에 새 파일로 저장 (기본값)")
+        self.keep_original_radio.setChecked(True)
+        self.replace_original_radio = QRadioButton(
+            "원본 삭제 — 원본을 임시휴지통으로 옮기고, 결과물이 그 자리를 대신하게 하기"
+        )
+        self.output_mode_group.addButton(self.keep_original_radio)
+        self.output_mode_group.addButton(self.replace_original_radio)
+        card_layout.addWidget(self.keep_original_radio)
+        card_layout.addWidget(self.replace_original_radio)
+
         self.output_label = QLabel("저장 위치")
         self.output_label.setStyleSheet(SECTION_HEADER_STYLE)
         card_layout.addWidget(self.output_label)
@@ -270,12 +291,9 @@ class RecoveryScreen(QWidget):
         self.keep_original_note.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 11px;")
         card_layout.addWidget(self.keep_original_note)
 
-        # 2026-09-10, 사용자 요청 — 기본은 항상 OFF(원본 보존)로 두고, 켰을 때만
-        # 원본을 그 폴더의 임시휴지통으로 옮기고 결과물이 원본이 있던 자리를
-        # 대신하게 한다(core/converter.py::_recover_file_replacing_original).
-        self.replace_original_check = QCheckBox("완료 후 원본을 임시휴지통으로 옮기고, 결과물이 그 자리를 대신하게 하기")
-        self.replace_original_check.toggled.connect(self._on_replace_original_toggled)
-        card_layout.addWidget(self.replace_original_check)
+        self.keep_original_radio.toggled.connect(self._on_output_mode_changed)
+        self.replace_original_radio.toggled.connect(self._on_output_mode_changed)
+        self._on_output_mode_changed()
 
         self.verify_check = QCheckBox("복구 후 파일 검증")
         self.verify_check.setChecked(True)
@@ -326,9 +344,9 @@ class RecoveryScreen(QWidget):
             self.convert_radio.setChecked(True)
 
         self.format_combo.setCurrentText(DEFAULT_CONVERT_FORMAT)
-        # 매번 안전한 기본값(OFF)에서 시작 — 이전 파일들에서 켜뒀던 채로 이번
-        # 파일들에 실수로 적용되는 일이 없게 한다.
-        self.replace_original_check.setChecked(False)
+        # 매번 안전한 기본값("원본 보존")에서 시작 — 이전 파일들에서 "원본 삭제"를
+        # 골라뒀던 채로 이번 파일들에 실수로 적용되는 일이 없게 한다.
+        self.keep_original_radio.setChecked(True)
 
         default_dir = self.settings.value("last_output_dir", "")
         if not default_dir and files:
@@ -343,11 +361,13 @@ class RecoveryScreen(QWidget):
 
     # --- 내부 로직 -----------------------------------------------------
 
-    def _on_replace_original_toggled(self, checked: bool):
-        # 켜지면 "저장 위치"/"파일명에 추가할 문구"는 안 쓰인다 — 결과가 항상
-        # 원본이 있던 그 폴더에, 원본 이름 그대로(확장자만 결과에 맞게) 저장되기
-        # 때문(core/converter.py::_recover_file_replacing_original). 값 자체는
-        # 지우지 않고 비활성화만 해서, 다시 끄면 이전에 입력해둔 값이 그대로 남게 한다.
+    def _on_output_mode_changed(self):
+        # "원본 삭제"를 고르면 "저장 위치"/"파일명에 추가할 문구"는 안 쓰인다 —
+        # 결과가 항상 원본이 있던 그 폴더에, 원본 이름 그대로(확장자만 결과에
+        # 맞게) 저장되기 때문(core/converter.py::_recover_file_replacing_original).
+        # 값 자체는 지우지 않고 비활성화만 해서, 다시 "원본 보존"으로 돌아가면
+        # 이전에 입력해둔 값이 그대로 남게 한다.
+        checked = self.replace_original_radio.isChecked()
         self.output_label.setEnabled(not checked)
         self.output_edit.setEnabled(not checked)
         self.browse_btn.setEnabled(not checked)
@@ -382,7 +402,7 @@ class RecoveryScreen(QWidget):
     def _start_recovery(self):
         if not self.files:
             return
-        replace_original = self.replace_original_check.isChecked()
+        replace_original = self.replace_original_radio.isChecked()
         # replace_original이면 저장 위치칸은 안 쓰인다(파일마다 원본이 있던
         # 폴더로 감) — 빈 문자열로 비워서 아래 결과 화면에 옛날 입력값이
         # "저장 위치"인 것처럼 잘못 보이지 않게 한다.
