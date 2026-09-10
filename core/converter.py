@@ -215,7 +215,22 @@ def _recover_file_replacing_original(
     # 원본은 이제 trashed_path에 있으므로, 복구/변환은 거기서 읽어야 한다 —
     # info는 화면에 보여줄 "원래 경로"를 유지해야 하니 얕은 복사로 path만 바꾼다.
     source_info = dataclasses.replace(info, path=str(trashed_path))
-    outcome = recover_file(source_info, mode, output_dir, suffix="", target_format=target_format, quality=quality)
+    try:
+        outcome = recover_file(source_info, mode, output_dir, suffix="", target_format=target_format, quality=quality)
+    except Exception as exc:
+        # recover_file()이 자기 안에서 처리하는 OSError(파일 잠금/용량 부족 등)가
+        # 아니라 예상 못한 예외를 던지면, 이 함수를 감싸는 recover_batch()의
+        # try/except까지 그대로 새어나가 아래 "실패 시 원본 즉시 복원" 로직이
+        # 통째로 건너뛰어진다 — 원본이 임시휴지통에 남은 채 아무도 되돌리지
+        # 않는 상태(2026-09-11, 테스트로 실제 재현·확인). 이 함수의 계약(문서
+        # 상단 설명)은 "실패하면 옮겨둔 원본을 즉시 되돌린다"이므로, 예외
+        # 경로도 실패로 취급해 같은 보장을 지킨다.
+        outcome = RecoveryOutcome(original=info, mode=mode, error_message=f"복구 중 예상하지 못한 오류: {exc}")
+        try:
+            trash.restore_from_trash(trashed_path)
+        except (ValueError, OSError):
+            pass  # 복원까지 실패해도 원본 자체는 임시휴지통에 안전하게 남아있다(수동 복원 가능)
+        return outcome
     outcome.original = info
 
     if outcome.success and outcome.output_path:

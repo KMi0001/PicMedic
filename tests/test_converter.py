@@ -9,8 +9,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from PIL import Image
 import pillow_heif
 
+from core import converter
 from core.analyzer import analyze_file
 from core.converter import RecoveryMode, recover_batch, recover_file
+from utils import trash
 
 
 def make_heic(path: Path):
@@ -184,6 +186,49 @@ def run():
             len(outcomes19) == 2 and outcomes19[0].success and outcomes19[1].skipped,
             [o.label for o in outcomes19],
         )
+
+        # 20~23) replace_original=True("원본 삭제" 옵션) — RESTORATION_QUALITY_PLAN.md
+        # 5-5 "원본은 절대 건드리지 않는다" 약속의 예외 경로 커버리지 회귀 테스트.
+        replace_dir = tmp / "replace_original_case"
+        replace_dir.mkdir()
+        replace_jpg = replace_dir / "PET.jpg"
+        Image.new("RGB", (25, 25), color="green").save(replace_jpg, format="JPEG")
+        info_replace = analyze_file(replace_jpg)
+
+        outcome20 = recover_batch(
+            [info_replace], RecoveryMode.CONVERT, output_dir=None, target_format="PNG", replace_original=True
+        )[0]
+        check("원본 대체 모드 성공", outcome20.success, outcome20.error_message or "")
+        check("원본 대체 모드: 원래 자리에 결과물이 대신 있음", Path(outcome20.output_path) == replace_jpg.with_suffix(".png"))
+        check("원본 대체 모드: 원본은 같은 폴더 임시휴지통으로 옮겨짐", not replace_jpg.exists())
+        check(
+            "원본 대체 모드: 임시휴지통에서 원래 경로로 복원 가능함을 기록",
+            outcome20.replaced_original_trash_path is not None
+            and Path(outcome20.replaced_original_trash_path).exists(),
+        )
+
+        # 24) recover_file()이 OSError가 아닌 예상 못한 예외를 던지는 상황(예: 버그, 또는
+        # 처리 도중 문제) — 이 함수의 계약("실패하면 옮겨둔 원본을 즉시 되돌린다")이 OSError
+        # 경로뿐 아니라 이 경로에서도 지켜지는지 확인. 고쳐지기 전에는 trash.restore_from_trash()
+        # 호출 자체가 건너뛰어져서 원본이 임시휴지통에 방치된 채 복원되지 않았다
+        # (2026-09-11, 실제로 재현 후 core/converter.py에 try/except 추가로 수정).
+        replace_jpg2 = replace_dir / "PET2.jpg"
+        Image.new("RGB", (25, 25), color="green").save(replace_jpg2, format="JPEG")
+        info_replace2 = analyze_file(replace_jpg2)
+
+        with patch.object(converter, "recover_file", side_effect=RuntimeError("시뮬레이션된 예상 못한 오류")):
+            outcome24 = converter._recover_file_replacing_original(info_replace2, RecoveryMode.CONVERT)
+        check("예상 못한 예외 발생 시 실패로 처리됨(예외가 새어나가지 않음)", not outcome24.success)
+        check(
+            "예상 못한 예외 발생 시에도 원본이 즉시 원래 자리로 복원됨(방치되지 않음)",
+            replace_jpg2.exists(),
+        )
+        # (같은 replace_dir을 20~23번과 공유해서 임시휴지통엔 그때 옮겨진 PET.jpg가
+        # 이미 남아있다 — 정상 성공 케이스는 원본을 휴지통에 "보관"하는 게 의도된
+        # 동작이므로, 여기서는 PET2.jpg만 특정해서 남아있지 않은지 확인한다.)
+        trash_dir2 = trash.trash_dir_for(replace_jpg2)
+        stranded = [p for p in trash.list_trash(trash_dir2) if p.stem.startswith("PET2")]
+        check("예상 못한 예외 발생 후 PET2가 임시휴지통에 방치되지 않음", not stranded, stranded)
 
     print(f"\n총 {passed + failed}개 중 {passed}개 통과, {failed}개 실패")
     return failed == 0
