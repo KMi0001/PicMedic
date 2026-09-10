@@ -68,6 +68,11 @@ experiments/denoise_safety_prototype/_work/
 # 실행 때마다 만드는 원본|결과 비교 이미지는 추적 제외(스크립트는 추적)
 experiments/restore_quality_goldset/_output/
 
+# geocoder LGPL 교체 검증(experiments/geocoder_license_prototype) — 실측용으로
+# 복사해둔 CSV(assets/geonames_cities1000.csv와 완전히 동일, 7.8MB)는 중복
+# 커밋하지 않는다(스크립트는 추적)
+experiments/geocoder_license_prototype/rg_cities1000.csv
+
 # OS
 Thumbs.db
 .DS_Store

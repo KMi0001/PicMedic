@@ -1,29 +1,43 @@
 """
 core/geocoder.py
 
-"도시별 정리"용 위경도 -> 도시명 매칭. reverse_geocoder(오프라인, 내장 도시
-좌표 CSV로 최근접 지점 탐색 — 인터넷 호출 없음)를 감싼다.
+"도시별 정리"용 위경도 -> 도시명 매칭. GeoNames(CC-BY 4.0) 파생 도시 좌표
+데이터(assets/geonames_cities1000.csv)를 scipy(BSD)의 cKDTree로 직접
+최근접 탐색한다.
 
 개인정보 원칙: 위경도/도시명은 이 프로세스 밖으로 절대 나가지 않는다. 어떤
-네트워크 요청도 하지 않으며, reverse_geocoder 패키지 자체에 내장된 CSV만
-참조한다(experiments/city_organize_prototype에서 확인).
+네트워크 요청도 하지 않으며, 이 프로세스 안에 들어있는 CSV만 참조한다
+(experiments/city_organize_prototype에서 확인).
 
-mode=1(단일 프로세스) 고정 — reverse_geocoder 기본값(mode=2)은 내부적으로
-multiprocessing.Process를 새로 띄우는데, Windows에서 PyInstaller로 패키징한
-exe가 이걸 그대로 쓰면 freeze_support() 없이 자기 자신을 무한히 재실행할 수
-있다(실제로 프로토타입에서 재현됨). 우리 규모(수만 장)에서는 단일 프로세스
-로도 충분히 빠르다(실측: 로드 ~0.3~8초 1회 + 사진당 ~1ms)."""
+2026-09-11, reverse_geocoder 패키지(LGPL)를 걷어내고 자체 구현으로 교체 —
+RESTORATION_QUALITY_PLAN.md 5-3에서 상업 배포 시 LGPL의 재연결/교체 가능성
+요건이 PyInstaller 정적 번들링과 어떻게 맞물리는지 법률 검토가 필요하다는
+문제가 나와서, 법률 검토 대신 더 간단한 해결책(라이브러리 자체를 안 씀)을
+택했다. reverse_geocoder 패키지의 실제 코드(__init__.py + cKDTree_MP.py)는
+15KB 남짓의 얇은 KD-tree 래퍼였고, core/geocoder.py는 이미 한국 지역 보정
+(_get_kr_only_index)에서 같은 패턴(cKDTree 직접 사용)을 쓰고 있었다 — 그
+패턴을 전세계로 넓힌 것뿐이라 이 파일 입장에서 낯선 접근이 아니다.
+experiments/geocoder_license_prototype/compare.py로 기존 reverse_geocoder
+결과와 8/8 좌표 완전 일치 검증 후 교체(백령도 국경 오탐 케이스 포함 — 아래
+_get_kr_only_index가 그 오탐을 고치는 방식은 그대로 유지).
+데이터 자체(GeoNames)는 CC-BY 4.0이라 코드 라이선스와 무관하고, 저작자 표시는
+THIRD_PARTY_NOTICES.txt에 남긴다.
+"""
 
 from __future__ import annotations
 
+import csv
+from pathlib import Path
 from typing import Optional
 
-# reverse_geocoder(GeoNames 파생 데이터)는 로마자 표기만 준다(한국어 이름
-# 필드 없음 — core/geocoder.py 개발 중 CSV 직접 확인). 국내 사진이 대부분일
-# 것으로 보고 주요 도시 위주로만 번역하고, 목록에 없으면 원래 로마자 표기를
-# 그대로 보여준다("완벽한 번역"이 아니라 "실사용에 흔한 것만" 원칙 —
-# core/photo_category.py의 카테고리 프롬프트와 같은 접근). 표기는 reverse_geocoder의
-# rg_cities1000.csv 'name' 컬럼 원문과 정확히 일치해야 매칭된다.
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+_CSV_PATH = _PROJECT_ROOT / "assets" / "geonames_cities1000.csv"
+
+# 로마자 표기만 준다(한국어 이름 필드 없음 — CSV 직접 확인). 국내 사진이
+# 대부분일 것으로 보고 주요 도시 위주로만 번역하고, 목록에 없으면 원래 로마자
+# 표기를 그대로 보여준다("완벽한 번역"이 아니라 "실사용에 흔한 것만" 원칙 —
+# core/photo_category.py의 카테고리 프롬프트와 같은 접근). 표기는
+# assets/geonames_cities1000.csv 'name' 컬럼 원문과 정확히 일치해야 매칭된다.
 _KOREAN_CITY_NAMES: dict[str, str] = {
     "Seoul": "서울", "Busan": "부산", "Incheon": "인천", "Daegu": "대구",
     "Daejeon": "대전", "Gwangju": "광주", "Ulsan": "울산",
@@ -92,7 +106,9 @@ def _localize(name: str, cc: str) -> str:
 _KR_LAT_RANGE = (32.5, 39.0)
 _KR_LON_RANGE = (124.0, 132.0)
 
-# 한국 도시만 담은 KD-tree — 처음 쓸 때 한 번만 만들어서 재사용(_get_kr_only_index).
+# 전세계 도시 KD-tree(_get_global_index) / 한국 도시만 담은 KD-tree
+# (_get_kr_only_index) — 둘 다 처음 쓸 때 한 번만 만들어서 재사용.
+_global_index: Optional[tuple] = None
 _kr_only_index: Optional[tuple] = None
 
 
@@ -100,27 +116,45 @@ def _in_korea_bbox(lat: float, lon: float) -> bool:
     return _KR_LAT_RANGE[0] <= lat <= _KR_LAT_RANGE[1] and _KR_LON_RANGE[0] <= lon <= _KR_LON_RANGE[1]
 
 
+def _get_global_index():
+    """assets/geonames_cities1000.csv 전체를 읽어 KD-tree를 한 번만 만들고
+    캐싱한다(모듈 전역, 프로세스 수명 동안 재사용 — 7.8MB CSV를 매번 다시
+    읽지 않는다). resolve_cities()와 _get_kr_only_index() 둘 다 여기서
+    로드한 locations를 공유해서 CSV를 두 번 읽지 않는다."""
+    global _global_index
+    if _global_index is not None:
+        return _global_index
+
+    from scipy.spatial import cKDTree
+
+    with open(_CSV_PATH, encoding="utf-8") as f:
+        locations = list(csv.DictReader(f))
+    coords = [(float(loc["lat"]), float(loc["lon"])) for loc in locations]
+    tree = cKDTree(coords)
+    _global_index = (tree, locations)
+    return _global_index
+
+
 def _get_kr_only_index():
-    """reverse_geocoder(rg_cities1000.csv)는 전세계 도시를 국경 구분 없이
-    순수 최근접(직선거리)으로만 찾는다 — 그래서 한국 서해안·도서 지역처럼
-    국내 도시 데이터가 듬성듬성한 지점은 바다 건너 중국/북한 도시가 기하
-    학적으로 더 가깝다고 잘못 판단할 수 있다(2026-09-10, 사용자 리포트 —
-    백령도 좌표를 넣으면 북한 도시로 매칭되는 걸로 재현 확인. 서해안 전반에서
-    같은 방식으로 중국 도시가 나올 수 있음).
+    """assets/geonames_cities1000.csv는 전세계 도시를 국경 구분 없이 순수
+    최근접(직선거리)으로만 찾는다 — 그래서 한국 서해안·도서 지역처럼 국내
+    도시 데이터가 듬성듬성한 지점은 바다 건너 중국/북한 도시가 기하학적으로
+    더 가깝다고 잘못 판단할 수 있다(2026-09-10, 사용자 리포트 — 백령도 좌표를
+    넣으면 북한 도시로 매칭되는 걸로 재현 확인. 서해안 전반에서 같은 방식으로
+    중국 도시가 나올 수 있음).
 
     고치는 방법: 좌표가 한국 영역 안(_in_korea_bbox)인데 결과가 다른 나라로
     나오면, 한국 도시만 모아 만든 이 인덱스에서 다시 찾아 그 결과로 바꾼다.
-    reverse_geocoder가 이미 mode=1로 로드해둔 싱글턴(RGeocoder)의 locations를
-    그대로 재사용하므로 CSV를 다시 읽지 않는다."""
+    _get_global_index()가 이미 읽어둔 locations를 그대로 재사용하므로 CSV를
+    다시 읽지 않는다."""
     global _kr_only_index
     if _kr_only_index is not None:
         return _kr_only_index
 
-    import reverse_geocoder as rg
     from scipy.spatial import cKDTree
 
-    geocoder = rg.RGeocoder(mode=1, verbose=False)  # 싱글턴 — 이미 만들어져 있으면 그대로 재사용
-    kr_locations = [loc for loc in geocoder.locations if loc["cc"] == "KR"]
+    _, all_locations = _get_global_index()
+    kr_locations = [loc for loc in all_locations if loc["cc"] == "KR"]
     coords = [(float(loc["lat"]), float(loc["lon"])) for loc in kr_locations]
     tree = cKDTree(coords)
     _kr_only_index = (tree, kr_locations)
@@ -136,15 +170,15 @@ def _nearest_kr_city(lat: float, lon: float) -> dict:
 def resolve_cities(coords: list[tuple[float, float]]) -> list[Optional[str]]:
     """coords(위도, 경도) 목록을 한 번에 한국어 도시 라벨로 매칭한다(주요
     도시만 번역, 나머지는 로마자 표기 — _localize 참고). 빈 목록이면 빈
-    목록. 개별 좌표가 이상해도(예: 범위 밖) reverse_geocoder가 가장 가까운
-    지점을 찾아 항상 결과를 반환하므로 None은 나오지 않지만, 시그니처는
-    향후 실패 케이스를 대비해 Optional로 둔다."""
+    목록. 개별 좌표가 이상해도(예: 범위 밖) 항상 가장 가까운 지점을 찾아
+    결과를 반환하므로 None은 나오지 않지만, 시그니처는 향후 실패 케이스를
+    대비해 Optional로 둔다."""
     if not coords:
         return []
 
-    import reverse_geocoder as rg
-
-    results = rg.search(coords, mode=1, verbose=False)
+    tree, all_locations = _get_global_index()
+    _, idxs = tree.query(coords)
+    results = [all_locations[i] for i in idxs]
 
     # 한국 영역 안 좌표인데 다른 나라로 매칭됐으면(_get_kr_only_index 참고)
     # 한국 도시로만 다시 찾는다 — 국내 사진이 대부분일 거란 core/geocoder.py
