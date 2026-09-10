@@ -195,7 +195,9 @@ class SimilarScreen(QWidget):
     화면. 같은 스캔 세션(gui/scan_session_window.py) 안에서만 쓰인다."""
 
     back_requested = Signal()
-    view_trash_requested = Signal()  # 정리(휴지통 이동) 완료 후 휴지통 화면으로 이동
+    # 정리(휴지통 이동) 완료 후 휴지통 화면으로 이동 — 이번에 옮긴 FileInfo 목록을
+    # 같이 넘긴다(gui/duplicate_screen.py::view_trash_requested와 같은 이유).
+    view_trash_requested = Signal(list)
     # 파일 클릭/미리보기 -> 상세보기(FileInfo, 그 파일이 속한 그룹 — 상세
     # 화면에서 방향키로 같은 그룹의 다음/이전 사진을 넘나들 때 씀, 2026-09-08).
     file_selected = Signal(object, list)
@@ -558,4 +560,4 @@ class SimilarScreen(QWidget):
         self._refresh_summary()
 
         if moved:
-            self.view_trash_requested.emit()
+            self.view_trash_requested.emit(moved_infos)

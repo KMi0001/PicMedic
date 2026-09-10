@@ -20,17 +20,19 @@ def run():
 
     with tempfile.TemporaryDirectory() as tmp:
         tmp = Path(tmp)
-        # 실제 프로젝트의 임시휴지통 폴더를 건드리지 않도록 임시 경로로 교체
-        trash.TRASH_DIR = tmp / "임시휴지통"
 
         source_dir = tmp / "sources"
         source_dir.mkdir()
+        trash_dir = source_dir / trash.TRASH_FOLDER_NAME
+
+        # 0) 임시휴지통은 옮기려는 파일이 있던 폴더 바로 밑에 생긴다(전역 폴더 아님)
+        check("trash_dir_for가 파일의 부모 폴더 밑을 가리킴", trash.trash_dir_for(source_dir / "x.jpg") == trash_dir)
 
         # 1) group_id 없이 옮기기(개별 이동 — group_id/reason/kept_path 생략 가능)
         flat_file = source_dir / "flat.jpg"
         flat_file.write_text("flat")
         flat_dest = trash.move_to_trash(flat_file)
-        check("파일이 TRASH_DIR 바로 아래로 이동함(폴더 없이 평평하게)", flat_dest.parent == trash.TRASH_DIR)
+        check("파일이 원래 폴더 밑 임시휴지통으로 이동함(폴더 없이 평평하게)", flat_dest.parent == trash_dir)
         entry = trash.entry_for(flat_dest)
         check("group_id 없이 옮긴 파일은 entry에 group_id가 없음", entry is not None and "group_id" not in entry)
 
@@ -46,8 +48,8 @@ def run():
         reason_text = "테스트 사유: 메타데이터 없음"
         dest_a = trash.move_to_trash(remove_a, group_id=group_id, reason=reason_text, kept_path=str(keep_file))
         dest_b = trash.move_to_trash(remove_b, group_id=group_id, reason=reason_text, kept_path=str(keep_file))
-        check("그룹으로 옮긴 파일도 TRASH_DIR 바로 아래에 있음(폴더 안 생김)", dest_a.parent == trash.TRASH_DIR and dest_b.parent == trash.TRASH_DIR)
-        check("TRASH_DIR 안에 서브폴더가 하나도 없음", not any(p.is_dir() for p in trash.TRASH_DIR.iterdir()))
+        check("그룹으로 옮긴 파일도 같은 임시휴지통 바로 아래에 있음(폴더 안 생김)", dest_a.parent == trash_dir and dest_b.parent == trash_dir)
+        check("임시휴지통 안에 서브폴더가 하나도 없음", not any(p.is_dir() for p in trash_dir.iterdir()))
 
         entry_a = trash.entry_for(dest_a)
         check("그룹 파일의 group_id를 읽을 수 있음", entry_a is not None and entry_a.get("group_id") == group_id)
@@ -55,7 +57,7 @@ def run():
         check("사유와 별개로 남긴 파일 경로도 읽을 수 있음", entry_a is not None and entry_a.get("kept_path") == str(keep_file))
 
         # 3) list_trash가 평평한 파일 전체를 찾음(매니페스트 제외)
-        listed = trash.list_trash()
+        listed = trash.list_trash(trash_dir)
         listed_names = {p.name for p in listed}
         check("list_trash에 개별 이동 파일 포함", "flat.jpg" in listed_names)
         check("list_trash에 그룹 파일 포함", {"dup_a.jpg", "dup_b.jpg"} <= listed_names)
@@ -75,8 +77,8 @@ def run():
         check("개별 이동 파일도 복원됨", restored_flat == flat_file and restored_flat.exists())
 
         # 7) 매니페스트에 없는 파일 복원 시도 -> ValueError
-        stray = trash.TRASH_DIR / "stray.jpg"
-        trash.TRASH_DIR.mkdir(parents=True, exist_ok=True)
+        stray = trash_dir / "stray.jpg"
+        trash_dir.mkdir(parents=True, exist_ok=True)
         stray.write_text("stray")
         try:
             trash.restore_from_trash(stray)
@@ -84,19 +86,17 @@ def run():
         except ValueError:
             check("매니페스트에 없는 파일은 ValueError", True)
 
-        # 8) 이름이 겹치면 번호를 붙여 원본을 덮어쓰지 않음
+        # 8) 같은 폴더에서 같은 이름으로 두 번 옮기면 번호를 붙여 원본을 덮어쓰지 않음
         first = source_dir / "same_name.jpg"
         first.write_text("first")
-        second_dir = tmp / "sources2"
-        second_dir.mkdir()
-        second = second_dir / "same_name.jpg"
-        second.write_text("second")
         dest_first = trash.move_to_trash(first)
+        second = source_dir / "same_name.jpg"
+        second.write_text("second")
         dest_second = trash.move_to_trash(second)
         check("같은 이름이면 번호를 붙여 구분함", dest_first != dest_second and dest_first.exists() and dest_second.exists())
 
         # 9) 옛 폴더 구조(그룹 서브폴더 + _사유.txt) 마이그레이션
-        old_group_dir = trash.TRASH_DIR / "2026-09-01_1430_그룹0001"
+        old_group_dir = trash_dir / "2026-09-01_1430_그룹0001"
         old_group_dir.mkdir(parents=True)
         old_file = old_group_dir / "old_dup.jpg"
         old_file.write_text("old")
@@ -105,15 +105,15 @@ def run():
         (old_group_dir / "_사유.txt").write_text(
             f"옛날 방식 사유\n\n남긴 파일: {old_kept_source}", encoding="utf-8"
         )
-        manifest = trash._load_manifest()
+        manifest = trash._load_manifest(trash_dir)
         manifest["2026-09-01_1430_그룹0001/old_dup.jpg"] = {"original": "C:/원본/old_dup.jpg"}
-        trash._save_manifest(manifest)
+        trash._save_manifest(trash_dir, manifest)
 
-        moved_count, migrate_failed = trash.migrate_group_folders_to_flat()
+        moved_count, migrate_failed = trash.migrate_group_folders_to_flat(trash_dir)
         check("마이그레이션이 옛 폴더의 파일 1개를 옮김", moved_count == 1, f"실제={moved_count}")
         check("마이그레이션 실패 없음", migrate_failed == [], f"실제={migrate_failed}")
         check("옛 그룹 폴더가 삭제됨(비었으므로)", not old_group_dir.exists())
-        migrated_path = trash.TRASH_DIR / "old_dup.jpg"
+        migrated_path = trash_dir / "old_dup.jpg"
         check("마이그레이션된 파일이 평평한 위치에 있음", migrated_path.exists())
         migrated_entry = trash.entry_for(migrated_path)
         check(
@@ -129,8 +129,19 @@ def run():
         )
 
         # 10) 마이그레이션을 다시 실행해도 안전함(옮길 옛 폴더가 없으므로 아무 일도 안 함)
-        moved_count2, migrate_failed2 = trash.migrate_group_folders_to_flat()
+        moved_count2, migrate_failed2 = trash.migrate_group_folders_to_flat(trash_dir)
         check("옮길 옛 폴더가 없으면 다시 실행해도 안전함", moved_count2 == 0 and migrate_failed2 == [])
+
+        # 11) 서로 다른 폴더는 각자 독립된 임시휴지통을 가진다
+        other_dir = tmp / "other_source"
+        other_dir.mkdir()
+        other_file = other_dir / "same_name.jpg"
+        other_file.write_text("other")
+        other_dest = trash.move_to_trash(other_file)
+        check(
+            "다른 폴더의 파일은 자기 폴더 밑의 별도 임시휴지통으로 감",
+            other_dest.parent == other_dir / trash.TRASH_FOLDER_NAME and other_dest.parent != trash_dir,
+        )
 
     print(f"\n총 {passed + failed}개 중 {passed}개 통과, {failed}개 실패")
     return failed == 0

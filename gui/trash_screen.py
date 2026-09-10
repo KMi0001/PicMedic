@@ -1,17 +1,23 @@
 """
 gui/trash_screen.py
 
-Phase 2 "사진 정리" — utils/trash.py::TRASH_DIR(임시 휴지통)에 옮겨진 파일을
-"적용 후 빠른 검수" 화면으로 보여준다. 정리 실행 1회(= 매니페스트 안
-group_id 하나)마다 카드 하나로 묶어서, "남긴 파일"과 "이동된 파일"들을
-썸네일로 나란히 놓고 훑어볼 수 있게 하고, 잘못 옮겨진 파일은 그 자리에서
-바로 "복원" 버튼으로 되돌릴 수 있다(선택 후 별도 버튼을 누르는 방식이
-아니라 파일마다 즉시 실행 — 검수 흐름을 빠르게 하기 위함). 파일 자체는
-TRASH_DIR 바로 아래 평평하게 있고(폴더로 안 묶음), 어떤 정리로 왜
-옮겨졌는지는 여기서만(매니페스트를 통해) 보여준다 — 탐색기로 이 폴더를
-열어도 사유/그룹 폴더가 안 보인다. group_id가 없는(사유 기록이 없는) 옛
-파일은 별도 카드로 모아서 보여준다. gui/duplicate_screen.py에서 파일을
-휴지통으로 옮긴 직후 이 화면으로 넘어온다.
+Phase 2 "사진 정리" — utils/trash.py의 임시 휴지통에 옮겨진 파일을 "적용 후
+빠른 검수" 화면으로 보여준다. 정리 실행 1회(= 매니페스트 안 group_id
+하나)마다 카드 하나로 묶어서, "남긴 파일"과 "이동된 파일"들을 썸네일로
+나란히 놓고 훑어볼 수 있게 하고, 잘못 옮겨진 파일은 그 자리에서 바로
+"복원" 버튼으로 되돌릴 수 있다(선택 후 별도 버튼을 누르는 방식이 아니라
+파일마다 즉시 실행 — 검수 흐름을 빠르게 하기 위함). 파일 자체는 임시휴지통
+폴더 바로 아래 평평하게 있고(폴더로 안 묶음), 어떤 정리로 왜 옮겨졌는지는
+여기서만(매니페스트를 통해) 보여준다 — 탐색기로 이 폴더를 열어도 사유/그룹
+폴더가 안 보인다. group_id가 없는(사유 기록이 없는) 옛 파일은 별도 카드로
+모아서 보여준다. gui/duplicate_screen.py에서 파일을 휴지통으로 옮긴 직후
+이 화면으로 넘어온다.
+
+2026-09-10, 사용자 요청으로 임시휴지통이 앱 전역 폴더 하나가 아니라 "정리
+대상 파일이 있던 폴더마다" 따로 생기도록 바뀌면서(utils/trash.py 참고), 이
+화면도 특정 폴더 하나로 고정하지 않고 set_trash_dirs()로 받은 임시휴지통
+목록(보통 1개, 세션에서 한 번에 여러 폴더를 정리했으면 여러 개)을 모두
+합쳐서 보여준다.
 
 실사용 중 발견된 버그: 휴지통에 파일이 수백 개 쌓이면(정리 실행을 몇 번만
 해도 쉽게 도달) __init__이 곧바로 refresh()를 부르면서 파일마다
@@ -141,6 +147,7 @@ class TrashScreen(QWidget):
         self._thumb_cache: dict[str, object] = {}  # path -> QImage | None
         self._pending_labels: dict[str, list[QLabel]] = {}
         self._worker: ThumbnailLoadWorker | None = None
+        self._trash_dirs: list[Path] = []  # set_trash_dirs()로 채움 — 비어있으면 그냥 빈 화면
 
         # 화면 전체를 쓰는 큰 창에서 카드가 창 끝까지 늘어나면 텅 빈 공간이 남아
         # 허전해 보인다(gui/organize_hub_screen.py에서 고친 것과 같은 문제) —
@@ -217,20 +224,28 @@ class TrashScreen(QWidget):
 
         btn_row = QHBoxLayout()
         btn_row.setSpacing(10)
-        open_folder_btn = QPushButton("임시 휴지통 폴더 열기")
-        open_folder_btn.clicked.connect(self._open_folder)
-        btn_row.addWidget(open_folder_btn)
+        self.open_folder_btn = QPushButton("임시 휴지통 폴더 열기")
+        self.open_folder_btn.setEnabled(False)
+        self.open_folder_btn.clicked.connect(self._open_folder)
+        btn_row.addWidget(self.open_folder_btn)
         outer.addLayout(btn_row)
 
         # 실제로 화면을 열 때만 채운다(gui/scan_session_window.py::_open_trash가
         # 호출) — 여기서 미리 부르면 스캔 세션을 새로 만들 때마다(스캔을 새로
         # 할 때마다!) 휴지통 파일이 많을 때 몇 초~몇십 초씩 멈춰 보인다.
 
+    def set_trash_dirs(self, trash_dirs: list[Path]) -> None:
+        """이 화면이 보여줄 임시휴지통 폴더(들)을 정한다 — 세션에서 한 번에
+        여러 폴더를 정리했으면 그만큼 여러 개일 수 있다. refresh()를 새로
+        불러야 반영된다(이 메서드 자체는 화면을 갱신하지 않음)."""
+        self._trash_dirs = list(trash_dirs)
+        self.open_folder_btn.setEnabled(bool(self._trash_dirs))
+
     def refresh(self) -> None:
         """utils/trash.py의 실제 폴더 내용을 다시 읽어와 그룹별 카드로 갱신한다.
         썸네일은 캐시에 있으면 즉시, 없으면 자리만 잡아두고 백그라운드에서
         불러와 도착하는 대로 채운다(파일이 수백 개여도 카드 자체는 바로 뜸)."""
-        files = trash.list_trash()
+        files = [p for trash_dir in self._trash_dirs for p in trash.list_trash(trash_dir)]
         self.count_chip.set_value(len(files))
 
         if self._worker is not None:
@@ -417,5 +432,8 @@ class TrashScreen(QWidget):
         self.refresh()
 
     def _open_folder(self):
-        trash.trash_dir().mkdir(parents=True, exist_ok=True)
-        QDesktopServices.openUrl(QUrl.fromLocalFile(str(trash.trash_dir())))
+        # 임시휴지통이 폴더마다 따로 있어서(2026-09-10) 여러 개일 수 있다 —
+        # 각각 탐색기 창으로 연다(보통은 1개라 창도 하나만 뜬다).
+        for trash_dir in self._trash_dirs:
+            trash_dir.mkdir(parents=True, exist_ok=True)
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(trash_dir)))
