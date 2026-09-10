@@ -22,19 +22,22 @@ experiments/city_organize_prototype에서 지도/줌 부분을 먼저 검증함.
 
 from __future__ import annotations
 
-from PySide6.QtCore import QPointF, QRectF, Qt, Signal
-from PySide6.QtGui import QColor, QPainter, QPen, QPixmap
+from pathlib import Path
+
+from PySide6.QtCore import QPointF, QRectF, Qt, QUrl, Signal
+from PySide6.QtGui import QColor, QDesktopServices, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QButtonGroup,
     QFileDialog,
     QFrame,
     QHBoxLayout,
     QLabel,
-    QListWidget,
-    QListWidgetItem,
+    QMenu,
     QPushButton,
     QRadioButton,
+    QScrollArea,
     QSizePolicy,
+    QStackedWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -72,6 +75,39 @@ def _pin_icon_pixmap(color: str, size: int = 26) -> QPixmap:
     return pixmap
 
 
+class _CurrentOnlyStack(QStackedWidget):
+    """gui/organize_hub_screen.py::_CurrentOnlyStack와 같은 이유로 필요 — 기본
+    QStackedWidget/setVisible() 토글은 숨긴 페이지도 레이아웃 공간을 계속
+    차지해서 빈 공간이 남거나(gui/duplicate_screen.py에서 실측 확인) 내용이
+    엉뚱하게 늘어나는 문제가 있다. 지도/목록 ↔ "GPS 없음" 안내 전환에 쓴다."""
+
+    def sizeHint(self):
+        widget = self.currentWidget()
+        return widget.sizeHint() if widget else super().sizeHint()
+
+    def minimumSizeHint(self):
+        widget = self.currentWidget()
+        return widget.minimumSizeHint() if widget else super().minimumSizeHint()
+
+
+class _ClickableFileRow(QLabel):
+    """도시 카드 안 파일 한 줄 — gui/duplicate_screen.py::_ClickableLabel과
+    같은 패턴. 클릭하면 상세보기, 우클릭하면 상세보기/로컬 폴더 위치 열기
+    메뉴(2026-09-10, 사용자 요청)."""
+
+    clicked = Signal()
+
+    def __init__(self, text: str):
+        super().__init__(text)
+        self.setCursor(Qt.PointingHandCursor)
+        self.setStyleSheet("font-size: 12px; padding: 2px 0;")
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.clicked.emit()
+        super().mousePressEvent(event)
+
+
 class CityOrganizeScreen(QWidget):
     """검사 결과를 지도 위에 도시별로 보여주는 화면. 같은 검사 세션
     (gui/scan_session_window.py) 안에서만 쓰인다."""
@@ -92,16 +128,16 @@ class CityOrganizeScreen(QWidget):
 
         # 화면 전체를 쓰는 큰 창에서 내용이 창 끝까지 늘어나면 텅 빈 공간이
         # 남아 허전해 보인다(gui/date_organize_screen.py·gui/organize_hub_screen.py와
-        # 같은 문제/수정) — 내용 폭을 한 번 고정(900px)하고 가운데 정렬한다.
-        # 예전엔 이 컨테이너가 없어서 지도/목록만 창 끝까지 늘어나고 하단 카드/
-        # 버튼은 따로 640px로 좁혀놔서 왼쪽에 따로 몰려 보였다(2026-09-10, 사용자
-        # 리포트 — "하단부분이 안이뻐, 다른애들이랑 통일하자").
+        # 같은 문제/수정) — 내용 폭을 한 번 고정하고 가운데 정렬한다. 지도와
+        # 목록을 좌우로 나란히 놓으면서(2026-09-10, 사용자 요청) 900px로는
+        # 목록 칸이 너무 좁아져 1100px로 넓혔다(gui/organize_hub_screen.py가
+        # 표+뷰어를 추가하며 760→1080으로 넓힌 것과 같은 이유).
         root = QHBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
         root.addStretch(1)
 
         content = QWidget()
-        content.setMaximumWidth(900)
+        content.setMaximumWidth(1100)
         content.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         root.addWidget(content, 100)
         root.addStretch(1)
@@ -132,24 +168,55 @@ class CityOrganizeScreen(QWidget):
         hint.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 12px;")
         outer.addWidget(hint)
 
+        # --- 지도(왼쪽) | 목록(오른쪽), 도시별로 묶어서 카드로 보여준다
+        # (2026-09-10, 사용자 요청 — "지도|목록 이렇게 보이게 배치 바꾸고
+        # 같은 도시면 중복 사진처럼 묶어줘". gui/duplicate_screen.py의
+        # 그룹 카드 패턴 재사용). GPS 있는 사진이 아예 없으면 이 영역 전체를
+        # empty_label로 바꿔치기한다 — setVisible() 토글은 레이아웃 공간을
+        # 예측 불가능하게 남기는 문제가 있어(gui/duplicate_screen.py에서
+        # 실측 확인) _CurrentOnlyStack으로 완전히 교체한다.
+        self.map_list_widget = QWidget()
+        map_list_row = QHBoxLayout(self.map_list_widget)
+        map_list_row.setContentsMargins(0, 0, 0, 0)
+        map_list_row.setSpacing(16)
+
         self.map_view = CityMapView()
-        self.map_view.setMinimumHeight(280)
-        outer.addWidget(self.map_view, stretch=2)
+        self.map_view.setMinimumHeight(360)
+        map_list_row.addWidget(self.map_view, stretch=3)
+
+        list_col = QVBoxLayout()
+        list_col.setSpacing(8)
+        region_label = QLabel("이 범위 안의 사진")
+        region_label.setStyleSheet("font-weight: 700;")
+        list_col.addWidget(region_label)
+
+        self.region_scroll = QScrollArea()
+        self.region_scroll.setWidgetResizable(True)
+        self.region_scroll.setFrameShape(QFrame.NoFrame)
+        self.region_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self._region_container = QWidget()
+        self._region_layout = QVBoxLayout(self._region_container)
+        self._region_layout.setContentsMargins(0, 0, 0, 0)
+        self._region_layout.setSpacing(10)
+        self._region_layout.addStretch(1)
+        self.region_scroll.setWidget(self._region_container)
+        list_col.addWidget(self.region_scroll, stretch=1)
+
+        self.region_empty_label = QLabel("이 범위에 GPS 사진이 없어요 — 지도를 움직여보세요.")
+        self.region_empty_label.setWordWrap(True)
+        self.region_empty_label.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 12px; padding: 12px 0;")
+        list_col.addWidget(self.region_empty_label)
+
+        map_list_row.addLayout(list_col, stretch=2)
 
         self.empty_label = QLabel("GPS 위치 정보가 있는 사진이 없습니다.")
         self.empty_label.setStyleSheet(f"color: {COLORS['text_secondary']}; padding: 24px;")
         self.empty_label.setAlignment(Qt.AlignCenter)
-        self.empty_label.hide()
-        outer.addWidget(self.empty_label)
 
-        region_label = QLabel("이 범위 안의 사진")
-        region_label.setStyleSheet("font-weight: 700;")
-        outer.addWidget(region_label)
-
-        self.region_list = QListWidget()
-        self.region_list.setMaximumHeight(140)
-        self.region_list.itemClicked.connect(self._on_item_clicked)
-        outer.addWidget(self.region_list)
+        self.content_stack = _CurrentOnlyStack()
+        self.content_stack.addWidget(self.map_list_widget)
+        self.content_stack.addWidget(self.empty_label)
+        outer.addWidget(self.content_stack, stretch=1)
 
         self.map_view.view_changed.connect(self._refresh_region_list)
 
@@ -227,9 +294,7 @@ class CityOrganizeScreen(QWidget):
         # 있는 사진으로 한정한다.
         has_organizable = bool(self._files) or bool(self._no_gps_groups)
         has_map_content = bool(self._files)
-        self.map_view.setVisible(has_map_content)
-        self.region_list.setVisible(has_map_content)
-        self.empty_label.setVisible(not has_map_content)
+        self.content_stack.setCurrentWidget(self.map_list_widget if has_map_content else self.empty_label)
         self.organize_btn.setEnabled(has_organizable)
         if not has_map_content:
             return
@@ -292,18 +357,63 @@ class CityOrganizeScreen(QWidget):
         ]
 
     def _refresh_region_list(self) -> None:
-        visible = self._rows_in_view()
-        self.region_list.clear()
-        for info in visible:
-            item = QListWidgetItem(f"{info.filename} — {self._file_to_label.get(info.path, '')}")
-            item.setData(Qt.UserRole, info)
-            self.region_list.addItem(item)
+        """지도에 보이는 범위 안 사진을(_rows_in_view) 도시별로 묶어 카드로
+        다시 그린다 — gui/duplicate_screen.py::set_result과 같은 "통째로 다시
+        만들기" 방식(그룹 몇 개 안 되는 화면이라 매번 다시 그려도 충분히 가볍다)."""
+        visible_paths = {info.path for info in self._rows_in_view()}
 
-    def _on_item_clicked(self, item: QListWidgetItem) -> None:
-        info = item.data(Qt.UserRole)
-        label = self._file_to_label.get(info.path)
+        while self._region_layout.count() > 1:
+            item = self._region_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+
+        any_group = False
+        for label, files in self._groups:
+            group_files = [f for f in files if f.path in visible_paths]
+            if not group_files:
+                continue
+            any_group = True
+            card = self._build_city_card(label, group_files)
+            self._region_layout.insertWidget(self._region_layout.count() - 1, card)
+
+        self.region_empty_label.setVisible(not any_group)
+
+    def _build_city_card(self, label: str, files: list[FileInfo]) -> QFrame:
+        card = QFrame()
+        card.setObjectName("Card")
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(14, 12, 14, 12)
+        layout.setSpacing(4)
+
+        header = QLabel(f"{label} · {len(files)}장")
+        header.setStyleSheet("font-weight: 700;")
+        layout.addWidget(header)
+
+        for info in files:
+            row = _ClickableFileRow(info.filename)
+            row.setToolTip(info.path)
+            row.clicked.connect(lambda info=info, label=label: self._open_detail(label, info))
+            row.setContextMenuPolicy(Qt.CustomContextMenu)
+            row.customContextMenuRequested.connect(
+                lambda pos, w=row, info=info, label=label: self._on_row_context_menu(w, pos, info, label)
+            )
+            layout.addWidget(row)
+
+        return card
+
+    def _open_detail(self, label: str, info: FileInfo) -> None:
         files = next((files for group_label, files in self._groups if group_label == label), [info])
         self.photo_selected.emit(label, info, files)
+
+    def _on_row_context_menu(self, widget: QWidget, pos, info: FileInfo, label: str) -> None:
+        menu = QMenu(self)
+        detail_action = menu.addAction("상세보기")
+        open_folder_action = menu.addAction("로컬 폴더 위치 열기")
+        chosen = menu.exec(widget.mapToGlobal(pos))
+        if chosen is detail_action:
+            self._open_detail(label, info)
+        elif chosen is open_folder_action:
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(Path(info.path).parent)))
 
     def _on_change_output_clicked(self):
         chosen = QFileDialog.getExistingDirectory(self, "저장 위치 선택", self._output_root or "")
