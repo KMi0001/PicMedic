@@ -33,8 +33,9 @@ from PySide6.QtCore import (
     QPropertyAnimation,
     QEasingCurve,
     Property,
+    QUrl,
 )
-from PySide6.QtGui import QCursor, QPixmap, QPainter, QPen, QColor, QBrush
+from PySide6.QtGui import QCursor, QPixmap, QPainter, QPen, QColor, QBrush, QDesktopServices
 from PySide6.QtWidgets import (
     QWidget,
     QVBoxLayout,
@@ -59,6 +60,11 @@ from utils import trash
 from utils.assets import asset_path
 
 CONTENT_WIDTH = 520
+
+# PicMedic-Web(별도 저장소)의 개인정보처리방침 — 데스크톱 프로그램은 별도
+# 페이지를 만들지 않고 이 웹 페이지로 연결한다(2026-09-11). 그쪽 저장소에서
+# 문구가 바뀌면 이 링크도 그대로 최신 내용을 보여준다.
+PRIVACY_POLICY_URL = "https://kmi0001.github.io/PicMedic-Web/privacy-policy.html"
 
 _IMAGE_FILTER_PATTERN = " ".join(f"*{ext}" for ext in sorted(SCANNABLE_EXTENSIONS))
 IMAGE_FILE_FILTER = f"이미지 파일 ({_IMAGE_FILTER_PATTERN});;모든 파일 (*)"
@@ -393,6 +399,12 @@ class HomeScreen(QWidget):
         trash_btn.clicked.connect(self._open_trash)
         bottom_row.addWidget(trash_btn)
         bottom_row.addStretch(1)
+        self.privacy_link = QLabel(f'<a href="{PRIVACY_POLICY_URL}" style="color:{COLORS["muted"]};">개인정보처리방침</a>')
+        self.privacy_link.setStyleSheet("font-size: 11px; background: transparent;")
+        self.privacy_link.setTextInteractionFlags(Qt.TextBrowserInteraction)
+        self.privacy_link.setOpenExternalLinks(False)
+        self.privacy_link.linkActivated.connect(lambda url: QDesktopServices.openUrl(QUrl(url)))
+        bottom_row.addWidget(self.privacy_link)
         content_layout.addLayout(bottom_row)
 
         outer.addWidget(content, alignment=Qt.AlignHCenter)
@@ -413,6 +425,9 @@ class HomeScreen(QWidget):
         self.diagnose_card.refresh_theme(_diagnose_icon_pixmap(COLORS["primary"]))
         self.convert_card.refresh_theme(_convert_icon_pixmap(COLORS["primary"]))
         self.organize_card.refresh_theme(_organize_icon_pixmap(COLORS["primary"]))
+        self.privacy_link.setText(
+            f'<a href="{PRIVACY_POLICY_URL}" style="color:{COLORS["muted"]};">개인정보처리방침</a>'
+        )
 
     # --- 내부 로직 -----------------------------------------------------
 
