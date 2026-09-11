@@ -33,7 +33,24 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+    # facexlib는 collect_all()로 전체를 긁어오는데, facexlib/__init__.py가
+    # facexlib.tracking(동영상 얼굴 추적용 — 우리는 얼굴 탐지/복원만 쓰고
+    # 트래킹은 쓰지 않음)까지 통째로 끌고 온다. 실제로 core/face_restorer.py,
+    # core/quality_diagnosis.py는 facexlib.detection / facexlib.utils만
+    # import하고 facexlib.tracking은 어디서도 import하지 않음(2026-09-11 확인,
+    # 런타임 테스트로 facexlib.tracking.kalman_tracker/data_association이
+    # 로드되지 않음을 검증). 이 트래킹 서브모듈들이 filterpy(->matplotlib),
+    # numba(->llvmlite)를 끌어와 패키지 용량이 145MB 불어난다.
+    excludes=[
+        'facexlib.tracking.kalman_tracker',
+        'facexlib.tracking.data_association',
+        'facexlib.tracking.sort',
+        'filterpy',
+        'numba',
+        'llvmlite',
+        'matplotlib',
+        'pandas',
+    ],
     noarchive=False,
     optimize=0,
 )
