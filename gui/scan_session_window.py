@@ -6,23 +6,30 @@ gui/scan_session_window.py
 QStackedWidget으로 전환한다 (예전엔 gui/main_window.py가 이 전체를 앱 전체 싱글턴
 화면들로 관리했음). gui/main_window.py는 파일/폴더를 선택할 때마다 이 창을 새로
 띄우기만 해서, 여러 폴더를 동시에 검사할 수 있다 (PRD_MVP우선순위.md 갭 #10).
+
+화면이 14개, 전환/워커 콜백 메서드가 50개를 넘어서면서(2026-09-11 리뷰) 이 파일
+하나에 다 두면 기능 하나 찾기가 점점 어려워졌다. 그래서 기능별 전환 로직을
+믹스인 클래스로 나눠 별도 파일로 뺐다 — 아래 클래스들은 전부 self.xxx로
+ScanSessionWindow.__init__이 준비한 같은 속성(stack, result_screen, ...)에
+접근하는 다중 상속 믹스인이라, 시그널 배선(_wire_signals)과 런타임 동작은
+분리 전과 동일하다. 이 클래스 본체(ScanSessionWindow)에는 여러 화면이 공유하는
+뼈대(창 생성, 화면 목록, 시그널 배선, 스캔 시작/이어서 검사, 창 닫기)만 남긴다:
+- gui/scan_session_workers.py — 백그라운드 워커(QThread)와 보조 위젯
+- gui/scan_session_organize_mixin.py — 날짜별/도시별/고양이 찾기 "정리하기" 실행 공통 로직
+- gui/scan_session_duplicates_mixin.py — 중복/유사 사진 카드
+- gui/scan_session_date_city_mixin.py — 날짜별/도시별 정리 카드 + 그룹 상세
+- gui/scan_session_cat_finder_mixin.py — 고양이 찾기 카드
+- gui/scan_session_detail_mixin.py — 상세보기/복구/임시휴지통
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QThread, Signal
-from PySide6.QtWidgets import QWidget, QStackedWidget, QVBoxLayout
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtWidgets import QWidget, QVBoxLayout
 
-from core.date_organizer import organize_by_city, organize_by_date, organize_cat_finder_results
-from core.scanner import list_image_files
-from gui.common_dialogs import (
-    confirm_dialog as _confirm_dialog,
-    info_dialog as _info_dialog,
-    info_dialog_with_folder as _info_dialog_with_folder,
-    ProgressDialog,
-)
+from gui.common_dialogs import info_dialog as _info_dialog, ProgressDialog
 from gui.scanning_screen import ScanningScreen
 from gui.result_screen import ResultScreen
 from gui.theme import COLORS, get_stylesheet
@@ -38,93 +45,24 @@ from gui.city_organize_screen import CityOrganizeScreen
 from gui.date_group_detail_screen import DateGroupDetailScreen
 from gui.trash_screen import TrashScreen
 from gui.cat_finder_screen import CatFinderScreen
-from models.file_info import FileStatus
-from utils import trash
+from gui.scan_session_workers import _OrganizeWorker, _LightListWorker, _CurrentOnlyStack
+from gui.scan_session_organize_mixin import OrganizeExecutionMixin
+from gui.scan_session_duplicates_mixin import DuplicatesSimilarMixin
+from gui.scan_session_date_city_mixin import DateCityOrganizeMixin
+from gui.scan_session_cat_finder_mixin import CatFinderMixin
+from gui.scan_session_detail_mixin import DetailRecoveryTrashMixin
+
+__all__ = ["ScanSessionWindow"]
 
 
-class _OrganizeWorker(QThread):
-    """core/date_organizer.py::organize_by_date()/organize_by_city()는 사진이
-    많으면 수백 개 파일을 복사/이동하느라 시간이 걸릴 수 있어서,
-    gui/recovery_screen.py::RecoveryWorker와 같은 이유로 별도 스레드에서
-    돌린다. 날짜별/도시별 둘 다 이 워커를 쓰고, 실제 실행 함수(run_fn)만
-    호출부(gui/scan_session_window.py의 _on_date_organize_requested/
-    _on_city_organize_requested)가 다르게 준비해 넘긴다."""
-
-    progress = Signal(int, int, str)
-    finished_batch = Signal(list)  # list[core.date_organizer.OrganizeOutcome]
-    failed = Signal(str)  # 예상 못한 예외 (아래 run() 참고)
-
-    def __init__(self, run_fn, mode: str, output_root: str, parent=None):
-        super().__init__(parent)
-        self._run_fn = run_fn
-        self.mode = mode
-        self.output_root = output_root
-        self._cancel_requested = False
-
-    def cancel(self):
-        self._cancel_requested = True
-
-    def run(self):
-        # gui/recovery_screen.py::RecoveryWorker.run과 같은 이유 — 예외가 새어나가면
-        # finished_batch가 안 와서 모달 진행 팝업(organize_progress_dialog)이 영영
-        # 닫히지 않는다. (2026-09-11 리뷰)
-        try:
-            outcomes = self._run_fn(
-                progress_callback=lambda cur, total, name: self.progress.emit(cur, total, name),
-                should_cancel=lambda: self._cancel_requested,
-            )
-        except Exception as exc:  # noqa: BLE001 - 백그라운드 스레드 예외를 신호로 넘기기 위함
-            self.failed.emit(str(exc))
-            return
-        self.finished_batch.emit(outcomes)
-
-
-class _LightListWorker(QThread):
-    """"정리 > 고양이 찾기" 빠른 경로 전용(2026-09-10) — core/scanner.py::
-    list_image_files()로 파일 목록만 가볍게 모은다(손상 검사·해시 없음).
-    폴더 순회 자체도 사진이 수만 장이면 잠깐 걸릴 수 있어(디스크 I/O) 별도
-    스레드에서 돈다 — 매 파일 진단하는 무거운 스캔보다는 훨씬 빠르지만
-    "즉시"는 아님."""
-
-    finished_listing = Signal(object)  # ScanResult (가벼운 FileInfo만 채워짐)
-    failed = Signal(str)  # 예상 못한 예외 (아래 run() 참고)
-
-    def __init__(self, paths: list[str], parent=None):
-        super().__init__(parent)
-        self._paths = paths
-        self._cancel_requested = False
-
-    def cancel(self):
-        self._cancel_requested = True
-
-    def run(self):
-        # _OrganizeWorker.run과 같은 이유 — 실패해도 반드시 신호 하나로 끝나야
-        # light_scan_progress_dialog(모달)가 닫힌다. (2026-09-11 리뷰)
-        try:
-            result = list_image_files(self._paths, should_cancel=lambda: self._cancel_requested)
-        except Exception as exc:  # noqa: BLE001 - 백그라운드 스레드 예외를 신호로 넘기기 위함
-            self.failed.emit(str(exc))
-            return
-        self.finished_listing.emit(result)
-
-
-class _CurrentOnlyStack(QStackedWidget):
-    """일반 QStackedWidget은 minimumSizeHint()가 담고 있는 모든 페이지 중 가장 큰
-    값을 기준으로 잡아서, 화면이 5개(검사/결과/상세/복구/복구결과)나 들어있는 이
-    창은 검사 화면만 보여줄 때도 제일 큰 페이지(결과 화면 표)만큼 최소 크기가
-    묶여버린다 — ScanSessionWindow.resize()로 작게 줄여도 그 아래로는 안 줄어듦.
-    지금 보이는 페이지의 크기만 반영하도록 오버라이드해서 이 묶임을 푼다."""
-
-    def sizeHint(self):
-        widget = self.currentWidget()
-        return widget.sizeHint() if widget else super().sizeHint()
-
-    def minimumSizeHint(self):
-        widget = self.currentWidget()
-        return widget.minimumSizeHint() if widget else super().minimumSizeHint()
-
-
-class ScanSessionWindow(QWidget):
+class ScanSessionWindow(
+    QWidget,
+    OrganizeExecutionMixin,
+    DuplicatesSimilarMixin,
+    DateCityOrganizeMixin,
+    CatFinderMixin,
+    DetailRecoveryTrashMixin,
+):
     """스캔 1회 = 창 1개. Qt 부모 없이 완전히 독립된 최상위 창(제목표시줄, 자체
     X 버튼)으로 뜬다 — 예전엔 parent=MainWindow로 만들어서 스타일시트만 물려받고
     Qt.Window로 독립된 창처럼 보이게 했었는데, Windows에서 "부모가 있는
@@ -355,57 +293,6 @@ class ScanSessionWindow(QWidget):
         # 건드리지 않는다 — resize=False.
         self._start_scan(self._organize_paths, resize=False)
 
-    def _start_light_cat_finder_scan(self, paths: list[str]):
-        """"정리 > 고양이 찾기" 빠른 경로 — core/scanner.py의 무거운 진단
-        스캔(core/analyzer.py::analyze_file, 파일마다 SHA-256 전체 해시 +
-        이미지 디코딩)을 건너뛰고 파일 목록만 가볍게 모은 뒤 곧장 고양이
-        찾기로 간다. 정리 허브가 이미 보통 크기로 떠 있는 상태에서 카드를
-        눌러 시작하므로(2026-09-10) 창 크기는 건드리지 않는다 — 상단 주석의
-        "결과 화면 이후로는 창 크기를 다시 건드리지 않는다" 원칙."""
-        self._light_scan_worker = _LightListWorker(paths, self)
-        self._light_scan_worker.finished_listing.connect(self._on_light_scan_finished)
-        self._light_scan_worker.failed.connect(self._on_light_scan_failed)
-        self.light_scan_progress_dialog.start("사진 목록을 모으는 중")
-        # 총 개수를 미리 알 수 없어(진단처럼 파일마다 처리하는 게 아니라 폴더
-        # 순회 자체) 퍼센트 대신 바쁨(busy) 표시로 보여준다.
-        self.light_scan_progress_dialog.bar.setRange(0, 0)
-        self.light_scan_progress_dialog.status_label.setText("폴더를 훑어보는 중...")
-        self._light_scan_worker.start()
-        self.light_scan_progress_dialog.exec()
-
-    def _on_light_scan_cancel_requested(self):
-        if self._light_scan_worker is not None:
-            self._light_scan_worker.cancel()
-
-    def _on_light_scan_failed(self, message: str):
-        """"정리 > 고양이 찾기" 빠른 목록 수집이 실패한 경우 — _on_light_scan_finished와
-        같은 뒷정리(모달 닫기, 바 범위 원복, 워커 정리)를 하고 허브로 돌려보낸다."""
-        self.light_scan_progress_dialog.accept()
-        self.light_scan_progress_dialog.bar.setRange(0, 100)
-        worker = self._light_scan_worker
-        self._light_scan_worker = None
-        if worker is not None:
-            worker.wait()
-        _info_dialog(self, f"사진 목록을 모으는 중 예상하지 못한 오류가 발생했습니다.\n\n{message}")
-        self.stack.setCurrentWidget(self.organize_hub_screen)
-
-    def _on_light_scan_finished(self, result):
-        self.light_scan_progress_dialog.accept()
-        self.light_scan_progress_dialog.bar.setRange(0, 100)  # organize_progress_dialog와 인스턴스가 달라 공유 걱정은 없지만, 다음 실행을 위해 원상복구
-        worker = self._light_scan_worker
-        self._light_scan_worker = None
-        if worker is not None:
-            worker.wait()
-
-        if result.total == 0:
-            _info_dialog(self, "이미지 파일이 없습니다.")
-            self.stack.setCurrentWidget(self.organize_hub_screen)
-            return
-
-        self.cat_finder_screen.set_output_root(str(self._default_organize_output_dir() / "고양이_사진"))
-        self.cat_finder_screen.set_result(result)
-        self.stack.setCurrentWidget(self.cat_finder_screen)
-
     def _default_organize_output_dir(self) -> Path:
         """gui/date_organize_screen.py::_open_date_organize·_open_city_organize와
         같은 기준(원래 선택한 경로가 폴더면 그 폴더, 파일이면 그 파일의
@@ -499,302 +386,6 @@ class ScanSessionWindow(QWidget):
             self.resize(*self._NORMAL_SIZE)
             self.setMinimumSize(*self._MIN_NORMAL_SIZE)
             self.stack.setCurrentWidget(self.result_screen)
-
-    def _open_detail(self, info, group=None, return_to=None):
-        self._detail_return_screen = return_to or self.result_screen
-        # 중복/유사 사진 화면에서는 "이게 정말 맞나" 확인하러 들어온 것이라
-        # 복구/변환/화질 개선 같은 편집 액션은 감춘다(gui/detail_screen.py::
-        # set_review_only 참고) — gui/date_group_detail_screen.py와 같은 원칙.
-        self.detail_screen.set_review_only(
-            return_to in (self.duplicate_screen, self.similar_screen, self.cat_finder_screen)
-        )
-        # group을 주면(중복/유사 화면의 표에서 열었을 때) 상세 화면에서
-        # 방향키로 같은 그룹의 다음/이전 사진을 넘나들 수 있다(2026-09-08,
-        # 사용자 요청).
-        self.detail_screen.set_file(info, group=group)
-        self.stack.setCurrentWidget(self.detail_screen)
-
-    def _open_recovery(self, files, mode):
-        self.recovery_screen.set_files(files, preselected_mode=mode)
-        self.stack.setCurrentWidget(self.recovery_screen)
-
-    def _back_from_organize_hub(self):
-        self.stack.setCurrentWidget(self.result_screen)
-
-    def _refresh_after_organize_action(self):
-        """중복/유사 정리, 휴지통 복원 등으로 검사 결과가 바뀐 뒤 정리 허브로
-        돌아갈 때 표/칩(검사 결과 화면)과 카드 배지(정리 허브)를 같이
-        새로고침한다 — 둘 중 하나만 갱신하면 반대쪽에 옛 개수가 남는다."""
-        self.result_screen.refresh_current_result()
-        self.organize_hub_screen.set_result(self.result_screen.result)
-
-    def _back_from_duplicates(self):
-        # duplicate_screen이 "정리 실행"으로 이미 self.result_screen.result(같은
-        # ScanResult 객체)에서 파일을 뺐어도(ScanResult.remove), 검사 결과 화면의
-        # 표/칩은 따로 다시 그려주지 않으면 그대로 갱신 안 된 채 남는다 — 휴지통에
-        # 옮긴 사진이 검사 결과 목록에 계속 보이던 문제.
-        self._refresh_after_organize_action()
-        self.stack.setCurrentWidget(self.organize_hub_screen)
-
-    def _back_from_similar(self):
-        self._refresh_after_organize_action()
-        self.stack.setCurrentWidget(self.organize_hub_screen)
-
-    def _open_duplicates(self):
-        # 2026-09-10: 아직 스캔 전이면(정리 허브를 방금 열었을 때) 여기서
-        # 전체 스캔부터 시작하고, 끝나면 아래 로직을 다시 실행한다
-        # (_ensure_scanned_then 참고). 이미 스캔돼 있으면(다른 카드를 먼저
-        # 눌렀던 경우 등) 바로 실행된다.
-        def proceed():
-            result = self.result_screen.result
-            if not result or not result.duplicate_groups():
-                # 처리할 중복이 아예 없으면 빈 화면을 보여줄 필요 없이 정리
-                # 허브로 바로 돌아간다.
-                _info_dialog(self, "중복된 파일이 없습니다.")
-                self.stack.setCurrentWidget(self.organize_hub_screen)
-                return
-            self.duplicate_screen.set_result(result)
-            self.stack.setCurrentWidget(self.duplicate_screen)
-
-        self._ensure_scanned_then(proceed)
-
-    def _open_similar(self):
-        def proceed():
-            result = self.result_screen.result
-            if not result or not result.files:
-                _info_dialog(self, "정리할 사진이 없습니다.")
-                self.stack.setCurrentWidget(self.organize_hub_screen)
-                return
-            # similar_groups() 계산 자체가 느릴 수 있어(퍼셉추얼 해시 쌍 비교)
-            # 여기서 미리 확인하지 않고, SimilarScreen이 백그라운드로 계산하는
-            # 동안 진행률 팝업을 보여준다 — 결과가 없으면 화면 자체가 빈
-            # 상태를 보여준다.
-            self.similar_screen.set_result(result)
-            self.stack.setCurrentWidget(self.similar_screen)
-
-        self._ensure_scanned_then(proceed)
-
-    def _open_date_organize(self):
-        def proceed():
-            result = self.result_screen.result
-            if not result or not result.files:
-                _info_dialog(self, "정리할 사진이 없습니다.")
-                self.stack.setCurrentWidget(self.organize_hub_screen)
-                return
-            self.date_organize_screen.set_result(result)
-            self.date_organize_screen.set_output_root(str(self._default_organize_output_dir() / "날짜별_정리"))
-            self.stack.setCurrentWidget(self.date_organize_screen)
-
-        self._ensure_scanned_then(proceed)
-
-    def _back_from_date_organize(self):
-        self.stack.setCurrentWidget(self.organize_hub_screen)
-
-    def _open_date_group_detail(self, label: str, files: list):
-        self._group_detail_return_screen = self.date_organize_screen
-        excluded = self.date_organize_screen.group_excluded(label)
-        self.date_group_detail_screen.set_group(label, files, excluded_paths=excluded)
-        self.stack.setCurrentWidget(self.date_group_detail_screen)
-
-    def _open_city_organize(self):
-        def proceed():
-            result = self.result_screen.result
-            if not result or not result.files:
-                _info_dialog(self, "정리할 사진이 없습니다.")
-                self.stack.setCurrentWidget(self.organize_hub_screen)
-                return
-            self.city_organize_screen.set_result(result)
-            self.city_organize_screen.set_output_root(str(self._default_organize_output_dir() / "도시별_정리"))
-            self.stack.setCurrentWidget(self.city_organize_screen)
-
-        self._ensure_scanned_then(proceed)
-
-    def _back_from_city_organize(self):
-        self.stack.setCurrentWidget(self.organize_hub_screen)
-
-    def _open_cat_finder(self):
-        # 고양이 찾기는 중복/유사/날짜별/도시별의 전체 스캔과 무관하다 — 이미
-        # 그 스캔이 끝나 있으면(다른 카드를 먼저 눌렀던 경우) 재스캔 없이
-        # 그 결과를 그대로 쓰고, 아직 스캔 전이면 자기만의 가벼운 경로
-        # (_start_light_cat_finder_scan, 손상 검사·해시 생략)로 곧장 간다.
-        result = self.result_screen.result
-        if result is not None and result.files:
-            self.cat_finder_screen.set_output_root(str(self._default_organize_output_dir() / "고양이_사진"))
-            self.cat_finder_screen.set_result(result)
-            self.stack.setCurrentWidget(self.cat_finder_screen)
-            return
-        self._start_light_cat_finder_scan(self._organize_paths)
-
-    def _back_from_cat_finder(self):
-        self.stack.setCurrentWidget(self.organize_hub_screen)
-
-    def _open_city_group_detail(self, label: str, info, files: list):
-        self._group_detail_return_screen = self.city_organize_screen
-        excluded = self.city_organize_screen.group_excluded(label)
-        self.date_group_detail_screen.set_group(label, files, excluded_paths=excluded, initial_file=info)
-        self.stack.setCurrentWidget(self.date_group_detail_screen)
-
-    def _on_group_detail_exclusion_changed(self, label: str, excluded: set):
-        # _group_detail_return_screen은 항상 date_organize_screen 또는
-        # city_organize_screen 중 하나이고, 둘 다 같은 시그니처의
-        # set_group_excluded(label, excluded_paths)를 갖고 있다.
-        self._group_detail_return_screen.set_group_excluded(label, excluded)
-
-    def _confirm_move_if_needed(self, mode: str) -> bool:
-        if mode != "move":
-            return True
-        return _confirm_dialog(
-            self,
-            "이동을 선택하셨어요.<br><br>"
-            "원본 파일이 새 폴더로 옮겨지고 원래 위치에는 남지 않아요.<br>"
-            "계속할까요?",
-            confirm_text="이동 시작",
-            cancel_text="취소",
-        )
-
-    def _start_organize_worker(self, run_fn, mode: str, output_root: str):
-        self._organize_worker = _OrganizeWorker(run_fn, mode, output_root, self)
-        self._organize_worker.progress.connect(self._on_organize_progress)
-        self._organize_worker.finished_batch.connect(self._on_organize_finished)
-        self._organize_worker.failed.connect(self._on_organize_failed)
-
-        title = "이동하는 중" if mode == "move" else "복사하는 중"
-        self.organize_progress_dialog.start(title)
-        self._organize_worker.start()
-        self.organize_progress_dialog.exec()
-
-    def _on_date_organize_requested(self, mode: str):
-        if self._organize_worker is not None:
-            return
-        if not self._confirm_move_if_needed(mode):
-            return
-
-        groups = self.date_organize_screen.groups()
-        output_root = self.date_organize_screen.output_root()
-        granularity = self.date_organize_screen.granularity()
-        run_fn = lambda progress_callback, should_cancel: organize_by_date(
-            groups, mode, output_root, granularity=granularity,
-            progress_callback=progress_callback, should_cancel=should_cancel,
-        )
-        self._start_organize_worker(run_fn, mode, output_root)
-
-    def _on_city_organize_requested(self, mode: str):
-        if self._organize_worker is not None:
-            return
-        if not self._confirm_move_if_needed(mode):
-            return
-
-        groups = self.city_organize_screen.groups()
-        output_root = self.city_organize_screen.output_root()
-        run_fn = lambda progress_callback, should_cancel: organize_by_city(
-            groups, mode, output_root,
-            progress_callback=progress_callback, should_cancel=should_cancel,
-        )
-        self._start_organize_worker(run_fn, mode, output_root)
-
-    def _on_cat_finder_organize_requested(self, mode: str):
-        if self._organize_worker is not None:
-            return
-        if not self._confirm_move_if_needed(mode):
-            return
-
-        files = self.cat_finder_screen.matched_files()
-        output_root = self.cat_finder_screen.output_root()
-        run_fn = lambda progress_callback, should_cancel: organize_cat_finder_results(
-            files, mode, output_root,
-            progress_callback=progress_callback, should_cancel=should_cancel,
-        )
-        # 2026-09-10부터 organize_hub_screen은 어느 경로로 오든(가벼운 고양이
-        # 찾기든, 다른 카드로 이미 스캔했든) 항상 채워져 있으므로 완료 후
-        # 기본값(그리로 돌아감)을 그대로 쓴다.
-        self._start_organize_worker(run_fn, mode, output_root)
-
-    def _on_organize_progress(self, current: int, total: int, filename: str):
-        self.organize_progress_dialog.update_progress(current, total, filename)
-
-    def _on_organize_cancel_requested(self):
-        if self._organize_worker is not None:
-            self._organize_worker.cancel()
-
-    def _on_organize_failed(self, message: str):
-        """정리(날짜별/도시별/고양이) 실행이 예상 못한 오류로 끝난 경우 —
-        모달 진행 팝업을 먼저 닫아야 앱이 멈춘 것처럼 보이지 않는다.
-        core/date_organizer.py는 파일을 옮기기 전에 실패하면 원본을 그대로
-        두므로, 여기서는 안내만 하고 허브로 돌려보낸다."""
-        self.organize_progress_dialog.accept()
-        worker = self._organize_worker
-        self._organize_worker = None
-        if worker is not None:
-            worker.wait()
-        _info_dialog(self, f"정리 중 예상하지 못한 오류가 발생했습니다.\n\n{message}")
-        self.stack.setCurrentWidget(self.organize_hub_screen)
-
-    def _on_organize_finished(self, outcomes):
-        self.organize_progress_dialog.accept()
-        worker = self._organize_worker
-        self._organize_worker = None
-        if worker is not None:
-            worker.wait()
-
-        # "이미 있어서 건너뜀"(core/date_organizer.py::_already_organized)은 실제로
-        # 옮기거나 복사한 게 아니므로 newly_done과 분리해서 센다 — 이동 모드에서
-        # 특히 중요: 건너뛴 파일은 원본을 일부러 그대로 뒀으니(안전한 선택),
-        # 검사 결과 목록에서도 빼면 안 된다(빼면 아직 안 옮겨진 파일이 사라진
-        # 유령 항목이 됨).
-        newly_done = [o for o in outcomes if o.success and not o.skipped]
-        skipped = [o for o in outcomes if o.skipped]
-        failed = [o for o in outcomes if not o.success]
-
-        if worker is not None and worker.mode == "move" and self.result_screen.result is not None:
-            for outcome in newly_done:
-                self.result_screen.result.remove(outcome.original)
-            self._refresh_after_organize_action()
-
-        output_root = worker.output_root if worker is not None else ""
-
-        lines = [f"{len(newly_done)}개 정리했습니다."]
-        if skipped:
-            lines.append(f"{len(skipped)}개는 이미 있어서 건너뛰었습니다.")
-        if failed:
-            lines.append(f"{len(failed)}개는 실패했습니다:")
-            lines.extend(f"{o.original.filename} ({o.error_message})" for o in failed[:5])
-
-        _info_dialog_with_folder(self, "\n".join(lines), output_root)
-
-        self.stack.setCurrentWidget(self.organize_hub_screen)
-
-    def _open_trash(self, return_to=None, moved_infos: list | None = None):
-        self._trash_return_screen = return_to or self.result_screen
-        if moved_infos:
-            # 임시휴지통이 이제 "옮긴 파일이 있던 폴더마다" 따로 생기므로
-            # (utils/trash.py), 이번에 실제로 옮겨진 파일들이 어느 폴더에서
-            # 왔는지로 보여줄 임시휴지통 목록을 계산한다.
-            trash_dirs = sorted({trash.trash_dir_for(info.path) for info in moved_infos})
-            self.trash_screen.set_trash_dirs(trash_dirs)
-        self.trash_screen.refresh()
-        self.stack.setCurrentWidget(self.trash_screen)
-
-    def _back_from_trash(self):
-        if self._trash_return_screen is self.similar_screen and self.similar_screen.has_pending():
-            self.stack.setCurrentWidget(self.similar_screen)
-        elif self.duplicate_screen.has_pending():
-            self.stack.setCurrentWidget(self.duplicate_screen)
-        else:
-            # 더 처리할 그룹이 없어 정리 허브로 바로 돌아가는 경우 — 그동안
-            # 중복/유사 정리로 빠진 파일들이 표/칩/카드 배지에 반영되게 새로고침한다.
-            self._refresh_after_organize_action()
-            self.stack.setCurrentWidget(self.organize_hub_screen)
-
-    def _on_recovery_finished(self, outcomes, output_dir):
-        if self.result_screen.result is not None:
-            for outcome in outcomes:
-                # 원래 '정상'이던 파일은 복구가 아니라 단순 변환이므로 상태를 바꾸지 않는다
-                if outcome.success and outcome.original.status != FileStatus.NORMAL:
-                    self.result_screen.result.mark_recovered(outcome.original)
-            self.result_screen.refresh_current_result()
-
-        self.recovery_result_screen.set_outcomes(outcomes, output_dir)
-        self.stack.setCurrentWidget(self.recovery_result_screen)
 
     # --- 창 종료 ---------------------------------------------------------
 
