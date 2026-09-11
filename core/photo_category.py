@@ -23,46 +23,23 @@ open_clip(MIT)의 ViT-B/32, OpenAI 원본 가중치(약 354MB, openaipublic CDN)
 
 torch/open_clip은 이 파일 최상단이 아니라 함수 안에서 지연 import한다 —
 다른 AI 기능들과 같은 이유(앱 시작 속도).
+
+2026-09-11: 모델 로딩·이미지 인코딩·`load_image_for_clip`을
+core/image_embedding_cache.py로 옮기고 여기서는 그걸 그대로 가져다 쓴다 —
+core/category_finder.py("동물친구들"/"음식 사진" 등)와 같은 CLIP 모델·이미지 임베딩을 공유해서
+(1) 모델을 두 벌 메모리에 올리지 않고 (2) 사진 한 장을 여러 카테고리
+기능이 각각 다시 인코딩하지 않도록 하기 위함(카테고리 기능이 늘어날수록
+효과가 커짐 — experiments/embedding_cache_prototype/measure.py 실측).
+`is_available`/`load_image_for_clip`/`CLIP_INPUT_SIZE`는 기존 호출부(다른
+모듈·tests/test_photo_category.py)가 `photo_category.xxx`로 그대로 쓸 수
+있도록 여기서 재노출한다.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from pathlib import Path
 
-_PROJECT_ROOT = Path(__file__).resolve().parent.parent
-_CKPT_PATH = _PROJECT_ROOT / "assets" / "photo_category" / "ViT-B-32.pt"
-
-# CLIP이 실제로 보는 입력 크기. preprocess가 어차피 여기까지 줄이므로, 그보다
-# 큰 해상도로 디코딩하는 건 전부 버리는 일이다 — 아래 load_image_for_clip 참고.
-CLIP_INPUT_SIZE = 224
-
-
-def load_image_for_clip(path, preprocess):
-    """사진 한 장을 CLIP 입력 텐서로 만든다. photo_category(사진 진단 카테고리)와
-    cat_finder(고양이 찾기)가 같은 자산·같은 전처리를 쓰므로 여기 하나로 둔다.
-
-    핵심은 `Image.draft()` — libjpeg에게 "이 크기 이상이면 되니 축소해서
-    디코딩하라"고 알려주면 1/2·1/4·1/8 스케일로 바로 디코딩한다(요청 크기보다
-    작아지지는 않는다). CLIP은 224x224만 보는데 예전엔 4032x3024를 전부
-    디코딩한 뒤 224로 줄이고 있었다.
-
-    2026-09-11 실측(4032x3024, 디테일 많은 사진 기준):
-      - 디코드+전처리 128.9ms -> 25.4ms (5.1배). 단색에 가까운 사진은 16배까지.
-      - 같은 사진의 임베딩 코사인 유사도 0.9996 — 판정 임계값(0.4/0.6)에서
-        결과가 바뀔 여지가 없다. tests/test_photo_category.py에 회귀 테스트로
-        고정해둠(자산이 있을 때만 실행).
-    이 병목 때문에 "고양이 찾기"의 GPU 이득이 1.4배로 눌려 있었다 — 순전파는
-    GPU 4.9ms / CPU 61.8ms인데 그 앞단이 129ms였기 때문(RESTORATION_QUALITY_PLAN.md 5-9).
-
-    draft()는 JPEG 등 일부 형식에서만 동작하고 나머지(PNG/HEIC)에서는 조용히
-    아무 일도 하지 않는다 — 그래서 형식을 따로 분기할 필요가 없다.
-    """
-    from PIL import Image
-
-    with Image.open(path) as img:
-        img.draft("RGB", (CLIP_INPUT_SIZE, CLIP_INPUT_SIZE))
-        return preprocess(img.convert("RGB")).unsqueeze(0)
+from core.image_embedding_cache import CLIP_INPUT_SIZE, is_available, load_image_for_clip  # noqa: F401
 
 # 영어 프롬프트로 정의 — CLIP 텍스트 인코더가 주로 영어로 학습돼 한국어
 # 문장보다 정확도가 높다(실측 확인). 화면에는 왼쪽 한국어 라벨만 보여준다.
@@ -86,36 +63,24 @@ _CATEGORIES: dict[str, str] = {
 # 자신 있게 보여주지 않기 위함.
 CONFIDENCE_THRESHOLD = 0.4
 
-_model_cache = None  # (model, preprocess, labels, text_features) 캐시 — 세션 중 반복 호출 시 재로딩 방지
-
-
-def is_available() -> bool:
-    """이 기기에서 카테고리 판단 기능을 쓸 수 있는지(가중치 파일이 준비됐는지)."""
-    return _CKPT_PATH.exists()
+_model_cache = None  # (model, preprocess, labels, text_features, device) 캐시 — 세션 중 반복 호출 시 재로딩 방지
 
 
 def _get_model():
+    """core/image_embedding_cache.get_model()의 공용 CLIP 모델에, 이 파일만의
+    8-카테고리 텍스트 임베딩을 얹어 캐싱한다 — tests/test_photo_category.py가
+    이 5-튜플 시그니처((model, preprocess, labels, text_features, device))를
+    그대로 쓰므로 유지한다."""
     global _model_cache
     if _model_cache is not None:
         return _model_cache
 
-    import open_clip
     import torch
 
-    from core.torch_device import resolve_device
+    from core.image_embedding_cache import get_model, get_tokenizer
 
-    # core/deblur.py·denoise.py·face_restorer.py와 동일한 GPU 자동 감지(공용
-    # core/torch_device.resolve_device) — 이 함수만 빠져 있어서 GPU가 있는
-    # 기기에서도 항상 CPU로 돌고 있었다(실측: 4032x3024 기준 CPU 215ms/장,
-    # 사진 진단의 카테고리 판단도 이 경로를 타므로 같이 빨라진다).
-    device = resolve_device()
-
-    model, _, preprocess = open_clip.create_model_and_transforms(
-        "ViT-B-32", pretrained=str(_CKPT_PATH), force_quick_gelu=True, weights_only=False
-    )
-    model.eval()
-    model = model.to(device)
-    tokenizer = open_clip.get_tokenizer("ViT-B-32")
+    model, preprocess, device = get_model()
+    tokenizer = get_tokenizer()
 
     labels = list(_CATEGORIES.keys())
     text = tokenizer(list(_CATEGORIES.values())).to(device)
@@ -142,13 +107,12 @@ def classify_photo(path: str) -> CategoryResult:
 
     import torch
 
-    model, preprocess, labels, text_features, device = _get_model()
+    from core.image_embedding_cache import get_embedding
 
-    tensor = load_image_for_clip(path, preprocess).to(device)
+    model, _preprocess, labels, text_features, _device = _get_model()
+    image_features = get_embedding(path)
 
     with torch.no_grad():
-        image_features = model.encode_image(tensor)
-        image_features /= image_features.norm(dim=-1, keepdim=True)
         logits = model.logit_scale.exp() * (image_features @ text_features.T).squeeze(0)
         probs = logits.softmax(dim=-1)
 
