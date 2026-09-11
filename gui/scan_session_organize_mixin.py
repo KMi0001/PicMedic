@@ -1,9 +1,9 @@
 """
 gui/scan_session_organize_mixin.py
 
-gui/scan_session_window.py::ScanSessionWindow의 일부. 날짜별/도시별/고양이 찾기
-"정리하기" 실행 공통 로직(이동 확인, 워커 시작, 진행률, 완료/실패 처리)을 모았다
-— 세 화면 모두 같은 _OrganizeWorker와 organize_progress_dialog를 공유한다.
+gui/scan_session_window.py::ScanSessionWindow의 일부. 날짜별/도시별/카테고리
+찾기 "정리하기" 실행 공통 로직(이동 확인, 워커 시작, 진행률, 완료/실패 처리)을
+모았다 — 화면들 모두 같은 _OrganizeWorker와 organize_progress_dialog를 공유한다.
 
 ScanSessionWindow에 다중 상속으로만 섞이는 믹스인이라 self.xxx는 전부
 ScanSessionWindow.__init__에서 준비된 속성(organize_progress_dialog,
@@ -12,7 +12,8 @@ _organize_worker, result_screen 등)이다. 단독으로 인스턴스화하지 �
 
 from __future__ import annotations
 
-from core.date_organizer import organize_by_city, organize_by_date, organize_cat_finder_results
+from core.category_finder import CATEGORIES as CATEGORY_FINDER_DEFS
+from core.date_organizer import organize_by_city, organize_by_date, organize_category_finder_results
 from gui.common_dialogs import confirm_dialog as _confirm_dialog, info_dialog_with_folder as _info_dialog_with_folder
 from gui.common_dialogs import info_dialog as _info_dialog
 from gui.scan_session_workers import _OrganizeWorker
@@ -81,19 +82,20 @@ class OrganizeExecutionMixin:
         )
         self._start_organize_worker(run_fn, mode, output_root)
 
-    def _on_cat_finder_organize_requested(self, mode: str):
+    def _on_category_finder_organize_requested(self, screen, mode: str):
         if self._organize_worker is not None:
             return
         if not self._confirm_move_if_needed(mode):
             return
 
-        files = self.cat_finder_screen.matched_files()
-        output_root = self.cat_finder_screen.output_root()
-        run_fn = lambda progress_callback, should_cancel: organize_cat_finder_results(
-            files, mode, output_root,
+        category_label = CATEGORY_FINDER_DEFS[screen.category_id].title
+        files = screen.matched_files()
+        output_root = screen.output_root()
+        run_fn = lambda progress_callback, should_cancel: organize_category_finder_results(
+            category_label, files, mode, output_root,
             progress_callback=progress_callback, should_cancel=should_cancel,
         )
-        # 2026-09-10부터 organize_hub_screen은 어느 경로로 오든(가벼운 고양이
+        # 2026-09-10부터 organize_hub_screen은 어느 경로로 오든(가벼운 카테고리
         # 찾기든, 다른 카드로 이미 스캔했든) 항상 채워져 있으므로 완료 후
         # 기본값(그리로 돌아감)을 그대로 쓴다.
         self._start_organize_worker(run_fn, mode, output_root)
@@ -106,7 +108,7 @@ class OrganizeExecutionMixin:
             self._organize_worker.cancel()
 
     def _on_organize_failed(self, message: str):
-        """정리(날짜별/도시별/고양이) 실행이 예상 못한 오류로 끝난 경우 —
+        """정리(날짜별/도시별/카테고리 찾기) 실행이 예상 못한 오류로 끝난 경우 —
         모달 진행 팝업을 먼저 닫아야 앱이 멈춘 것처럼 보이지 않는다.
         core/date_organizer.py는 파일을 옮기기 전에 실패하면 원본을 그대로
         두므로, 여기서는 안내만 하고 허브로 돌려보낸다."""

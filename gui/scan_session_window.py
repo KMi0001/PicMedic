@@ -15,10 +15,10 @@ ScanSessionWindow.__init__이 준비한 같은 속성(stack, result_screen, ...)
 분리 전과 동일하다. 이 클래스 본체(ScanSessionWindow)에는 여러 화면이 공유하는
 뼈대(창 생성, 화면 목록, 시그널 배선, 스캔 시작/이어서 검사, 창 닫기)만 남긴다:
 - gui/scan_session_workers.py — 백그라운드 워커(QThread)와 보조 위젯
-- gui/scan_session_organize_mixin.py — 날짜별/도시별/고양이 찾기 "정리하기" 실행 공통 로직
+- gui/scan_session_organize_mixin.py — 날짜별/도시별/카테고리 찾기 "정리하기" 실행 공통 로직
 - gui/scan_session_duplicates_mixin.py — 중복/유사 사진 카드
 - gui/scan_session_date_city_mixin.py — 날짜별/도시별 정리 카드 + 그룹 상세
-- gui/scan_session_cat_finder_mixin.py — 고양이 찾기 카드
+- gui/scan_session_category_finder_mixin.py — 카테고리 찾기 카드(동물친구들/음식/스크린샷/야경/풍경)
 - gui/scan_session_detail_mixin.py — 상세보기/복구/임시휴지통
 """
 
@@ -29,6 +29,7 @@ from pathlib import Path
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QWidget, QVBoxLayout
 
+from core.category_finder import CATEGORIES as CATEGORY_FINDER_DEFS
 from gui.common_dialogs import info_dialog as _info_dialog, ProgressDialog
 from gui.scanning_screen import ScanningScreen
 from gui.result_screen import ResultScreen
@@ -44,12 +45,12 @@ from gui.organize_hub_screen import OrganizeHubScreen
 from gui.city_organize_screen import CityOrganizeScreen
 from gui.date_group_detail_screen import DateGroupDetailScreen
 from gui.trash_screen import TrashScreen
-from gui.cat_finder_screen import CatFinderScreen
+from gui.category_finder_screen import CategoryFinderScreen
 from gui.scan_session_workers import _OrganizeWorker, _LightListWorker, _CurrentOnlyStack
 from gui.scan_session_organize_mixin import OrganizeExecutionMixin
 from gui.scan_session_duplicates_mixin import DuplicatesSimilarMixin
 from gui.scan_session_date_city_mixin import DateCityOrganizeMixin
-from gui.scan_session_cat_finder_mixin import CatFinderMixin
+from gui.scan_session_category_finder_mixin import CategoryFinderMixin
 from gui.scan_session_detail_mixin import DetailRecoveryTrashMixin
 
 __all__ = ["ScanSessionWindow"]
@@ -60,7 +61,7 @@ class ScanSessionWindow(
     OrganizeExecutionMixin,
     DuplicatesSimilarMixin,
     DateCityOrganizeMixin,
-    CatFinderMixin,
+    CategoryFinderMixin,
     DetailRecoveryTrashMixin,
 ):
     """스캔 1회 = 창 1개. Qt 부모 없이 완전히 독립된 최상위 창(제목표시줄, 자체
@@ -99,9 +100,9 @@ class ScanSessionWindow(
         # gui/home_screen.py의 "정리" 카드로 시작된 세션이면(2026-09-10) 스캔을
         # 바로 돌리지 않고 정리 허브부터 보여준다 — 카드(중복/유사/날짜별/
         # 도시별) 중 하나를 실제로 고를 때만 그때 가서 전체 스캔을 시작한다
-        # (_ensure_scanned_then 참고). "고양이 찾기"는 그 스캔과 무관하게
-        # 항상 자기만의 가벼운 경로(core/scanner.py::list_image_files, 손상
-        # 검사·해시 생략)를 쓴다 — _open_cat_finder 참고.
+        # (_ensure_scanned_then 참고). 카테고리 찾기(동물친구들 등)는 그
+        # 스캔과 무관하게 항상 자기만의 가벼운 경로(core/scanner.py::
+        # list_image_files, 손상 검사·해시 생략)를 쓴다 — _open_category_finder 참고.
         self._organize_paths: list[str] | None = None  # land_on_organize일 때만 채워짐 — 카드 클릭 시 스캔에 씀
         self._pending_organize_destination = None  # 스캔이 끝나면 열 화면(콜백) — _ensure_scanned_then
         self.setWindowFlags(Qt.Window)
@@ -126,7 +127,11 @@ class ScanSessionWindow(
         self.date_organize_screen = DateOrganizeScreen()
         self.date_group_detail_screen = DateGroupDetailScreen()
         self.city_organize_screen = CityOrganizeScreen()
-        self.cat_finder_screen = CatFinderScreen()
+        # 카테고리 찾기 화면들(동물친구들/음식 사진/스크린샷/야경/풍경) —
+        # core/category_finder.py::CATEGORIES를 그대로 순회해서 만든다.
+        self.category_finder_screens = {
+            category_id: CategoryFinderScreen(category_id) for category_id in CATEGORY_FINDER_DEFS
+        }
         self.trash_screen = TrashScreen()
         # 날짜별/도시별 "정리하기" 둘 다 같은 진행률 팝업 + 워커를 공유한다
         # (동시에 하나만 실행되므로 화면별로 따로 둘 필요 없음).
@@ -134,13 +139,17 @@ class ScanSessionWindow(
         self.organize_progress_dialog.cancel_requested.connect(self._on_organize_cancel_requested)
         self._organize_worker: _OrganizeWorker | None = None
 
-        # 고양이 찾기 빠른 경로 전용 — 위 organize_progress_dialog와
+        # 카테고리 찾기 빠른 경로 전용 — 위 organize_progress_dialog와
         # 별개 인스턴스인 이유: 저쪽은 진행률(%)이 있는 결정적 작업이라 이쪽에서
         # setRange(0,0)(바쁨 표시, 전체 개수를 미리 모름)으로 바꿔두면 다음에
         # organize_progress_dialog를 쓸 때도 그 range가 남아있을 위험이 있다.
         self.light_scan_progress_dialog = ProgressDialog(self)
         self.light_scan_progress_dialog.cancel_requested.connect(self._on_light_scan_cancel_requested)
         self._light_scan_worker: _LightListWorker | None = None
+        self._pending_category_finder_id: str | None = None  # 가벼운 스캔이 끝나면 열 카테고리
+        # 가벼운 스캔 결과 — 카테고리 카드를 이것저것 눌러봐도 세션당 한 번만
+        # 스캔하도록 여기 남겨서 모든 카테고리 화면이 공유한다.
+        self._light_scan_result = None
 
         for screen in (
             self.scanning_screen,
@@ -154,7 +163,7 @@ class ScanSessionWindow(
             self.date_organize_screen,
             self.date_group_detail_screen,
             self.city_organize_screen,
-            self.cat_finder_screen,
+            *self.category_finder_screens.values(),
             self.trash_screen,
         ):
             self.stack.addWidget(screen)
@@ -194,20 +203,24 @@ class ScanSessionWindow(
         self.result_screen.rescan_requested.connect(self._go_home)
         self.result_screen.resume_requested.connect(self._on_resume_requested)
 
-        # 정리 허브 -> 결과 / 중복·유사·날짜별·도시별 각 화면
+        # 정리 허브 -> 결과 / 중복·유사·날짜별·도시별·카테고리 찾기 각 화면
         self.organize_hub_screen.back_requested.connect(self._back_from_organize_hub)
         self.organize_hub_screen.duplicates_requested.connect(self._open_duplicates)
         self.organize_hub_screen.similar_requested.connect(self._open_similar)
         self.organize_hub_screen.date_organize_requested.connect(self._open_date_organize)
         self.organize_hub_screen.city_organize_requested.connect(self._open_city_organize)
-        self.organize_hub_screen.cat_finder_requested.connect(self._open_cat_finder)
+        self.organize_hub_screen.category_finder_requested.connect(self._open_category_finder)
 
-        # 고양이 찾기 -> 정리 허브 / 상세보기(사진 미리보기) / "이 방식대로 정리하기"
-        self.cat_finder_screen.back_requested.connect(self._back_from_cat_finder)
-        self.cat_finder_screen.file_selected.connect(
-            lambda info, group: self._open_detail(info, group=group, return_to=self.cat_finder_screen)
-        )
-        self.cat_finder_screen.organize_requested.connect(self._on_cat_finder_organize_requested)
+        # 카테고리 찾기 -> 정리 허브 / 상세보기(사진 미리보기) / "이 방식대로 정리하기"
+        # — 화면이 여러 개라 클로저로 어느 화면에서 온 신호인지 붙잡아둔다.
+        for screen in self.category_finder_screens.values():
+            screen.back_requested.connect(self._back_from_category_finder)
+            screen.file_selected.connect(
+                lambda info, group, screen=screen: self._open_detail(info, group=group, return_to=screen)
+            )
+            screen.organize_requested.connect(
+                lambda mode, screen=screen: self._on_category_finder_organize_requested(screen, mode)
+            )
 
         # 중복 사진 -> 정리 허브 / 임시 휴지통 / 상세보기(사진 미리보기)
         self.duplicate_screen.back_requested.connect(self._back_from_duplicates)

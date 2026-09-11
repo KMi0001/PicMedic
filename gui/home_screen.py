@@ -385,7 +385,7 @@ class HomeScreen(QWidget):
         self.organize_card = DropActionCard(
             _organize_icon_pixmap(COLORS["primary"]),
             "정리",
-            "중복·날짜·도시·고양이 찾기로 정리해요",
+            "중복·날짜·도시·동물친구들로 정리해요",
         )
         self.organize_card.paths_dropped.connect(self._on_organize_paths_chosen)
         self.organize_card.clicked.connect(

@@ -41,6 +41,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from core.category_finder import CATEGORIES as CATEGORY_FINDER_DEFS
 from gui.image_viewer import ImageViewer
 from gui.theme import COLORS
 from models.scan_result import ScanResult
@@ -123,7 +124,7 @@ class OrganizeHubScreen(QWidget):
     similar_requested = Signal()
     date_organize_requested = Signal()
     city_organize_requested = Signal()
-    cat_finder_requested = Signal()
+    category_finder_requested = Signal(str)  # category_id — core/category_finder.py::CATEGORIES 키
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -254,33 +255,41 @@ class OrganizeHubScreen(QWidget):
         outer.addWidget(self.list_stack, stretch=1)
 
         self.duplicates_card = self._build_card(
-            "중복 파일", "완전히 똑같은 사진을 찾아요.", self.duplicates_requested
+            "중복 파일", "완전히 똑같은 사진을 찾아요.", self.duplicates_requested.emit
         )
         self.similar_card = self._build_card(
-            "유사 사진", "리사이즈·재저장으로 약간 다른, 비슷한 사진을 찾아요.", self.similar_requested
+            "유사 사진", "리사이즈·재저장으로 약간 다른, 비슷한 사진을 찾아요.", self.similar_requested.emit
         )
         self.date_card = self._build_card(
-            "날짜별", "촬영일 기준으로 묶어서 폴더 정리 미리보기를 보여줘요.", self.date_organize_requested
+            "날짜별", "촬영일 기준으로 묶어서 폴더 정리 미리보기를 보여줘요.", self.date_organize_requested.emit
         )
         self.city_card = self._build_card(
-            "도시별", "GPS 위치가 있는 사진을 지도에서 도시별로 훑어봐요.", self.city_organize_requested
+            "도시별", "GPS 위치가 있는 사진을 지도에서 도시별로 훑어봐요.", self.city_organize_requested.emit
         )
-        self.cat_finder_card = self._build_card(
-            "고양이 찾기",
-            "AI로 고양이가 나온 사진을 찾아 모아 보여줘요. (찾는 시간이 필요해요~)",
-            self.cat_finder_requested,
-        )
+
+        # 카테고리 찾기 카드(동물친구들/음식 사진/스크린샷/야경/풍경) —
+        # core/category_finder.py::CATEGORIES를 그대로 순회해서 만든다.
+        # 카테고리를 추가/삭제하면 여기 카드도 자동으로 늘고 준다(2026-09-11,
+        # 사용자 요청 — 카테고리 5개를 하나하나 복붙하지 않기 위함).
+        self.category_finder_cards: dict[str, _ClickableCard] = {}
+        for category_id, category in CATEGORY_FINDER_DEFS.items():
+            card = self._build_card(
+                category.title,
+                category.card_description,
+                lambda cid=category_id: self.category_finder_requested.emit(cid),
+            )
+            self.category_finder_cards[category_id] = card
 
         # 세로로 쭉 나열하는 대신 3열 타일로(2026-09-10, 폭이 1080으로 넓어지며
         # 2열보다 3열이 더 꽉 차 보임) — 카드 하나가 창 끝까지 늘어나 텅 비어
         # 보이는 것보다, 짧은 설명 문구엔 이 정도 폭이 더 맞는다.
         cards_grid = QGridLayout()
         cards_grid.setSpacing(14)
-        cards_grid.addWidget(self.duplicates_card, 0, 0)
-        cards_grid.addWidget(self.similar_card, 0, 1)
-        cards_grid.addWidget(self.date_card, 0, 2)
-        cards_grid.addWidget(self.city_card, 1, 0)
-        cards_grid.addWidget(self.cat_finder_card, 1, 1)
+        all_cards = [self.duplicates_card, self.similar_card, self.date_card, self.city_card] + list(
+            self.category_finder_cards.values()
+        )
+        for idx, card in enumerate(all_cards):
+            cards_grid.addWidget(card, idx // 3, idx % 3)
         outer.addLayout(cards_grid)
 
     def showEvent(self, event) -> None:
@@ -365,9 +374,9 @@ class OrganizeHubScreen(QWidget):
         else:
             self.inline_viewer.set_pixmap(None)
 
-    def _build_card(self, title: str, description: str, signal) -> _ClickableCard:
+    def _build_card(self, title: str, description: str, on_click) -> _ClickableCard:
         card = _ClickableCard()
-        card.clicked.connect(signal.emit)
+        card.clicked.connect(on_click)
         layout = QHBoxLayout(card)
         layout.setContentsMargins(20, 16, 20, 16)
         layout.setSpacing(12)

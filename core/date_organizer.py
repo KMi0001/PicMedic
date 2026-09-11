@@ -200,20 +200,22 @@ def organize_by_city(
     return _run_organize(groups, mode, dest_dir_for, progress_callback, should_cancel)
 
 
-def organize_cat_finder_results(
+def organize_category_finder_results(
+    category_label: str,
     files: list[FileInfo],
     mode: str,  # "copy" | "move"
     output_root: str | Path,
     progress_callback: Optional[Callable[[int, int, str], None]] = None,
     should_cancel: Optional[Callable[[], bool]] = None,
 ) -> list[OrganizeOutcome]:
-    """gui/cat_finder_screen.py("고양이 찾기")에서 찾은 사진들을 output_root
-    폴더 하나로 복사/이동한다(2026-09-10, 사용자 요청 — 날짜별/도시별처럼
-    "이 방식대로 정리하기" 추가). 날짜별/도시별과 달리 그룹으로 더 나누지
-    않는다 — 찾은 사진 전부가 이미 "고양이가 있다"는 하나의 기준으로
-    걸러진 결과라 하위 폴더가 필요 없다."""
+    """gui/category_finder_screen.py(동물친구들/음식 사진/스크린샷/야경/풍경)에서
+    찾은 사진들을 output_root 폴더 하나로 복사/이동한다(2026-09-10, 사용자
+    요청 — 날짜별/도시별처럼 "이 방식대로 정리하기" 추가. 2026-09-11부터
+    카테고리가 여러 개라 어느 카테고리에서 찾은 결과인지 category_label로
+    받는다). 날짜별/도시별과 달리 그룹으로 더 나누지 않는다 — 찾은 사진
+    전부가 이미 하나의 기준으로 걸러진 결과라 하위 폴더가 필요 없다."""
     output_root = Path(output_root)
-    groups = [("고양이 찾기", files)]
+    groups = [(category_label, files)]
 
     def dest_dir_for(label: str, files: list[FileInfo]) -> Path:
         return output_root

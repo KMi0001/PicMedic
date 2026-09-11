@@ -232,8 +232,8 @@ def list_image_files(
     """core/analyzer.py의 무거운 분석(파일 전체 SHA-256 해시 + 이미지 디코딩
     + 퍼셉추얼 해시/EXIF)을 생략하고 파일 목록만 가볍게 모은다.
 
-    2026-09-10, 사용자 요청 — 사진 3만 장 규모에서 "정리 > 고양이 찾기"가
-    "검사"와 똑같이 느렸던 문제. core/cat_finder.py(CLIP)는 원본 이미지를
+    2026-09-10, 사용자 요청 — 사진 3만 장 규모에서 "정리 > 동물친구들"이
+    "검사"와 똑같이 느렸던 문제. core/category_finder.py(CLIP)는 원본 이미지를
     직접 읽으므로 손상 검사·해시가 전혀 필요 없어서, 이 함수로 만든
     가벼운 ScanResult를 바로 넘기면 된다 — 대신 FileInfo의 status/width/
     height/EXIF 등은 채워지지 않는다(gui/organize_hub_screen.py의 중복·

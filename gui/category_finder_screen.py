@@ -1,26 +1,33 @@
 """
-gui/cat_finder_screen.py
+gui/category_finder_screen.py
 
-Phase 2 "사진 정리" — "고양이 찾기". 검사된 사진 중 고양이가 나온 사진만
-core/cat_finder.py(CLIP zero-shot 분류)로 골라서 표로 보여준다. 지우거나
-옮기는 정리 기능이 아니라 "찾아서 보여주기"만 하는 화면이라 gui/duplicate_
-screen.py·similar_screen.py와 달리 체크박스/라디오가 없다 — 행을 눌러(또는
-우클릭 미리보기로) 사진을 확인하는 것만 지원한다. 표 컬럼 구성(파일명(로컬
-주소)/우클릭 메뉴)은 gui/duplicate_screen.py의 통일된 표 스타일을 따른다.
+Phase 2 "사진 정리" — 카테고리별 "찾기" 화면 공용 컴포넌트("동물친구들",
+"음식 사진", "스크린샷/문서", "야경 사진", "풍경 사진"). core/category_finder.py의
+CategoryDef(제목/안내문구/CLIP 프롬프트)로 파라미터화해서 카테고리마다 화면을
+따로 만들지 않고 이 클래스 하나를 category_id로 여러 번 인스턴스화한다
+(2026-09-11, 사용자 요청 — "동물친구들"만 있던 gui/cat_finder_screen.py를
+카테고리 4개 더 추가하면서 이 파일로 일반화함).
+
+지우거나 옮기는 정리 기능이 아니라 "찾아서 보여주기"만 하는 화면이라
+gui/duplicate_screen.py·similar_screen.py와 달리 체크박스/라디오가 없다 —
+행을 눌러(또는 우클릭 미리보기로) 사진을 확인하는 것만 지원한다. 표 컬럼
+구성(파일명(로컬주소)/우클릭 메뉴)은 gui/duplicate_screen.py의 통일된 표
+스타일을 따른다.
 
 CLIP 분류는 정답이 아니라 추정이라 오탐/누락이 있을 수 있음을 화면에 안내
 문구로 명시한다(core/photo_category.py의 카테고리 판단과 같은 성격).
 
 계산(사진마다 CLIP 추론)이 사진 수에 비례해 오래 걸릴 수 있어(GPU 없는
 기기는 특히) 백그라운드 스레드에서 돌리고 진행률 팝업을 보여준다
-(gui/similar_screen.py와 같은 패턴).
+(gui/similar_screen.py와 같은 패턴). 이미 다른 카테고리 화면이 같은 사진을
+본 적 있으면 core/image_embedding_cache.py 캐시 덕분에 그만큼 빨라진다.
 
-2026-09-10, 사용자 요청으로 gui/date_organize_screen.py·city_organize_screen.py
-와 같은 "이 방식대로 정리하기"(복사/이동 + 저장 위치 + 실행 버튼)를 추가했다.
-날짜별/도시별과 달리 찾은 사진을 그룹으로 더 나누지 않고 폴더 하나로
-모은다(core/date_organizer.py::organize_cat_finder_results) — 실제 복사/
-이동은 gui/scan_session_window.py가 실행한다(뷰어와 실행의 분리 원칙은
-동일).
+"이 방식대로 정리하기"(복사/이동 + 저장 위치 + 실행 버튼, 2026-09-10)는
+gui/date_organize_screen.py·city_organize_screen.py와 같은 위젯 구성/문구를
+따른다. 날짜별/도시별과 달리 찾은 사진을 그룹으로 더 나누지 않고 폴더
+하나로 모은다(core/date_organizer.py::organize_category_finder_results) —
+실제 복사/이동은 gui/scan_session_window.py가 실행한다(뷰어와 실행의 분리
+원칙은 동일).
 """
 
 from __future__ import annotations
@@ -47,7 +54,7 @@ from PySide6.QtWidgets import (
     QAbstractItemView,
 )
 
-from core.cat_finder import detect_cat, is_available
+from core.category_finder import CATEGORIES, detect, is_available
 from gui.common_dialogs import info_dialog, ProgressDialog
 from gui.result_screen import SummaryChip
 from gui.theme import COLORS
@@ -55,10 +62,11 @@ from gui.theme import COLORS
 CONFIDENCE_COLUMN_WIDTH = 90
 
 
-def _cat_icon_pixmap(color: str, size: int = 26) -> QPixmap:
-    """페이지 제목 아이콘 — 삼각형 귀 두 개 + 얼굴 원으로 고양이를 표현.
-    gui/similar_screen.py::_similar_icon_pixmap과 같은 아웃라인 스트로크
-    스타일."""
+def _finder_icon_pixmap(color: str, size: int = 26) -> QPixmap:
+    """페이지 제목 아이콘 — 돋보기(원 + 손잡이)로 "AI가 찾아준다"는 걸
+    표현한다. 카테고리마다 다른 아이콘을 새로 그리는 대신 이 화면 공통
+    아이콘 하나를 쓴다(gui/similar_screen.py::_similar_icon_pixmap과 같은
+    아웃라인 스트로크 스타일)."""
     scale = size / 24.0
     pixmap = QPixmap(size, size)
     pixmap.fill(Qt.transparent)
@@ -66,36 +74,29 @@ def _cat_icon_pixmap(color: str, size: int = 26) -> QPixmap:
     painter.setRenderHint(QPainter.Antialiasing)
     pen = QPen(QColor(color))
     pen.setWidthF(1.8 * scale)
+    pen.setCapStyle(Qt.RoundCap)
     pen.setJoinStyle(Qt.RoundJoin)
     painter.setPen(pen)
     painter.setBrush(Qt.NoBrush)
 
-    def r(x, y, w, h):
-        return QRectF(x * scale, y * scale, w * scale, h * scale)
-
-    painter.drawEllipse(r(4, 8, 16, 13))
-    ear_left = [
-        (5 * scale, 10 * scale), (3 * scale, 3 * scale), (9.5 * scale, 8 * scale),
-    ]
-    ear_right = [
-        (19 * scale, 10 * scale), (21 * scale, 3 * scale), (14.5 * scale, 8 * scale),
-    ]
-    painter.drawPolyline([QPointF(*p) for p in ear_left])
-    painter.drawPolyline([QPointF(*p) for p in ear_right])
+    painter.drawEllipse(QRectF(3 * scale, 3 * scale, 12 * scale, 12 * scale))
+    painter.drawLine(QPointF(12.5 * scale, 12.5 * scale), QPointF(20 * scale, 20 * scale))
     painter.end()
     return pixmap
 
 
-class _CatFinderWorker(QThread):
-    """readable한 사진마다 core/cat_finder.py::detect_cat()을 돌려 고양이가
-    있는 사진만 골라낸다. CLIP 추론(특히 CPU) 자체가 사진 한 장에도 수백ms~
-    수 초 걸릴 수 있어(core/photo_category.py 실측 참고) 반드시 백그라운드에서."""
+class _CategoryFinderWorker(QThread):
+    """readable한 사진마다 core/category_finder.py::detect()를 돌려 이
+    카테고리에 맞는 사진만 골라낸다. CLIP 추론(특히 CPU) 자체가 사진 한
+    장에도 수백ms~수 초 걸릴 수 있어(core/photo_category.py 실측 참고)
+    반드시 백그라운드에서."""
 
     progress = Signal(int, int)
     finished_batch = Signal(list)  # list[tuple[FileInfo, float]]
 
-    def __init__(self, files: list, parent=None):
+    def __init__(self, category_id: str, files: list, parent=None):
         super().__init__(parent)
+        self._category_id = category_id
         self._files = files
         self._cancel_requested = False
 
@@ -110,28 +111,32 @@ class _CatFinderWorker(QThread):
             if self._cancel_requested:
                 break
             try:
-                result = detect_cat(info.path)
+                result = detect(self._category_id, info.path)
             except Exception:
                 result = None
-            if result is not None and result.is_cat:
+            if result is not None and result.matched:
                 matches.append((info, result.confidence))
             self.progress.emit(idx, total)
         matches.sort(key=lambda pair: pair[1], reverse=True)
         self.finished_batch.emit(matches)
 
 
-class CatFinderScreen(QWidget):
-    """"정리" 허브의 "고양이 찾기" 카드로 들어오는 화면. 같은 스캔 세션
-    (gui/scan_session_window.py) 안에서만 쓰인다."""
+class CategoryFinderScreen(QWidget):
+    """"정리" 허브의 카테고리 카드(동물친구들/음식 사진/스크린샷/야경/풍경)로
+    들어오는 화면 — category_id로 core/category_finder.CATEGORIES에서 제목·
+    안내문구·프롬프트를 가져온다. 같은 스캔 세션(gui/scan_session_window.py)
+    안에서만 쓰인다."""
 
     back_requested = Signal()
     file_selected = Signal(object, list)  # gui/duplicate_screen.py와 같은 (FileInfo, group) 규약
     organize_requested = Signal(str)  # "copy" | "move" — "이 방식대로 정리하기" 클릭 시점의 방식
 
-    def __init__(self, parent=None):
+    def __init__(self, category_id: str, parent=None):
         super().__init__(parent)
+        self.category_id = category_id
+        self._category = CATEGORIES[category_id]
         self._matches: list = []  # list[tuple[FileInfo, float]]
-        self._worker: _CatFinderWorker | None = None
+        self._worker: _CategoryFinderWorker | None = None
         self._output_root: str = ""
 
         # gui/similar_screen.py·duplicate_screen.py와 같은 "가운데 정렬 +
@@ -154,9 +159,9 @@ class CatFinderScreen(QWidget):
         title_row = QHBoxLayout()
         title_row.setSpacing(10)
         title_icon = QLabel()
-        title_icon.setPixmap(_cat_icon_pixmap(COLORS["primary"]))
+        title_icon.setPixmap(_finder_icon_pixmap(COLORS["primary"]))
         title_row.addWidget(title_icon)
-        title = QLabel("고양이 찾기")
+        title = QLabel(self._category.title)
         title.setObjectName("Title")
         title_row.addWidget(title)
         title_row.addStretch(1)
@@ -172,15 +177,12 @@ class CatFinderScreen(QWidget):
         chips_row.addStretch(1)
         outer.addLayout(chips_row)
 
-        hint = QLabel(
-            "사진 속 내용을 AI로 추정해서 고양이가 나온 사진을 찾아요 — 100% 정확하지는 않아서 "
-            "놓치거나 잘못 찾은 사진이 있을 수 있어요. 행을 우클릭하면 미리보기/폴더 열기를 할 수 있어요."
-        )
+        hint = QLabel(self._category.hint_text)
         hint.setWordWrap(True)
         hint.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 12px;")
         outer.addWidget(hint)
 
-        self.empty_label = QLabel("고양이가 나온 사진을 찾지 못했어요.")
+        self.empty_label = QLabel(self._category.empty_text)
         self.empty_label.setStyleSheet(f"color: {COLORS['text_secondary']}; padding: 24px;")
         self.empty_label.setAlignment(Qt.AlignCenter)
         outer.addWidget(self.empty_label)
@@ -254,7 +256,8 @@ class CatFinderScreen(QWidget):
         self._progress_dialog.cancel_requested.connect(self._on_cancel_requested)
 
     def set_result(self, result) -> None:
-        """검사 결과를 받아 백그라운드로 고양이 사진을 찾고 화면을 새로 그린다."""
+        """검사 결과를 받아 백그라운드로 이 카테고리 사진을 찾고 화면을 새로
+        그린다."""
         if self._worker is not None:
             return
 
@@ -262,17 +265,17 @@ class CatFinderScreen(QWidget):
             self._render_matches([])
             info_dialog(
                 self,
-                "고양이 찾기에 필요한 AI 모델 파일이 아직 준비되지 않았어요. "
+                f"{self._category.title}에 필요한 AI 모델 파일이 아직 준비되지 않았어요. "
                 "'사진 진단'의 카테고리 판단 기능과 같은 자산을 씁니다.",
             )
             return
 
         files = list(result.files) if result else []
-        self._worker = _CatFinderWorker(files, self)
+        self._worker = _CategoryFinderWorker(self.category_id, files, self)
         self._worker.progress.connect(self._on_progress)
         self._worker.finished_batch.connect(self._on_finished)
 
-        self._progress_dialog.start("고양이 찾는 중")
+        self._progress_dialog.start(self._category.searching_label)
         self._worker.start()
         self._progress_dialog.exec()
 
@@ -300,7 +303,8 @@ class CatFinderScreen(QWidget):
 
     def matched_files(self) -> list:
         """"이 방식대로 정리하기" 실행 대상 — gui/scan_session_window.py가
-        core/date_organizer.py::organize_cat_finder_results()에 그대로 넘긴다."""
+        core/date_organizer.py::organize_category_finder_results()에 그대로
+        넘긴다."""
         return self._all_files()
 
     def _render_matches(self, matches: list) -> None:

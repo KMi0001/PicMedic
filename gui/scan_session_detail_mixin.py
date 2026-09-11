@@ -2,7 +2,7 @@
 gui/scan_session_detail_mixin.py
 
 gui/scan_session_window.py::ScanSessionWindow의 일부. 상세보기 / 복구 /
-임시휴지통 전환 로직 — 어느 목록 화면(검사 결과, 중복, 유사, 고양이 찾기)에서
+임시휴지통 전환 로직 — 어느 목록 화면(검사 결과, 중복, 유사, 카테고리 찾기)에서
 열렸는지에 따라 뒤로가기 대상이 달라지는 세 화면을 묶었다.
 
 ScanSessionWindow에 다중 상속으로만 섞이는 믹스인이라 self.xxx는
@@ -22,7 +22,7 @@ class DetailRecoveryTrashMixin:
         # 복구/변환/화질 개선 같은 편집 액션은 감춘다(gui/detail_screen.py::
         # set_review_only 참고) — gui/date_group_detail_screen.py와 같은 원칙.
         self.detail_screen.set_review_only(
-            return_to in (self.duplicate_screen, self.similar_screen, self.cat_finder_screen)
+            return_to in (self.duplicate_screen, self.similar_screen, *self.category_finder_screens.values())
         )
         # group을 주면(중복/유사 화면의 표에서 열었을 때) 상세 화면에서
         # 방향키로 같은 그룹의 다음/이전 사진을 넘나들 수 있다(2026-09-08,
