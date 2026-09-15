@@ -12,45 +12,35 @@ hiddenimports = []
 tmp_ret = collect_all('pillow_heif')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 
-# core/face_restorer.py ("얼굴 복원") 의존성 — basicsr/RestoreFormer는
-# vendor/에서 오는 순수 파이썬이라 pathex만 있으면 되고, 나머지는 pip 패키지.
-# open_clip_torch는 core/photo_category.py("사진 진단"의 카테고리 판단)용.
 # core/geocoder.py("도시별 정리")용 도시 좌표 데이터(assets/geonames_cities1000.csv)는
 # 위 datas의 'assets' 통째 포함에 이미 실리므로 별도 collect_all이 필요 없다
 # (2026-09-11, reverse_geocoder 패키지 제거 후 — scipy는 PyInstaller 기본
 # 훅으로 자동 처리돼 이 목록에 없어도 된다).
-for pkg in ('torch', 'torchvision', 'facexlib', 'open_clip'):
-    tmp_ret = collect_all(pkg)
-    datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
+#
+# 2026-09-13: torch/torchvision/facexlib/open_clip_torch를 전부 뺐다 —
+# 화질개선/얼굴복원/디블러/디노이즈 제거로 facexlib(얼굴 탐지) 소비자가
+# core/quality_diagnosis.py 하나만 남았었는데, "얼굴이 있어서 흐림" 문구
+# 하나 보여주자고 torch+facexlib(약 590MB)를 유지할 이유가 없다고 판단해
+# 그 탐지 로직 자체를 없앴다. AI 카테고리(사진 진단 카테고리 판단·카테고리
+# 찾기)는 같은 날 ONNX Runtime + 사전 계산된 텍스트 임베딩으로 이미 바뀌어서
+# open_clip_torch도 필요 없었다. 이제 이 앱은 torch를 전혀 쓰지 않는다.
+
+# onnxruntime은 AI 카테고리(CLIP 비전 인코더) 추론용(2026-09-13) — hidden import
+# 없이도 PyInstaller가 대체로 잘 잡아내지만, C 확장 모듈이라 collect_all로 확실히.
+tmp_ret = collect_all('onnxruntime')
+datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 
 
 a = Analysis(
     ['main.py'],
-    pathex=['vendor/basicsr_min', 'vendor/restoreformer'],
+    pathex=[],
     binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    # facexlib는 collect_all()로 전체를 긁어오는데, facexlib/__init__.py가
-    # facexlib.tracking(동영상 얼굴 추적용 — 우리는 얼굴 탐지/복원만 쓰고
-    # 트래킹은 쓰지 않음)까지 통째로 끌고 온다. 실제로 core/face_restorer.py,
-    # core/quality_diagnosis.py는 facexlib.detection / facexlib.utils만
-    # import하고 facexlib.tracking은 어디서도 import하지 않음(2026-09-11 확인,
-    # 런타임 테스트로 facexlib.tracking.kalman_tracker/data_association이
-    # 로드되지 않음을 검증). 이 트래킹 서브모듈들이 filterpy(->matplotlib),
-    # numba(->llvmlite)를 끌어와 패키지 용량이 145MB 불어난다.
-    excludes=[
-        'facexlib.tracking.kalman_tracker',
-        'facexlib.tracking.data_association',
-        'facexlib.tracking.sort',
-        'filterpy',
-        'numba',
-        'llvmlite',
-        'matplotlib',
-        'pandas',
-    ],
+    excludes=[],
     noarchive=False,
     optimize=0,
 )
@@ -65,7 +55,7 @@ exe = EXE(
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=False,  # torch/CUDA DLL은 UPX 압축 시 로딩 실패·백신 오탐 사례가 많고, macOS는 코드서명/공증과 충돌한다 (2026-09-11 리뷰)
+    upx=False,  # 네이티브 DLL(onnxruntime 등)은 UPX 압축 시 로딩 실패·백신 오탐 사례가 많고, macOS는 코드서명/공증과 충돌한다 (2026-09-11 리뷰)
     upx_exclude=[],
     runtime_tmpdir=None,
     console=False,
@@ -82,7 +72,7 @@ coll = COLLECT(
     a.binaries,
     a.datas,
     strip=False,
-    upx=False,  # torch/CUDA DLL은 UPX 압축 시 로딩 실패·백신 오탐 사례가 많고, macOS는 코드서명/공증과 충돌한다 (2026-09-11 리뷰)
+    upx=False,  # 네이티브 DLL(onnxruntime 등)은 UPX 압축 시 로딩 실패·백신 오탐 사례가 많고, macOS는 코드서명/공증과 충돌한다 (2026-09-11 리뷰)
     upx_exclude=[],
     name='PicMedic',
 )

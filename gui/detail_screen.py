@@ -21,7 +21,6 @@ from PySide6.QtWidgets import (
 
 from core.converter import RecoveryMode
 from gui.image_viewer import ImageViewer
-from gui.quality_diagnosis_dialog import run_quality_diagnosis
 from gui.theme import COLORS, STATUS_COLORS
 from models.file_info import FileInfo, FileStatus
 from utils.file_utils import format_file_size
@@ -108,13 +107,6 @@ class DetailScreen(QWidget):
         # 줄바꿈이 들쭉날쭉해진다 — 세로로 쌓아서 패널 폭에 상관없이 안정적으로 맞춘다.
         btn_col = QVBoxLayout()
         btn_col.setSpacing(8)
-        self.diagnose_btn = QPushButton("사진 진단")
-        self.diagnose_btn.setToolTip(
-            "블러/노이즈/얼굴 흐림 등을 실제로 분석해서\n"
-            "어떤 복원 기능이 맞는지 추천합니다."
-        )
-        self.diagnose_btn.clicked.connect(self._on_diagnose_clicked)
-        btn_col.addWidget(self.diagnose_btn)
         self.restore_btn = QPushButton("실제 형식으로 복구")
         self.restore_btn.clicked.connect(self._on_restore_clicked)
         btn_col.addWidget(self.restore_btn)
@@ -178,11 +170,6 @@ class DetailScreen(QWidget):
         recoverable = info.status in (FileStatus.MISMATCH, FileStatus.PARTIAL_CORRUPTION)
         # "복구"는 문제가 있는 파일에만 의미가 있으므로 그런 파일에서만 보여준다.
         # (review_only면 어떤 상태든 액션 자체를 감춘다 — set_review_only() 참고.)
-        # "사진 진단"은 is_available() 게이팅 없음 — Pillow 부분은 항상 되고,
-        # 얼굴 탐지 부분만 facexlib 자산 여부에 따라 결과에서 조용히 생략된다
-        # (core/quality_diagnosis.py::detect_faces).
-        self.diagnose_btn.setVisible(not self._review_only)
-        self.diagnose_btn.setEnabled(info.readable)
         self.restore_btn.setVisible(recoverable and not self._review_only)
         self.restore_btn.setEnabled(recoverable and bool(info.detected_format))
         # "변환"은 복구와 무관하게, 디코딩만 된다면(readable) 정상 파일도 다른 형식으로
@@ -249,9 +236,3 @@ class DetailScreen(QWidget):
     def _on_convert_clicked(self):
         if self.current_info:
             self.recover_requested.emit([self.current_info], RecoveryMode.CONVERT)
-
-    def _on_diagnose_clicked(self):
-        info = self.current_info
-        if not info:
-            return
-        run_quality_diagnosis(self, info.path, info.width, info.height)

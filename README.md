@@ -80,10 +80,13 @@ Qt 위젯을 만드는 테스트가 있어서, 화면이 없는 환경(CI 등)�
 **Windows + macOS 양쪽에서** 위 명령을 돌립니다. macOS에서만 재현됐던 버그(심볼릭
 링크 순환 스캔)가 있었던 만큼 한쪽만 돌리지 않습니다.
 
-`test_ai_restoration.py`·`test_photo_category.py`는 화질 개선/얼굴 복원/디블러/
-디노이즈/사진 진단 카테고리 판단이 쓰는 모델 자산(`scripts/fetch_*_assets.py`로
-받음, 수백MB~1GB)이 없으면 실제 실행 검증만 [SKIP]으로 건너뜁니다(순수 로직
-검증은 자산 없이도 항상 통과해야 함).
+`test_photo_category.py`는 AI 카테고리 판단이 쓰는 모델 자산
+(`scripts/fetch_photo_category_assets.py` + `scripts/export_clip_onnx_assets.py`로
+받음, 수백MB)이 없으면 실제 실행 검증만 [SKIP]으로 건너뜁니다(순수 로직
+검증은 자산 없이도 항상 통과해야 함). 화질 개선/얼굴 복원/디블러/디노이즈,
+사진 진단의 얼굴 탐지는 2026-09-13에 제거되어 관련 테스트(`test_ai_restoration.py`)도
+함께 없앴습니다 — `test_quality_diagnosis.py`는 이제 순수 Pillow 로직이라
+자산 유무와 무관하게 항상 전부 실행됩니다.
 
 ## 사용 흐름
 
@@ -118,25 +121,9 @@ pyinstaller --noconfirm --windowed --onefile --name PicMedic --icon assets/icon.
   저장소의 `logs/`를 씁니다.
 - 기본 복구 저장 위치는 원본 사진이 있는 폴더 옆 `Recovered/`입니다(실행 파일 위치와 무관)
 - 두 번째 빌드부터는 `PicMedic.spec`이 위 설정을 기억하고 있어 `pyinstaller PicMedic.spec`만 실행해도 됩니다
-- ⚠️ **배포 빌드는 CPU 전용 torch로 합니다 — CUDA 빌드 torch를 설치한 채로 빌드하지 마세요.**
-  빌드에는 "그 환경에 설치돼 있는" torch가 그대로 담기는데, CUDA 빌드는 NVIDIA
-  런타임 DLL(`torch_cuda.dll` 1,060MB, `cublasLt` 531MB, `cudnn` 513MB …)까지 통째로
-  들어가 **패키지가 5,659MB가 됩니다**(2026-09-11 실측). CPU 전용이면 약 2GB입니다.
-  얻는 이득에 비해 3.5GB는 너무 비싸다고 판단해 CPU로 확정했습니다 —
-  RESTORATION_QUALITY_PLAN.md 5-1·5-9 참고.
-  ```bash
-  pip install torch==<버전>+cpu torchvision==<버전>+cpu --index-url https://download.pytorch.org/whl/cpu --force-reinstall --no-deps
-  ```
-  빌드 전에 확인:
-  ```bash
-  python -c "import torch; print(torch.__version__, torch.cuda.is_available())"
-  ```
-  `+cpu ... False`가 나와야 합니다. `+cuXXX ... True`가 나오면 그 상태로 빌드했을 때
-  5GB 넘는 결과물이 나옵니다.
-  - GPU 가속 자체는 코드에서 없앤 게 아닙니다. [core/torch_device.py](core/torch_device.py)가
-    CUDA → MPS → CPU 순으로 자동 감지하므로, **CUDA torch를 깐 환경에서는 개발 중에
-    그대로 GPU를 씁니다**(macOS Apple Silicon의 MPS는 추가 용량 없이 계속 동작).
-    바뀐 건 "배포 빌드에 CUDA 런타임을 넣지 않는다" 하나뿐입니다.
+- 2026-09-13에 torch를 완전히 뺐습니다(AI 카테고리는 ONNX Runtime, 얼굴 탐지는
+  기능째로 제거) — 예전엔 CUDA 빌드 torch가 섞여 들어가면 5.7GB까지 불어나서
+  CPU 전용 torch를 강제해야 했는데, 이제 torch 자체가 없어서 그 걱정이 없습니다.
 - 재빌드 전 이전 산출물을 지우려면: `rm -rf build dist`
 
 ## .app 빌드 (macOS 배포용)
@@ -157,12 +144,13 @@ pyinstaller --noconfirm PicMedic-mac.spec
 
 `.github/workflows/build-macos.yml`이 `main`·`claude/**` 브랜치 푸시 시 GitHub의 macOS 러너에서 자동으로 `.app`을 빌드해 Actions 아티팩트(`PicMedic-macOS`)로 올려줍니다. Actions 탭 → 해당 워크플로우 실행 → Artifacts에서 zip을 내려받아 압축 해제 후 실행하면 됩니다. 필요시 "Run workflow" 버튼으로 수동 실행도 가능합니다.
 
-- 이 워크플로는 빌드 전에 **테스트를 먼저 돌리고**, AI 모델 자산(`scripts/fetch_*_assets.py`)도
-  받아서 번들에 넣습니다. 2026-09-11 이전에는 자산을 하나도 안 받아서, 여기서 나온 `.app`은
-  AI 기능이 통째로 빠진 물건이었습니다.
-- 다만 **화질 개선(Real-ESRGAN)은 여전히 빠집니다** — macOS용 바이너리가 아직 없습니다
-  (RESTORATION_QUALITY_PLAN.md P2). 디블러/디노이즈 자산은 Google Drive에서 받아오는지라
-  CI에서 실패할 수 있고, 그 경우 그 기능만 빠진 채 빌드가 계속됩니다.
+- 이 워크플로는 빌드 전에 **테스트를 먼저 돌리고**, AI 모델 자산(CLIP)도 받아서
+  번들에 넣습니다. 2026-09-11 이전에는 자산을 하나도 안 받아서, 여기서 나온
+  `.app`은 AI 기능이 통째로 빠진 물건이었습니다.
+- 2026-09-13에 화질 개선(Real-ESRGAN)/얼굴 복원/디블러/디노이즈 4개 기능과,
+  뒤이어 사진 진단의 얼굴 탐지(facexlib)까지 제거해서, 이제 남은 AI 자산은
+  AI 카테고리용 CLIP(ONNX, OpenAI 공식 CDN에서 직접 받음) 하나뿐입니다 —
+  torch 자체가 빌드에서 완전히 빠졌습니다.
 - **아티팩트 안의 `BUILD_INFO.txt`에 어떤 AI 기능이 실제로 들어갔는지 기록됩니다** — 받은 `.app`에서
   기능이 안 보이면 먼저 이 파일을 확인하세요.
 

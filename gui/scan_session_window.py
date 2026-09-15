@@ -41,12 +41,11 @@ from gui.recovery_result_screen import RecoveryResultScreen
 from gui.duplicate_screen import DuplicateScreen
 from gui.similar_screen import SimilarScreen
 from gui.date_organize_screen import DateOrganizeScreen
-from gui.organize_hub_screen import OrganizeHubScreen
 from gui.city_organize_screen import CityOrganizeScreen
 from gui.date_group_detail_screen import DateGroupDetailScreen
 from gui.trash_screen import TrashScreen
 from gui.category_finder_screen import CategoryFinderScreen
-from gui.scan_session_workers import _OrganizeWorker, _LightListWorker, _CurrentOnlyStack
+from gui.scan_session_workers import _OrganizeWorker, _CurrentOnlyStack
 from gui.scan_session_organize_mixin import OrganizeExecutionMixin
 from gui.scan_session_duplicates_mixin import DuplicatesSimilarMixin
 from gui.scan_session_date_city_mixin import DateCityOrganizeMixin
@@ -94,17 +93,13 @@ class ScanSessionWindow(
         self,
         paths: list[str],
         parent=None,
-        land_on_organize: bool = False,
     ):
         super().__init__(parent)
-        # gui/home_screen.py의 "정리" 카드로 시작된 세션이면(2026-09-10) 스캔을
-        # 바로 돌리지 않고 정리 허브부터 보여준다 — 카드(중복/유사/날짜별/
-        # 도시별) 중 하나를 실제로 고를 때만 그때 가서 전체 스캔을 시작한다
-        # (_ensure_scanned_then 참고). 카테고리 찾기(동물친구들 등)는 그
-        # 스캔과 무관하게 항상 자기만의 가벼운 경로(core/scanner.py::
-        # list_image_files, 손상 검사·해시 생략)를 쓴다 — _open_category_finder 참고.
-        self._organize_paths: list[str] | None = None  # land_on_organize일 때만 채워짐 — 카드 클릭 시 스캔에 씀
-        self._pending_organize_destination = None  # 스캔이 끝나면 열 화면(콜백) — _ensure_scanned_then
+        # 2026-09-13: gui/home_screen.py의 "검사"와 "정리" 카드를 하나로 합치면서
+        # (사용자 요청) 예전에 여기 있던 "정리 카드는 스캔 없이 곧장 허브부터
+        # 보여주고, 카드를 실제로 골라야 그때 전체 스캔을 시작한다"는 지연 스캔
+        # 분기가 없어졌다 — 이제 파일/폴더를 고르면 항상 바로 전체 스캔부터
+        # 시작하고, 끝나면 검사 결과 화면(정리 카드 포함)으로 간다.
         self.setWindowFlags(Qt.Window)
         self.setStyleSheet(get_stylesheet())
         apply_titlebar_theme(self, COLORS["bg"], COLORS["text"])
@@ -121,7 +116,6 @@ class ScanSessionWindow(
         self.detail_screen = DetailScreen()
         self.recovery_screen = RecoveryScreen()
         self.recovery_result_screen = RecoveryResultScreen()
-        self.organize_hub_screen = OrganizeHubScreen()
         self.duplicate_screen = DuplicateScreen()
         self.similar_screen = SimilarScreen()
         self.date_organize_screen = DateOrganizeScreen()
@@ -139,25 +133,12 @@ class ScanSessionWindow(
         self.organize_progress_dialog.cancel_requested.connect(self._on_organize_cancel_requested)
         self._organize_worker: _OrganizeWorker | None = None
 
-        # 카테고리 찾기 빠른 경로 전용 — 위 organize_progress_dialog와
-        # 별개 인스턴스인 이유: 저쪽은 진행률(%)이 있는 결정적 작업이라 이쪽에서
-        # setRange(0,0)(바쁨 표시, 전체 개수를 미리 모름)으로 바꿔두면 다음에
-        # organize_progress_dialog를 쓸 때도 그 range가 남아있을 위험이 있다.
-        self.light_scan_progress_dialog = ProgressDialog(self)
-        self.light_scan_progress_dialog.cancel_requested.connect(self._on_light_scan_cancel_requested)
-        self._light_scan_worker: _LightListWorker | None = None
-        self._pending_category_finder_id: str | None = None  # 가벼운 스캔이 끝나면 열 카테고리
-        # 가벼운 스캔 결과 — 카테고리 카드를 이것저것 눌러봐도 세션당 한 번만
-        # 스캔하도록 여기 남겨서 모든 카테고리 화면이 공유한다.
-        self._light_scan_result = None
-
         for screen in (
             self.scanning_screen,
             self.result_screen,
             self.detail_screen,
             self.recovery_screen,
             self.recovery_result_screen,
-            self.organize_hub_screen,
             self.duplicate_screen,
             self.similar_screen,
             self.date_organize_screen,
@@ -179,39 +160,28 @@ class ScanSessionWindow(
         self._group_detail_return_screen = self.date_organize_screen  # 그룹 상세 뒤로가기 시 돌아갈 화면(날짜별/도시별)
 
         self._wire_signals()
-        if land_on_organize:
-            # 스캔 없이 곧장 정리 허브를 보통 크기로 보여준다 — 카드를 실제로
-            # 고르기 전까지는 진단 스캔을 아예 시작하지 않는다.
-            self._organize_paths = paths
-            self._scan_origin_paths = paths
-            self.resize(*self._NORMAL_SIZE)
-            self.setMinimumSize(*self._MIN_NORMAL_SIZE)
-            self.organize_hub_screen.set_result(None)
-            self.stack.setCurrentWidget(self.organize_hub_screen)
-        else:
-            self.stack.setCurrentWidget(self.scanning_screen)
-            self._start_scan(paths)
+        self.stack.setCurrentWidget(self.scanning_screen)
+        self._start_scan(paths)
 
     def _wire_signals(self):
         # Scanning -> Result / (홈으로)
         self.scanning_screen.scan_finished.connect(self._on_scan_finished)
         self.scanning_screen.scan_failed.connect(self._on_scan_failed)
 
-        # Result -> Detail / Recovery / 홈
+        # Result -> Detail / Recovery / 홈 / 중복·유사·날짜별·도시별·카테고리 찾기 각 화면
+        # (2026-09-13: 예전엔 별도 "정리 허브" 화면이 이 카드들을 냈는데, 검사
+        # 결과 화면 하나로 합쳤다.)
         self.result_screen.file_selected.connect(self._open_detail)
         self.result_screen.recovery_requested.connect(lambda files: self._open_recovery(files, None))
         self.result_screen.rescan_requested.connect(self._go_home)
         self.result_screen.resume_requested.connect(self._on_resume_requested)
+        self.result_screen.duplicates_requested.connect(self._open_duplicates)
+        self.result_screen.similar_requested.connect(self._open_similar)
+        self.result_screen.date_organize_requested.connect(self._open_date_organize)
+        self.result_screen.city_organize_requested.connect(self._open_city_organize)
+        self.result_screen.category_finder_requested.connect(self._open_category_finder)
 
-        # 정리 허브 -> 결과 / 중복·유사·날짜별·도시별·카테고리 찾기 각 화면
-        self.organize_hub_screen.back_requested.connect(self._back_from_organize_hub)
-        self.organize_hub_screen.duplicates_requested.connect(self._open_duplicates)
-        self.organize_hub_screen.similar_requested.connect(self._open_similar)
-        self.organize_hub_screen.date_organize_requested.connect(self._open_date_organize)
-        self.organize_hub_screen.city_organize_requested.connect(self._open_city_organize)
-        self.organize_hub_screen.category_finder_requested.connect(self._open_category_finder)
-
-        # 카테고리 찾기 -> 정리 허브 / 상세보기(사진 미리보기) / "이 방식대로 정리하기"
+        # 카테고리 찾기 -> 검사 결과 / 상세보기(사진 미리보기) / "이 방식대로 정리하기"
         # — 화면이 여러 개라 클로저로 어느 화면에서 온 신호인지 붙잡아둔다.
         for screen in self.category_finder_screens.values():
             screen.back_requested.connect(self._back_from_category_finder)
@@ -222,7 +192,7 @@ class ScanSessionWindow(
                 lambda mode, screen=screen: self._on_category_finder_organize_requested(screen, mode)
             )
 
-        # 중복 사진 -> 정리 허브 / 임시 휴지통 / 상세보기(사진 미리보기)
+        # 중복 사진 -> 검사 결과 화면 / 임시 휴지통 / 상세보기(사진 미리보기)
         self.duplicate_screen.back_requested.connect(self._back_from_duplicates)
         self.duplicate_screen.view_trash_requested.connect(
             lambda infos: self._open_trash(self.duplicate_screen, infos)
@@ -231,7 +201,7 @@ class ScanSessionWindow(
             lambda info, group: self._open_detail(info, group=group, return_to=self.duplicate_screen)
         )
 
-        # 유사 사진 -> 정리 허브 / 임시 휴지통 / 상세보기(사진 미리보기)
+        # 유사 사진 -> 검사 결과 화면 / 임시 휴지통 / 상세보기(사진 미리보기)
         self.similar_screen.back_requested.connect(self._back_from_similar)
         self.similar_screen.view_trash_requested.connect(
             lambda infos: self._open_trash(self.similar_screen, infos)
@@ -240,12 +210,12 @@ class ScanSessionWindow(
             lambda info, group: self._open_detail(info, group=group, return_to=self.similar_screen)
         )
 
-        # 날짜별 정리 -> 정리 허브 / 그룹 상세(사진 확인)
+        # 날짜별 정리 -> 검사 결과 화면 / 그룹 상세(사진 확인)
         self.date_organize_screen.back_requested.connect(self._back_from_date_organize)
         self.date_organize_screen.organize_requested.connect(self._on_date_organize_requested)
         self.date_organize_screen.group_opened.connect(self._open_date_group_detail)
 
-        # 도시별 정리 -> 정리 허브 / 그룹 상세(사진 확인)
+        # 도시별 정리 -> 검사 결과 화면 / 그룹 상세(사진 확인)
         self.city_organize_screen.back_requested.connect(self._back_from_city_organize)
         self.city_organize_screen.photo_selected.connect(self._open_city_group_detail)
         self.city_organize_screen.organize_requested.connect(self._on_city_organize_requested)
@@ -291,21 +261,6 @@ class ScanSessionWindow(
         self.stack.setCurrentWidget(self.scanning_screen)
         self.scanning_screen.start_scan(paths)
 
-    def _ensure_scanned_then(self, then_fn):
-        """정리 허브의 중복/유사/날짜별/도시별 카드 공통 진입점(2026-09-10,
-        사용자 요청 — "정리" 카드를 누르면 스캔 없이 바로 허브부터 보여주고,
-        카드를 실제로 골라야 그때 전체 스캔을 시작한다). 이미 스캔이 끝나
-        있으면(같은 세션에서 다른 카드를 먼저 눌렀던 경우) 재스캔 없이 바로
-        then_fn()을 실행한다 — 넷 다 같은 ScanResult(해시·EXIF 전부)를
-        공유하므로 두 번째부터는 카드를 바꿔도 다시 스캔하지 않는다."""
-        if self.result_screen.result is not None:
-            then_fn()
-            return
-        self._pending_organize_destination = then_fn
-        # 허브가 이미 보통 크기로 떠 있으므로(land_on_organize) 창 크기는
-        # 건드리지 않는다 — resize=False.
-        self._start_scan(self._organize_paths, resize=False)
-
     def _default_organize_output_dir(self) -> Path:
         """gui/date_organize_screen.py::_open_date_organize·_open_city_organize와
         같은 기준(원래 선택한 경로가 폴더면 그 폴더, 파일이면 그 파일의
@@ -327,9 +282,7 @@ class ScanSessionWindow(
     def _on_scan_failed(self, message: str):
         """검사가 예상 못한 오류로 끝난 경우(gui/scanning_screen.py::ScanWorker.run
         참고). 진행 화면에 그대로 두면 사용자가 빠져나갈 방법이 없으므로,
-        안내하고 들어온 곳(정리 허브 또는 창 닫기)으로 돌려보낸다."""
-        from_organize_hub = self._pending_organize_destination is not None or self._organize_paths is not None
-        self._pending_organize_destination = None
+        안내하고 창을 닫는다."""
         self._resume_base_result = None
         self._resume_base_planned_total = 0
 
@@ -340,10 +293,7 @@ class ScanSessionWindow(
             worker.wait()
 
         _info_dialog(self, f"검사 중 예상하지 못한 오류가 발생했습니다.\n\n{message}")
-        if from_organize_hub:
-            self.stack.setCurrentWidget(self.organize_hub_screen)
-        else:
-            self.close()
+        self.close()
 
     def _on_scan_finished(self, result, cancelled: bool, planned_total: int, remaining_paths: list):
         if self._resume_base_result is not None:
@@ -352,23 +302,10 @@ class ScanSessionWindow(
             self._resume_base_result = None
             self._resume_base_planned_total = 0
 
-        pending_destination = self._pending_organize_destination
-        self._pending_organize_destination = None
-        # "정리" 카드에서 시작된 세션인지 — 이 스캔이 _ensure_scanned_then으로
-        # 미뤄졌다 지금 막 끝난 것이거나(pending_destination), 아직 카드를
-        # 하나도 안 눌러 pending_destination이 없어도 self._organize_paths가
-        # 있으면 정리 허브가 이 세션의 "홈"이라는 뜻이다.
-        from_organize_hub = pending_destination is not None or self._organize_paths is not None
-
         if result.total == 0:
             if not cancelled:
                 _info_dialog(self, "이미지 파일이 없습니다.")
-            if from_organize_hub:
-                # 정리 허브는(이미 보통 크기로 떠 있고 카드도 여전히 유효하니)
-                # 세션을 닫는 대신 그리로 돌아간다.
-                self.stack.setCurrentWidget(self.organize_hub_screen)
-            else:
-                self.close()
+            self.close()
             return
 
         # '이어서 검사' 버튼이 다음에 눌렸을 때 쓸 수 있도록 현재 상태를 기억해둔다
@@ -382,23 +319,12 @@ class ScanSessionWindow(
             scan_paths=self._scan_origin_paths,
         )
 
-        if pending_destination is not None:
-            # 정리 허브의 카드(중복/유사/날짜별/도시별)를 눌러 미뤄뒀던 스캔이
-            # 방금 끝났다 — 허브의 "사진 목록"(뷰어 영역)을 채우고 고른
-            # 화면으로 들어간다. 허브는 이미 보통 크기로 떠 있어서 창 크기는
-            # 안 건드린다.
-            self.organize_hub_screen.set_result(result)
-            pending_destination()
-        elif from_organize_hub:
-            self.organize_hub_screen.set_result(result)
-            self.stack.setCurrentWidget(self.organize_hub_screen)
-        else:
-            # 중복 화면은 그룹이 수백 개면 카드를 그만큼 만들어야 해서 스캔 하나
-            # 끝날 때마다 미리 만들어두면(당장 보지도 않는데) 그때마다 응답 없음이
-            # 뜬다 — 사용자가 "중복 파일 보기"를 실제로 눌렀을 때만 만든다.
-            self.resize(*self._NORMAL_SIZE)
-            self.setMinimumSize(*self._MIN_NORMAL_SIZE)
-            self.stack.setCurrentWidget(self.result_screen)
+        # 중복 화면은 그룹이 수백 개면 카드를 그만큼 만들어야 해서 스캔 하나
+        # 끝날 때마다 미리 만들어두면(당장 보지도 않는데) 그때마다 응답 없음이
+        # 뜬다 — 사용자가 "중복 파일 보기"를 실제로 눌렀을 때만 만든다.
+        self.resize(*self._NORMAL_SIZE)
+        self.setMinimumSize(*self._MIN_NORMAL_SIZE)
+        self.stack.setCurrentWidget(self.result_screen)
 
     # --- 창 종료 ---------------------------------------------------------
 
@@ -413,10 +339,14 @@ class ScanSessionWindow(
             (scan_worker is not None and scan_worker.isRunning())
             or (recovery_worker is not None and recovery_worker.isRunning())
             or (self._organize_worker is not None and self._organize_worker.isRunning())
-            or (self._light_scan_worker is not None and self._light_scan_worker.isRunning())
         ):
             event.ignore()
             return
+
+        # 카테고리 찾기 백그라운드 계산(검사 결과 화면)은 조용히 뒤에서 도는
+        # 작업이라 위 작업들과 달리 끝날 때까지 창 닫기를 막지 않는다 — 대신
+        # 취소하고 짧게 기다려서 스레드가 도는 중에 창이 없어지는 걸 막는다.
+        self.result_screen._stop_category_scan()
 
         # 썸네일 미리보기 로딩은(휴지통/날짜 그룹 상세) 다시 만들면 그만인
         # 순수 화면용 데이터라 막을 필요는 없고, 그냥 안전하게 멈추기만 한다

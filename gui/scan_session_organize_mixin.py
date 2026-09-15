@@ -20,15 +20,10 @@ from gui.scan_session_workers import _OrganizeWorker
 
 
 class OrganizeExecutionMixin:
-    def _back_from_organize_hub(self):
-        self.stack.setCurrentWidget(self.result_screen)
-
     def _refresh_after_organize_action(self):
-        """중복/유사 정리, 휴지통 복원 등으로 검사 결과가 바뀐 뒤 정리 허브로
-        돌아갈 때 표/칩(검사 결과 화면)과 카드 배지(정리 허브)를 같이
-        새로고침한다 — 둘 중 하나만 갱신하면 반대쪽에 옛 개수가 남는다."""
+        """중복/유사 정리, 휴지통 복원 등으로 검사 결과가 바뀐 뒤 검사 결과
+        화면(표/칩/정리 카드 배지)을 새로고침한다."""
         self.result_screen.refresh_current_result()
-        self.organize_hub_screen.set_result(self.result_screen.result)
 
     def _confirm_move_if_needed(self, mode: str) -> bool:
         if mode != "move":
@@ -95,9 +90,6 @@ class OrganizeExecutionMixin:
             category_label, files, mode, output_root,
             progress_callback=progress_callback, should_cancel=should_cancel,
         )
-        # 2026-09-10부터 organize_hub_screen은 어느 경로로 오든(가벼운 카테고리
-        # 찾기든, 다른 카드로 이미 스캔했든) 항상 채워져 있으므로 완료 후
-        # 기본값(그리로 돌아감)을 그대로 쓴다.
         self._start_organize_worker(run_fn, mode, output_root)
 
     def _on_organize_progress(self, current: int, total: int, filename: str):
@@ -111,14 +103,14 @@ class OrganizeExecutionMixin:
         """정리(날짜별/도시별/카테고리 찾기) 실행이 예상 못한 오류로 끝난 경우 —
         모달 진행 팝업을 먼저 닫아야 앱이 멈춘 것처럼 보이지 않는다.
         core/date_organizer.py는 파일을 옮기기 전에 실패하면 원본을 그대로
-        두므로, 여기서는 안내만 하고 허브로 돌려보낸다."""
+        두므로, 여기서는 안내만 하고 검사 결과 화면으로 돌려보낸다."""
         self.organize_progress_dialog.accept()
         worker = self._organize_worker
         self._organize_worker = None
         if worker is not None:
             worker.wait()
         _info_dialog(self, f"정리 중 예상하지 못한 오류가 발생했습니다.\n\n{message}")
-        self.stack.setCurrentWidget(self.organize_hub_screen)
+        self.stack.setCurrentWidget(self.result_screen)
 
     def _on_organize_finished(self, outcomes):
         self.organize_progress_dialog.accept()
@@ -152,4 +144,4 @@ class OrganizeExecutionMixin:
 
         _info_dialog_with_folder(self, "\n".join(lines), output_root)
 
-        self.stack.setCurrentWidget(self.organize_hub_screen)
+        self.stack.setCurrentWidget(self.result_screen)

@@ -10,12 +10,13 @@ from datetime import datetime
 from os.path import commonpath
 from pathlib import Path
 
-from PySide6.QtCore import Qt, Signal, QRect, QRectF, QPointF, QSize, QItemSelectionModel, QUrl
+from PySide6.QtCore import Qt, QThread, Signal, QRect, QRectF, QPointF, QSize, QItemSelectionModel, QUrl
 from PySide6.QtGui import QColor, QDesktopServices, QIcon, QPainter, QPainterPath, QPen, QPixmap
 from PySide6.QtWidgets import (
     QWidget,
     QVBoxLayout,
     QHBoxLayout,
+    QGridLayout,
     QLabel,
     QPushButton,
     QLineEdit,
@@ -28,12 +29,50 @@ from PySide6.QtWidgets import (
     QToolButton,
 )
 
+from core.category_finder import CATEGORIES as CATEGORY_FINDER_DEFS
 from gui.image_viewer import ImageViewer
-from gui.quality_diagnosis_dialog import run_quality_diagnosis
 from gui.theme import COLORS, STATUS_COLORS, STATUS_DOT
 from models.file_info import FileStatus, RecoveryPossibility
 from models.scan_result import ScanResult
 from utils.file_utils import format_file_size
+
+
+class _HubCategoryWorker(QThread):
+    """정리 카드(동물친구들 등)와 표의 "카테고리" 컬럼을 채우기 위해, 검사
+    결과가 나오는 즉시 전체 사진 x 5개 카테고리를 백그라운드에서 계산한다
+    (core/category_finder.py::detect_all — 사진당 인코딩 1번 + 카테고리 5개
+    비교). 취소 버튼은 없다 — 이 화면 자체는 계속 조작 가능하고(필터/체크박스/
+    확장자 변환은 바로 써도 됨) 이 계산은 조용히 뒤에서 끝난다. 세션이
+    닫히거나 새 결과로 다시 시작해야 하면 cancel()로 멈춘다.
+
+    2026-09-13: 원래 gui/organize_hub_screen.py(검사 결과와 별도의 "정리 허브"
+    화면)에 있던 걸 그대로 옮겨왔다 — 사용자 요청으로 그 화면 자체를 없애고
+    검사 결과 화면 하나로 합쳤다."""
+
+    file_classified = Signal(str, list)  # path, list[(category_id, confidence)] (매칭, 0개 이상)
+    finished_all = Signal()
+
+    def __init__(self, files: list, parent=None):
+        super().__init__(parent)
+        self._files = files
+        self._cancel_requested = False
+
+    def cancel(self):
+        self._cancel_requested = True
+
+    def run(self):
+        from core.category_finder import detect_all
+
+        for info in self._files:
+            if self._cancel_requested:
+                return
+            try:
+                results = detect_all(info.path)
+            except Exception:
+                results = {}
+            matched = [(cat_id, result.confidence) for cat_id, result in results.items() if result.matched]
+            self.file_classified.emit(info.path, matched)
+        self.finished_all.emit()
 
 # "손상" 칩/필터는 완전 손상뿐 아니라 지원되지 않는 형식/이미지가 아닌 파일/분석
 # 불가까지 한데 묶는다 — 사용자 요청(2026-09-08): "오류나 지원안함은 손상으로
@@ -253,11 +292,26 @@ class ResultScreen(QWidget):
     rescan_requested = Signal()
     resume_requested = Signal()          # 중단된 검사를 나머지 파일부터 이어서 진행
 
+    # 2026-09-13: 검사 결과 화면과 별도였던 "정리 허브"(gui/organize_hub_screen.py)를
+    # 없애고 이 화면에 합치면서 추가된 시그널 — 카드를 누르면 각 정리 화면으로 이동.
+    duplicates_requested = Signal()
+    similar_requested = Signal()
+    date_organize_requested = Signal()
+    city_organize_requested = Signal()
+    category_finder_requested = Signal(str)  # category_id — core/category_finder.py::CATEGORIES 키
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.result: ScanResult | None = None
         self._current_files: list = []
         self._syncing = False  # 체크박스<->행 선택 동기화 재진입 방지
+
+        # 카테고리 찾기 백그라운드 계산(옛 organize_hub_screen.py에서 이관) 상태.
+        self._category_matches: dict[str, list] | None = None  # None=아직 계산 전, 완료되면 cat_id -> [(FileInfo, confidence), ...]
+        self._category_by_path: dict[str, list[str]] = {}  # path -> 매칭된 category_id 목록(표시용)
+        self._row_by_path: dict[str, int] = {}  # path -> 표 행 번호(카테고리 컬럼 실시간 갱신용)
+        self._hub_worker: _HubCategoryWorker | None = None
+        self.category_finder_cards: dict[str, QFrame] = {}  # _build_card로 채워짐(아래)
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(32, 24, 32, 24)
@@ -361,14 +415,17 @@ class ResultScreen(QWidget):
         filter_row.addWidget(self.search_box)
         outer.addLayout(filter_row)
 
-        self.table = QTableWidget(0, 7)
+        # 2026-09-13: 8번째 컬럼 "카테고리" 추가 — 옛 정리 허브 화면의 카테고리
+        # 찾기(동물친구들 등) 백그라운드 계산 결과를 이 표에서 바로 보여준다.
+        self.table = QTableWidget(0, 8)
         self._header = CheckAllHeaderView(self.table)
         self._header.toggled.connect(self._on_header_toggled)
         self.table.setHorizontalHeader(self._header)
-        self.table.setHorizontalHeaderLabels(["", "상태", "파일명", "실제 형식", "확장자", "크기", "수정일"])
+        self.table.setHorizontalHeaderLabels(["", "상태", "파일명", "실제 형식", "확장자", "크기", "수정일", "카테고리"])
         self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Fixed)
         self.table.setColumnWidth(0, 32)
         self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
+        self.table.horizontalHeader().setSectionResizeMode(7, QHeaderView.ResizeToContents)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
@@ -437,24 +494,49 @@ class ResultScreen(QWidget):
         bottom_row.addWidget(self.selection_label)
         bottom_row.addStretch(1)
         # "Medic!"은 확장자 변환(빠른 파일 I/O)만 계속 배치로 묶는다. 화질
-        # 개선/얼굴 복원/디블러/디노이즈는 개별 버튼을 다 빼고 "사진 진단"
-        # 하나로 통일했다 — 어떤 복원이 맞는지는 진단 결과에서 추천받아
-        # 실행하는 흐름(2026-09-07, 사용자 요청). 진단은 한 장 단위 기능이라
-        # 정확히 1개 선택했을 때만 활성화한다(배치 아님).
+        # 개선/얼굴 복원/디블러/디노이즈/사진 진단은 전부 제거되어(2026-09-13)
+        # 지금은 이 버튼 하나만 남았다.
         self.recover_selected_btn = QPushButton("확장자 변환")
         self.recover_selected_btn.setEnabled(False)
         self.recover_selected_btn.clicked.connect(self._on_recover_selected)
         bottom_row.addWidget(self.recover_selected_btn)
-
-        self.diagnose_selected_btn = QPushButton("사진 진단")
-        self.diagnose_selected_btn.setEnabled(False)
-        self.diagnose_selected_btn.clicked.connect(self._on_diagnose_selected)
-        bottom_row.addWidget(self.diagnose_selected_btn)
-        # 처음엔 둘 다 비활성 상태라 기본(회색) 스타일로 시작 — 선택 상태가
-        # 바뀔 때마다 _update_selection_label()이 활성 여부에 맞춰 다시 칠한다.
+        # 처음엔 비활성 상태라 기본(회색) 스타일로 시작 — 선택 상태가 바뀔
+        # 때마다 _update_selection_label()이 활성 여부에 맞춰 다시 칠한다.
         _set_primary_active(self.recover_selected_btn, False)
-        _set_primary_active(self.diagnose_selected_btn, False)
         outer.addLayout(bottom_row)
+
+        # --- 정리 카드 (2026-09-13, 옛 gui/organize_hub_screen.py를 이 화면에 합침) ---
+        organize_label = QLabel("정리")
+        organize_label.setStyleSheet("font-weight: 700; font-size: 14px; margin-top: 4px;")
+        outer.addWidget(organize_label)
+
+        self.duplicates_card = self._build_card(
+            "중복 파일", "완전히 똑같은 사진을 찾아요.", self.duplicates_requested.emit
+        )
+        self.similar_card = self._build_card(
+            "유사 사진", "리사이즈·재저장으로 약간 다른, 비슷한 사진을 찾아요.", self.similar_requested.emit
+        )
+        self.date_card = self._build_card(
+            "날짜별", "촬영일 기준으로 묶어서 폴더 정리 미리보기를 보여줘요.", self.date_organize_requested.emit
+        )
+        self.city_card = self._build_card(
+            "도시별", "GPS 위치가 있는 사진을 지도에서 도시별로 훑어봐요.", self.city_organize_requested.emit
+        )
+        for category_id, category in CATEGORY_FINDER_DEFS.items():
+            self.category_finder_cards[category_id] = self._build_card(
+                category.title,
+                category.card_description,
+                lambda cid=category_id: self.category_finder_requested.emit(cid),
+            )
+
+        cards_grid = QGridLayout()
+        cards_grid.setSpacing(10)
+        all_cards = [self.duplicates_card, self.similar_card, self.date_card, self.city_card] + list(
+            self.category_finder_cards.values()
+        )
+        for idx, card in enumerate(all_cards):
+            cards_grid.addWidget(card, idx // 3, idx % 3)
+        outer.addLayout(cards_grid)
 
         self.table.itemChanged.connect(self._on_item_changed)
         self.table.selectionModel().selectionChanged.connect(self._on_selection_changed)
@@ -480,6 +562,15 @@ class ResultScreen(QWidget):
         self.chip_corrupted.set_value(_corrupted_like_count(result))
         self.chip_recovered.set_value(result.recovered)
         self.chip_recovery_needed.set_value(len(result.recoverable_files()))
+
+        dup_count = len(result.duplicate_groups())
+        self._set_card_count(self.duplicates_card, f"{dup_count}그룹" if dup_count else "없음")
+        date_count = len(result.date_groups())
+        self._set_card_count(self.date_card, f"{date_count}개 묶음" if date_count else "-")
+        # 카테고리 찾기 백그라운드 계산도 여기서 같이 시작한다(옛 정리 허브의
+        # set_result와 같은 타이밍) — _populate_table보다 먼저 시작해야 아직
+        # 계산 전인 셀이 "-"가 아니라 "분석 중"으로 바로 보인다.
+        self._start_category_scan()
 
         if cancelled:
             planned = planned_total or result.total
@@ -508,6 +599,10 @@ class ResultScreen(QWidget):
             self.chip_corrupted.set_value(_corrupted_like_count(self.result))
             self.chip_recovered.set_value(self.result.recovered)
             self.chip_recovery_needed.set_value(len(self.result.recoverable_files()))
+            dup_count = len(self.result.duplicate_groups())
+            self._set_card_count(self.duplicates_card, f"{dup_count}그룹" if dup_count else "없음")
+            date_count = len(self.result.date_groups())
+            self._set_card_count(self.date_card, f"{date_count}개 묶음" if date_count else "-")
             self._apply_filters()
 
     # --- 내부 로직 -----------------------------------------------------
@@ -589,11 +684,13 @@ class ResultScreen(QWidget):
         was_sorting = self.table.isSortingEnabled()
         self.table.setSortingEnabled(False)  # 채우는 동안 정렬되면 행-데이터가 뒤섞일 수 있음
         self.table.setUpdatesEnabled(False)  # 수만 행일 때 매 setItem마다 다시 그리지 않도록
+        self._row_by_path = {}
         try:
             self.table.blockSignals(True)
             self.table.setRowCount(0)
             self.table.setRowCount(len(files))
             for row, info in enumerate(files):
+                self._row_by_path[info.path] = row
                 not_recoverable = info.recoverable == RecoveryPossibility.NOT_RECOVERABLE
 
                 check_item = QTableWidgetItem()
@@ -629,6 +726,10 @@ class ResultScreen(QWidget):
                     for cell in (status_item, name_item, format_item, ext_item, size_item, date_item):
                         cell.setToolTip("복구할 수 없는 파일입니다.")
 
+                category_item = QTableWidgetItem(self._category_cell_text(info.path))
+                if not_recoverable:
+                    category_item.setToolTip("복구할 수 없는 파일입니다.")
+
                 self.table.setItem(row, 0, check_item)
                 self.table.setItem(row, 1, status_item)
                 self.table.setItem(row, 2, name_item)
@@ -636,6 +737,7 @@ class ResultScreen(QWidget):
                 self.table.setItem(row, 4, ext_item)
                 self.table.setItem(row, 5, size_item)
                 self.table.setItem(row, 6, date_item)
+                self.table.setItem(row, 7, category_item)
 
             self.table.blockSignals(False)
         finally:
@@ -669,22 +771,16 @@ class ResultScreen(QWidget):
             )
 
         info = self.table.item(row, 0).data(Qt.UserRole)
-        selected = self._selected_files()
 
         menu = QMenu(self)
         preview_action = menu.addAction("미리보기")
         open_folder_action = menu.addAction("로컬 폴더 위치 열기")
-        # 사진 진단은 한 장 단위 기능이라(하단 "사진 진단" 버튼과 동일한 제약,
-        # _update_selection_label 참고) 여러 개를 우클릭했을 땐 메뉴에서 아예 뺀다.
-        diagnose_action = menu.addAction("사진 진단") if len(selected) == 1 else None
 
         chosen = menu.exec(self.table.viewport().mapToGlobal(pos))
         if chosen is preview_action:
             self.file_selected.emit(info)
         elif chosen is open_folder_action:
             QDesktopServices.openUrl(QUrl.fromLocalFile(str(Path(info.path).parent)))
-        elif diagnose_action is not None and chosen is diagnose_action:
-            self._on_diagnose_selected()
 
     def _selected_files(self) -> list:
         result = []
@@ -778,18 +874,7 @@ class ResultScreen(QWidget):
         self.recover_selected_btn.setEnabled(can_recover)
         _set_primary_active(self.recover_selected_btn, can_recover)
 
-        can_diagnose = len(selected) == 1
-        self.diagnose_selected_btn.setEnabled(can_diagnose)
-        _set_primary_active(self.diagnose_selected_btn, can_diagnose)
-
         self._header.set_checked(total_rows > 0 and len(selected) == total_rows)
-
-    def _on_diagnose_selected(self):
-        selected = self._selected_files()
-        if len(selected) != 1:
-            return
-        info = selected[0]
-        run_quality_diagnosis(self, info.path, info.width, info.height)
 
     def _on_recover_selected(self):
         selected = self._selected_files()
@@ -818,6 +903,122 @@ class ResultScreen(QWidget):
             self.inline_viewer.set_image_path(info.path)
         else:
             self.inline_viewer.set_pixmap(None)
+
+    # --- 정리 카드 (2026-09-13, 옛 gui/organize_hub_screen.py에서 이관) ------
+
+    def _build_card(self, title: str, description: str, on_click):
+        card = QFrame()
+        card.setObjectName("Card")
+        card.setCursor(Qt.PointingHandCursor)
+        card.mousePressEvent = lambda event, cb=on_click: cb() if event.button() == Qt.LeftButton else None
+        layout = QHBoxLayout(card)
+        layout.setContentsMargins(16, 12, 16, 12)
+        layout.setSpacing(10)
+
+        text_col = QVBoxLayout()
+        text_col.setSpacing(4)
+        header = QLabel(title)
+        header.setStyleSheet("font-weight: 700; font-size: 13px;")
+        header.setAttribute(Qt.WA_TransparentForMouseEvents)
+        desc = QLabel(description)
+        desc.setWordWrap(True)
+        desc.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 11px;")
+        desc.setAttribute(Qt.WA_TransparentForMouseEvents)
+        text_col.addWidget(header)
+        text_col.addWidget(desc)
+        layout.addLayout(text_col, stretch=1)
+
+        count_label = QLabel("")
+        count_label.setStyleSheet(f"color: {COLORS['primary']}; font-weight: 700; font-size: 12px;")
+        count_label.setAttribute(Qt.WA_TransparentForMouseEvents)
+        layout.addWidget(count_label)
+        card.count_label = count_label
+
+        return card
+
+    def _set_card_count(self, card, text: str | None) -> None:
+        if card.count_label is not None:
+            card.count_label.setText(text or "")
+
+    def _category_cell_text(self, path: str) -> str:
+        # "아직 이 사진 차례가 안 왔다"(분석 중)와 "분석했는데 매칭 카테고리
+        # 없음"(-)을 구분해야 한다 — _category_by_path에 키가 있는지로 판단.
+        if path not in self._category_by_path:
+            return "분석 중" if self._hub_worker is not None else "-"
+        matched_ids = self._category_by_path[path]
+        if not matched_ids:
+            return "-"
+        return ", ".join(CATEGORY_FINDER_DEFS[cat_id].title for cat_id in matched_ids)
+
+    def _stop_category_scan(self) -> None:
+        if self._hub_worker is not None:
+            self._hub_worker.cancel()
+            self._hub_worker.wait()
+            self._hub_worker = None
+
+    def _start_category_scan(self) -> None:
+        """검사가 끝나는 즉시 전체 사진 x 5개 카테고리를 백그라운드에서
+        계산해 카드 배지와 표의 "카테고리" 컬럼을 채운다 — 이 화면 자체는
+        막지 않으므로 필터/체크박스/확장자 변환은 계산이 끝나기 전에 써도
+        그대로 동작한다."""
+        self._stop_category_scan()
+        self._category_matches = None
+        self._category_by_path = {}
+
+        from core.category_finder import is_available
+
+        files = list(self.result.files) if self.result and self.result.files else []
+        if not is_available() or not files:
+            for card in self.category_finder_cards.values():
+                self._set_card_count(card, None)
+            return
+
+        self._category_matches = {cat_id: [] for cat_id in CATEGORY_FINDER_DEFS}
+        for card in self.category_finder_cards.values():
+            self._set_card_count(card, "분석 중")
+
+        readable_files = [info for info in files if info.readable]
+        self._hub_worker = _HubCategoryWorker(readable_files, self)
+        self._hub_worker.file_classified.connect(self._on_file_classified)
+        self._hub_worker.finished_all.connect(self._on_category_scan_finished)
+        self._hub_worker.start()
+
+    def _on_file_classified(self, path: str, matched: list) -> None:
+        if self._category_matches is None:
+            return  # 새 스캔으로 교체된 뒤 도착한 이전 워커의 늦은 신호 — 무시
+        matched_ids = [cat_id for cat_id, _confidence in matched]
+        self._category_by_path[path] = matched_ids
+        info = next((f for f in self.result.files if f.path == path), None) if self.result else None
+        for cat_id, confidence in matched:
+            self._category_matches.setdefault(cat_id, [])
+            if info is not None:
+                self._category_matches[cat_id].append((info, confidence))
+            self._set_card_count(
+                self.category_finder_cards[cat_id], f"{len(self._category_matches[cat_id])}장"
+            )
+
+        row = self._row_by_path.get(path)
+        if row is not None:
+            item = self.table.item(row, 7)
+            if item is not None:
+                item.setText(self._category_cell_text(path))
+
+    def _on_category_scan_finished(self) -> None:
+        self._hub_worker = None
+        if self._category_matches is not None:
+            for matches in self._category_matches.values():
+                matches.sort(key=lambda pair: pair[1], reverse=True)  # 확신도 높은 순 — CategoryFinderScreen과 동일
+        for cat_id, card in self.category_finder_cards.items():
+            count = len(self._category_matches.get(cat_id, [])) if self._category_matches else 0
+            self._set_card_count(card, f"{count}장" if count else "없음")
+
+    def category_matches(self, category_id: str) -> list | None:
+        """category_id로 매칭된 (FileInfo, confidence) 목록. 백그라운드 계산이
+        아직 안 끝났으면 None — 호출하는 쪽(gui/scan_session_category_finder_mixin.py)이
+        None이면 기존처럼 CategoryFinderScreen이 직접 계산하도록 폴백한다."""
+        if self._category_matches is None or self._hub_worker is not None:
+            return None
+        return self._category_matches.get(category_id, [])
 
 
 def _format_scan_path(paths: list) -> str:

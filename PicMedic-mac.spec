@@ -10,21 +10,22 @@ hiddenimports = []
 tmp_ret = collect_all('pillow_heif')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 
-# core/face_restorer.py ("얼굴 복원") 의존성 — basicsr/RestoreFormer는
-# vendor/에서 오는 순수 파이썬이라 pathex만 있으면 되고, 나머지는 pip 패키지.
-# open_clip_torch는 core/photo_category.py("사진 진단"의 카테고리 판단)용.
 # core/geocoder.py("도시별 정리")용 도시 좌표 데이터(assets/geonames_cities1000.csv)는
 # 위 datas의 'assets' 통째 포함에 이미 실리므로 별도 collect_all이 필요 없다
 # (2026-09-11, reverse_geocoder 패키지 제거 후 — scipy는 PyInstaller 기본
 # 훅으로 자동 처리돼 이 목록에 없어도 된다).
-for pkg in ('torch', 'torchvision', 'facexlib', 'open_clip'):
-    tmp_ret = collect_all(pkg)
-    datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
+#
+# 2026-09-13: torch/torchvision/facexlib/open_clip_torch를 전부 뺐다 — 자세한
+# 배경은 PicMedic.spec의 같은 날짜 주석 참고. 이제 이 앱은 torch를 전혀 쓰지 않는다.
+
+# onnxruntime은 AI 카테고리(CLIP 비전 인코더) 추론용(2026-09-13).
+tmp_ret = collect_all('onnxruntime')
+datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 
 
 a = Analysis(
     ['main.py'],
-    pathex=['vendor/basicsr_min', 'vendor/restoreformer'],
+    pathex=[],
     binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,
@@ -46,7 +47,7 @@ exe = EXE(
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=False,  # torch/CUDA DLL은 UPX 압축 시 로딩 실패·백신 오탐 사례가 많고, macOS는 코드서명/공증과 충돌한다 (2026-09-11 리뷰)
+    upx=False,  # 네이티브 DLL(onnxruntime 등)은 UPX 압축 시 로딩 실패·백신 오탐 사례가 많고, macOS는 코드서명/공증과 충돌한다 (2026-09-11 리뷰)
     upx_exclude=[],
     runtime_tmpdir=None,
     console=False,
@@ -62,7 +63,7 @@ coll = COLLECT(
     a.binaries,
     a.datas,
     strip=False,
-    upx=False,  # torch/CUDA DLL은 UPX 압축 시 로딩 실패·백신 오탐 사례가 많고, macOS는 코드서명/공증과 충돌한다 (2026-09-11 리뷰)
+    upx=False,  # 네이티브 DLL(onnxruntime 등)은 UPX 압축 시 로딩 실패·백신 오탐 사례가 많고, macOS는 코드서명/공증과 충돌한다 (2026-09-11 리뷰)
     upx_exclude=[],
     name='PicMedic',
 )

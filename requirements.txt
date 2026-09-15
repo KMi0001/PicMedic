@@ -3,20 +3,11 @@ pillow-heif>=0.15
 PySide6>=6.6
 ImageHash>=4.3
 
-# core/face_restorer.py ("얼굴 복원") — RestoreFormer++ 추론에 필요.
-# basicsr/RestoreFormer 자체는 vendor/에서 온다(pip 패키지가 아님, vendor/*/NOTICE 참고).
-# ⚠️ 배포 빌드는 반드시 CPU 전용 torch로 할 것. 여기서 버전만 지정하면 환경에 따라
-# CUDA 빌드가 깔릴 수 있는데, 그대로 PyInstaller를 돌리면 NVIDIA 런타임 DLL까지
-# 통째로 담겨 패키지가 2GB -> 5.7GB가 된다(2026-09-11 실측). 얻는 속도에 비해
-# 3.5GB가 너무 비싸다고 판단해 CPU로 확정 — README "exe 빌드" 절과
-# RESTORATION_QUALITY_PLAN.md 5-1·5-9 참고. GPU 자동 감지 코드
-# (core/torch_device.py)는 그대로라, CUDA torch를 깐 개발 환경에서는 GPU를 쓴다.
-torch>=2.0
-torchvision>=0.15
-facexlib>=0.3
-
-# core/photo_category.py ("사진 진단"의 카테고리 판단) — CLIP(open_clip) 추론에 필요.
-open_clip_torch>=2.20
+# core/image_embedding_cache.py (AI 카테고리 찾기·사진 진단 카테고리 판단) —
+# CLIP 이미지 인코더를 ONNX Runtime(INT8 양자화)으로 추론한다(2026-09-13,
+# experiments/clip_onnx_prototype 실측 후 교체). PyTorch/open_clip은 더 이상
+# 런타임에 필요 없음 — 모델 재변환이 필요할 때만 requirements-dev.txt로 쓴다.
+onnxruntime>=1.30
 
 # core/geocoder.py ("도시별 정리") — GPS 좌표 -> 도시명 매칭. 오프라인
 # (assets/geonames_cities1000.csv 내장, 인터넷 호출 없음), scipy(cKDTree)로 직접

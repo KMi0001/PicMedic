@@ -51,10 +51,10 @@ class DetailRecoveryTrashMixin:
         elif self.duplicate_screen.has_pending():
             self.stack.setCurrentWidget(self.duplicate_screen)
         else:
-            # 더 처리할 그룹이 없어 정리 허브로 바로 돌아가는 경우 — 그동안
-            # 중복/유사 정리로 빠진 파일들이 표/칩/카드 배지에 반영되게 새로고침한다.
+            # 더 처리할 그룹이 없어 검사 결과 화면으로 바로 돌아가는 경우 —
+            # 그동안 중복/유사 정리로 빠진 파일들이 표/칩/카드 배지에 반영되게 새로고침한다.
             self._refresh_after_organize_action()
-            self.stack.setCurrentWidget(self.organize_hub_screen)
+            self.stack.setCurrentWidget(self.result_screen)
 
     def _on_recovery_finished(self, outcomes, output_dir):
         if self.result_screen.result is not None:

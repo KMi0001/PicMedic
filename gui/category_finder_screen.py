@@ -255,6 +255,14 @@ class CategoryFinderScreen(QWidget):
         self._progress_dialog = ProgressDialog(self)
         self._progress_dialog.cancel_requested.connect(self._on_cancel_requested)
 
+    def set_matches(self, matches: list) -> None:
+        """gui/organize_hub_screen.py가 정리 허브 진입 시 이미 백그라운드로
+        계산해둔 (FileInfo, confidence) 목록을 그대로 받아 곧장 렌더링한다
+        (2026-09-13) — 워커·진행률 팝업 없이 즉시 뜬다. 허브의 계산이 아직
+        안 끝났으면 gui/scan_session_category_finder_mixin.py가 이 메서드
+        대신 set_result()로 폴백해서 이 화면이 직접 계산하게 한다."""
+        self._render_matches(matches)
+
     def set_result(self, result) -> None:
         """검사 결과를 받아 백그라운드로 이 카테고리 사진을 찾고 화면을 새로
         그린다."""
@@ -265,8 +273,7 @@ class CategoryFinderScreen(QWidget):
             self._render_matches([])
             info_dialog(
                 self,
-                f"{self._category.title}에 필요한 AI 모델 파일이 아직 준비되지 않았어요. "
-                "'사진 진단'의 카테고리 판단 기능과 같은 자산을 씁니다.",
+                f"{self._category.title}에 필요한 AI 모델 파일이 아직 준비되지 않았어요.",
             )
             return
 

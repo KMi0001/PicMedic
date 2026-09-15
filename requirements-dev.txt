@@ -9,8 +9,13 @@
 
 pytest>=8.0
 
-# scripts/fetch_deblur_assets.py · fetch_denoise_assets.py 전용.
-# 이 둘만 Google Drive에서 받아오는데, 드라이브의 "바이러스 검사 못 함" 확인
-# 페이지를 gdown이 대신 처리해준다. 나머지 fetch_* 스크립트는 직접 URL이라
-# 표준 라이브러리만으로 받는다.
-gdown>=5.0
+# scripts/export_clip_onnx_assets.py 전용 — CLIP 비전 인코더를 ONNX로
+# 변환·양자화할 때만 필요(2026-09-13). 런타임(requirements.txt)은 onnxruntime만
+# 있으면 되고 torch/open_clip의 CLIP 추론 경로는 더 이상 쓰지 않는다. 얼굴
+# 탐지(facexlib)도 같은 날 완전히 제거되어 torch가 requirements.txt에서
+# 빠졌으므로, 여기서 CPU 휠로 따로 명시한다 — 변환 스크립트에서만 쓰는
+# 무거운 의존성을 실행 파일에 안 실을 수 있는 이유이기도 하다.
+torch>=2.0
+torchvision>=0.15
+open_clip_torch>=2.20
+onnx>=1.22

@@ -4,15 +4,19 @@ gui/home_screen.py
 PRD 16장 "Screen 01 — Home" 구현.
 
 2026-09-10, 사용자 요청으로 재구성: "최근 검사" 목록을 없애고, 검사/진단/정리
-3개 액션을 각각 독립된 드래그앤드롭 카드로 노출한다(experiments/
-home_redesign_prototype에서 스크린샷으로 검증받은 안, B안 변형). "정리"는
-스캔 없이 곧장 정리 허브 화면(gui/organize_hub_screen.py)으로 랜딩한다
-(gui/scan_session_window.py::ScanSessionWindow의 land_on_organize) — 허브의
-카드(중복/유사/날짜별/도시별) 중 하나를 실제로 고를 때 그제서야 전체
-스캔을 시작하고, "고양이 찾기"는 그 스캔과 무관하게 항상 가벼운 자체 경로를
-쓴다(사진 3만 장 규모에서 "정리"가 항상 무거운 진단 스캔부터 돌던 문제를
-해결). "진단"은 원래도 스캔 없이 사진 한 장만 바로 분석하는 별도 흐름이었고
-그대로 유지 — 카드에 여러 장/폴더가 오면 "한 장만" 안내만 새로 추가했다.
+3개 액션을 각각 독립된 드래그앤드롭 카드로 노출했었다(experiments/
+home_redesign_prototype에서 스크린샷으로 검증받은 안, B안 변형).
+
+2026-09-13, 사용자 요청으로 "검사"와 "정리"를 다시 하나로 합쳤다 — 예전엔
+"정리"가 스캔 없이 곧장 정리 허브 화면으로 랜딩해서(gui/scan_session_window.py::
+ScanSessionWindow의 land_on_organize), 허브의 카드(중복/유사/날짜별/도시별)
+중 하나를 실제로 고를 때 그제서야 전체 스캔을 시작했다(사진 3만 장 규모에서
+"정리"가 항상 무거운 진단 스캔부터 돌던 문제 회피용). 지금은 검사 결과
+화면 자체에 정리 카드가 합쳐져 있어서(gui/result_screen.py) 그 지연 스캔이
+필요 없어졌고, 파일/폴더를 고르면 바로 전체 스캔 → 검사 결과+정리 화면
+하나로 간다. "진단"은 원래도 스캔 없이 사진 한 장만 바로 분석하는 별도
+흐름이었고 그대로 유지 — 카드에 여러 장/폴더가 오면 "한 장만" 안내만
+새로 추가했다.
 
 "최근 검사"와 함께 있던 복구 결과 재방문 기능(record_recovery_outcome)도
 같이 없앴다 — 복구 직후 폴더 열기는 gui/recovery_result_screen.py에 이미
@@ -53,7 +57,7 @@ from core.scanner import SCANNABLE_EXTENSIONS
 from gui import theme
 from gui.common_dialogs import info_dialog
 from gui.convert_dialog import run_convert
-from gui.quality_diagnosis_dialog import run_quality_diagnosis
+from gui.live_photo_dialog import run_live_photo_finder
 from gui.theme import COLORS
 from gui.trash_screen import TrashScreen
 from utils import trash
@@ -90,36 +94,6 @@ def _outline_icon(color: str, size: int, draw) -> QPixmap:
     return pixmap
 
 
-def _scan_icon_pixmap(color: str, size: int = 26) -> QPixmap:
-    """검사 = 돋보기 (gui/result_screen.py::_search_icon_pixmap과 동일 모양)."""
-
-    def draw(p, s):
-        p.drawEllipse(QPointF(10.5 * s, 10.5 * s), 6.5 * s, 6.5 * s)
-        p.drawLine(QPointF(15.2 * s, 15.2 * s), QPointF(20 * s, 20 * s))
-
-    return _outline_icon(color, size, draw)
-
-
-def _diagnose_icon_pixmap(color: str, size: int = 26) -> QPixmap:
-    """진단 = 맥박(EKG) 선 — 화질을 "측정"한다는 인상."""
-
-    def draw(p, s):
-        pts = [(2, 13), (6, 13), (8, 7), (11, 19), (14, 5), (16, 13), (22, 13)]
-        p.drawPolyline([QPointF(x * s, y * s) for x, y in pts])
-
-    return _outline_icon(color, size, draw)
-
-
-def _organize_icon_pixmap(color: str, size: int = 26) -> QPixmap:
-    """정리 = 폴더 안에 가지런한 줄 — "가지런히 정리됨"의 인상."""
-
-    def draw(p, s):
-        p.drawRoundedRect(QRectF(2 * s, 6 * s, 20 * s, 14 * s), 2 * s, 2 * s)
-        p.drawLine(QPointF(2 * s, 6 * s), QPointF(8 * s, 6 * s))
-        for y in (11, 14.5, 18):
-            p.drawLine(QPointF(6 * s, y * s), QPointF(18 * s, y * s))
-
-    return _outline_icon(color, size, draw)
 
 
 def _convert_icon_pixmap(color: str, size: int = 26) -> QPixmap:
@@ -134,6 +108,18 @@ def _convert_icon_pixmap(color: str, size: int = 26) -> QPixmap:
         p.drawLine(QPointF(20 * s, 16 * s), QPointF(7 * s, 16 * s))
         p.drawLine(QPointF(11 * s, 12 * s), QPointF(7 * s, 16 * s))
         p.drawLine(QPointF(11 * s, 20 * s), QPointF(7 * s, 16 * s))
+
+    return _outline_icon(color, size, draw)
+
+
+def _live_photo_icon_pixmap(color: str, size: int = 26) -> QPixmap:
+    """라이브 포토 = 사진 프레임 안에 재생(▶) 표시 — "움직이는 사진"이라는 의미."""
+
+    def draw(p, s):
+        p.drawRoundedRect(QRectF(3 * s, 3 * s, 18 * s, 18 * s), 3 * s, 3 * s)
+        p.drawLine(QPointF(9 * s, 7 * s), QPointF(9 * s, 17 * s))
+        p.drawLine(QPointF(9 * s, 7 * s), QPointF(16 * s, 12 * s))
+        p.drawLine(QPointF(9 * s, 17 * s), QPointF(16 * s, 12 * s))
 
     return _outline_icon(color, size, draw)
 
@@ -204,21 +190,21 @@ class ThemeToggle(QAbstractButton):
 
 
 class DropActionCard(QFrame):
-    """검사/진단/정리 액션 카드 — 각각 독립된 드래그앤드롭 타겟이자 클릭
-    진입점이다(2026-09-10, 사용자 요청으로 공용 드롭존을 없애고 카드 3개
-    각각에 드롭 기능을 넣는 안으로 확정 — experiments/home_redesign_prototype
-    에서 스크린샷으로 검증됨). 드래그가 카드 위에 있는 동안만 점선 테두리로
-    강조해서 "여기 놓으면 이 액션"이라는 걸 명확히 한다."""
+    """액션 카드(현재는 "변환") — 독립된 드래그앤드롭 타겟이자 클릭 진입점이다
+    (2026-09-10, 사용자 요청으로 공용 드롭존을 없애고 카드마다 드롭 기능을
+    넣는 안으로 확정 — experiments/home_redesign_prototype에서 스크린샷으로
+    검증됨). 드래그가 카드 위에 있는 동안만 점선 테두리로 강조해서 "여기
+    놓으면 이 액션"이라는 걸 명확히 한다. 2026-09-13: "검사"/"진단" 카드는
+    PhotoFolderDropZone 하나로 합쳐지면서 이 클래스를 쓰는 건 "변환"만 남았다."""
 
     paths_dropped = Signal(list)
     clicked = Signal()
 
-    def __init__(self, icon_pixmap: QPixmap, title: str, desc: str, emphasize: bool = False, parent=None):
+    def __init__(self, icon_pixmap: QPixmap, title: str, desc: str, parent=None):
         super().__init__(parent)
         self.setObjectName("Card")
         self.setCursor(Qt.PointingHandCursor)
         self.setAcceptDrops(True)
-        self._emphasize = emphasize
         self._apply_style(active=False)
 
         layout = QHBoxLayout(self)
@@ -289,17 +275,89 @@ class DropActionCard(QFrame):
                 f"background-color: {COLORS['selection']}; }}"
             )
             return
-        border = f"2px solid {COLORS['primary']}" if self._emphasize else f"1px solid {COLORS['border']}"
         self.setStyleSheet(
-            f"QFrame#Card {{ border: {border}; border-radius: 14px; background-color: {COLORS['surface']}; }}"
+            f"QFrame#Card {{ border: 1px solid {COLORS['border']}; border-radius: 14px; "
+            f"background-color: {COLORS['surface']}; }}"
+        )
+
+
+class PhotoFolderDropZone(QFrame):
+    """2026-09-13, 사용자 요청 — "검사"와 "진단" 카드를 없애고 그 자리를
+    사진·폴더를 놓는 단순한 영역 하나로 채운다. 뭘 넣든(사진 한 장이든 폴더든)
+    항상 검사(→검사 결과+정리 화면, gui/scan_session_window.py)로 이어진다.
+    (같은 날 후속: "사진 진단" 기능 자체도 완전히 제거되어 — 화질개선 등
+    실행형 복원 기능이 다 빠진 뒤로는 진단 결과가 가리킬 데가 없어졌음 —
+    지금은 진입점만 합쳐진 게 아니라 기능 자체가 없다.)
+    DropActionCard와 같은 드래그앤드롭 메커니즘을 쓰되, 카드 2개 자리를
+    차지하도록 아이콘·설명 없이 넉넉한 빈 영역으로 단순하게 둔다."""
+
+    paths_dropped = Signal(list)
+    clicked = Signal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("Card")
+        self.setCursor(Qt.PointingHandCursor)
+        self.setAcceptDrops(True)
+        self.setMinimumHeight(160)
+        self._apply_style(active=False)
+
+        layout = QVBoxLayout(self)
+        layout.setAlignment(Qt.AlignCenter)
+        layout.setSpacing(6)
+
+        title = QLabel("사진 · 폴더")
+        title.setAlignment(Qt.AlignCenter)
+        title.setStyleSheet("font-size: 17px; font-weight: 700; background: transparent;")
+        layout.addWidget(title)
+
+        self.hint_label = QLabel("여기로 끌어놓거나 클릭해서 선택하세요")
+        self.hint_label.setAlignment(Qt.AlignCenter)
+        self.hint_label.setStyleSheet(
+            f"color: {COLORS['text_secondary']}; font-size: 12px; background: transparent;"
+        )
+        layout.addWidget(self.hint_label)
+
+    def refresh_theme(self) -> None:
+        self._apply_style(active=False)
+        self.hint_label.setStyleSheet(
+            f"color: {COLORS['text_secondary']}; font-size: 12px; background: transparent;"
+        )
+
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+            self._apply_style(active=True)
+
+    def dragLeaveEvent(self, event):
+        self._apply_style(active=False)
+
+    def dropEvent(self, event):
+        self._apply_style(active=False)
+        urls = event.mimeData().urls()
+        paths = [url.toLocalFile() for url in urls if url.toLocalFile()]
+        if paths:
+            self.paths_dropped.emit(paths)
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.clicked.emit()
+        super().mouseReleaseEvent(event)
+
+    def _apply_style(self, active: bool) -> None:
+        # 이 영역이 이제 홈 화면의 유일한 주요 진입점이라(2026-09-13) 대기
+        # 상태에서도 늘 강조색 점선 테두리로 둔다 — 드래그 중엔 배경만 더 짙게.
+        bg = COLORS["selection"] if active else COLORS["surface"]
+        self.setStyleSheet(
+            f"QFrame#Card {{ border: 2px dashed {COLORS['primary']}; border-radius: 14px; "
+            f"background-color: {bg}; }}"
         )
 
 
 class HomeScreen(QWidget):
-    """검사·진단·정리 중 뭘 할지 고르는 첫 화면."""
+    """검사(정리 포함)·진단·변환 중 뭘 할지 고르는 첫 화면."""
 
-    paths_chosen = Signal(list)        # 검사 — ScanSessionWindow를 열고 끝나면 검사 결과 화면으로
-    organize_requested = Signal(list)  # 정리 — 스캔 없이 곧장 정리 허브로 랜딩(land_on_organize)
+    paths_chosen = Signal(list)  # 검사 — ScanSessionWindow를 열고 끝나면 검사 결과+정리 화면으로
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -349,29 +407,15 @@ class HomeScreen(QWidget):
 
         content_layout.addLayout(header_row)
 
-        self.hint_label = QLabel("사진/폴더를 원하는 카드에 바로 끌어놓으세요 — 클릭해서 선택할 수도 있어요.")
+        self.hint_label = QLabel("사진이나 폴더를 끌어놓으면 검사하고 정리까지 도와드려요.")
         self.hint_label.setWordWrap(True)
         self.hint_label.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 12px;")
         content_layout.addWidget(self.hint_label)
 
-        self.scan_card = DropActionCard(
-            _scan_icon_pixmap(COLORS["primary"]),
-            "검사",
-            "손상·형식 오류를 찾아 복구까지 도와드려요",
-            emphasize=True,
-        )
-        self.scan_card.paths_dropped.connect(self._on_scan_paths_chosen)
-        self.scan_card.clicked.connect(lambda: self._show_pick_menu(self._on_scan_paths_chosen))
-        content_layout.addWidget(self.scan_card)
-
-        self.diagnose_card = DropActionCard(
-            _diagnose_icon_pixmap(COLORS["primary"]),
-            "진단",
-            "사진 한 장의 화질(흐림·노이즈)을 봐요",
-        )
-        self.diagnose_card.paths_dropped.connect(self._on_diagnose_paths_dropped)
-        self.diagnose_card.clicked.connect(self._open_diagnose)
-        content_layout.addWidget(self.diagnose_card)
+        self.drop_zone = PhotoFolderDropZone()
+        self.drop_zone.paths_dropped.connect(self._on_scan_paths_chosen)
+        self.drop_zone.clicked.connect(lambda: self._show_pick_menu(self._on_scan_paths_chosen))
+        content_layout.addWidget(self.drop_zone)
 
         self.convert_card = DropActionCard(
             _convert_icon_pixmap(COLORS["primary"]),
@@ -382,16 +426,14 @@ class HomeScreen(QWidget):
         self.convert_card.clicked.connect(lambda: self._show_pick_menu(self._on_convert_paths_chosen))
         content_layout.addWidget(self.convert_card)
 
-        self.organize_card = DropActionCard(
-            _organize_icon_pixmap(COLORS["primary"]),
-            "정리",
-            "중복·날짜·도시·동물친구들로 정리해요",
+        self.live_photo_card = DropActionCard(
+            _live_photo_icon_pixmap(COLORS["primary"]),
+            "라이브 포토",
+            "짝 동영상이 남아있는 라이브 포토를 찾아서 내보내거나 모아줘요",
         )
-        self.organize_card.paths_dropped.connect(self._on_organize_paths_chosen)
-        self.organize_card.clicked.connect(
-            lambda: self._show_pick_menu(self._on_organize_paths_chosen)
-        )
-        content_layout.addWidget(self.organize_card)
+        self.live_photo_card.paths_dropped.connect(self._on_live_photo_paths_chosen)
+        self.live_photo_card.clicked.connect(lambda: self._show_pick_menu(self._on_live_photo_paths_chosen))
+        content_layout.addWidget(self.live_photo_card)
 
         bottom_row = QHBoxLayout()
         bottom_row.setSpacing(10)
@@ -421,10 +463,9 @@ class HomeScreen(QWidget):
             f"color: {COLORS['text_secondary']}; font-size: 12.5px; margin: 0; padding: 0;"
         )
         self.hint_label.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 12px;")
-        self.scan_card.refresh_theme(_scan_icon_pixmap(COLORS["primary"]))
-        self.diagnose_card.refresh_theme(_diagnose_icon_pixmap(COLORS["primary"]))
+        self.drop_zone.refresh_theme()
         self.convert_card.refresh_theme(_convert_icon_pixmap(COLORS["primary"]))
-        self.organize_card.refresh_theme(_organize_icon_pixmap(COLORS["primary"]))
+        self.live_photo_card.refresh_theme(_live_photo_icon_pixmap(COLORS["primary"]))
         self.privacy_link.setText(
             f'<a href="{PRIVACY_POLICY_URL}" style="color:{COLORS["muted"]};">개인정보처리방침</a>'
         )
@@ -479,11 +520,6 @@ class HomeScreen(QWidget):
         if valid:
             self.paths_chosen.emit(valid)
 
-    def _on_organize_paths_chosen(self, paths: list[str]):
-        valid = [p for p in paths if Path(p).exists()]
-        if valid:
-            self.organize_requested.emit(valid)
-
     def _on_convert_paths_chosen(self, paths: list[str]):
         """검사 없이 곧장 "형식 변환"을 여는 진입점 — gui/convert_dialog.py가
         폴더를 사진 파일로 펼치고 분석까지 다 처리한다. 여러 장/폴더 다 된다."""
@@ -491,18 +527,12 @@ class HomeScreen(QWidget):
         if valid:
             run_convert(self, valid)
 
-    def _on_diagnose_paths_dropped(self, paths: list[str]):
-        """진단은 원래부터 사진 한 장만 다루는 흐름이라(gui/quality_diagnosis_dialog.py),
-        여러 장이나 폴더가 떨어지면 무엇을 골라야 할지 추측하지 않고 안내만
-        하고 끝낸다."""
+    def _on_live_photo_paths_chosen(self, paths: list[str]):
+        """검사 없이 곧장 "라이브 포토 찾기"를 여는 진입점 — gui/live_photo_dialog.py가
+        폴더 순회부터 짝 찾기, 내보내기/정리까지 다 처리한다."""
         valid = [p for p in paths if Path(p).exists()]
-        if len(valid) != 1 or Path(valid[0]).is_dir():
-            info_dialog(
-                self,
-                "진단은 사진 한 장만 가능해요 — 여러 장이나 폴더는 '검사'나 '정리'를 이용해주세요.",
-            )
-            return
-        self._run_diagnose(valid[0])
+        if valid:
+            run_live_photo_finder(self, valid)
 
     def _open_trash(self):
         """세션(ScanSessionWindow) 없이도 임시 휴지통을 바로 볼 수 있게 하는
@@ -542,27 +572,3 @@ class HomeScreen(QWidget):
         # 아직 도는 중일 수 있다 — 스레드가 실행 중인 채로 같이 없어지면
         # 크래시 위험이 있어서 여기서 안전하게 멈춘다.
         screen.stop_pending_work()
-
-    def _open_diagnose(self):
-        """스캔 없이 사진 한 장만 바로 골라서 진단을 실행하는 진입점 —
-        gui/quality_diagnosis_dialog.py의 분석/결과 흐름을 그대로 재사용한다."""
-        start_dir = self._default_browse_dir()
-        path, _ = QFileDialog.getOpenFileName(
-            self, "진단할 사진 선택", start_dir, IMAGE_FILE_FILTER
-        )
-        if not path:
-            return
-        self._remember_browse_dir(str(Path(path).parent))
-        self._run_diagnose(path)
-
-    def _run_diagnose(self, path: str) -> None:
-        width = height = None
-        try:
-            from PIL import Image
-
-            with Image.open(path) as img:
-                width, height = img.size
-        except Exception:
-            pass  # 크기를 못 읽어도 예상 소요 시간 안내만 빠질 뿐 기능은 그대로 동작
-
-        run_quality_diagnosis(self, path, width, height)

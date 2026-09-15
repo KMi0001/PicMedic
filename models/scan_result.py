@@ -94,14 +94,25 @@ class ScanResult:
                 groups.setdefault(f.content_hash, []).append(f)
         return [group for group in groups.values() if len(group) > 1]
 
-    def similar_groups(self, threshold: int = 10) -> list[list[FileInfo]]:
+    def similar_groups(self, threshold: int = 8) -> list[list[FileInfo]]:
         """완전 중복(duplicate_groups)이 아닌 파일들 중에서, (1) 이미지 지문
         (perceptual_hash)이 서로 비슷하거나 (2) 파일명이 복사 접미사만 다른
         같은 폴더 안 파일과 짝을 이루면 하나의 그룹으로 묶는다(Phase 2 '유사
         중복' 탐지, 뷰어 전용 — 실제 파일은 안 건드림). threshold는 지문 값의
-        해밍 거리 허용치(작을수록 엄격) — 두 신호 중 하나라도 걸리면 묶이므로
-        (합집합-찾기), 한 그룹 안에 여러 쌍이 서로 다른 이유로 연결돼 있을 수
-        있다."""
+        해밍 거리 허용치(작을수록 엄격).
+
+        신호 2(지문 유사도)는 "대표 해시" 방식으로 묶는다 — 그룹에 처음 들어온
+        사진의 해시를 그 그룹의 대표로 고정하고, 새 후보는 대표하고만 비교한다
+        (그룹 내 다른 멤버끼리는 서로 비교 안 함). 예전에는 아무 쌍이나
+        threshold 이내면 이어 붙이는 union-find라서 A-B, B-C가 각각 걸리면
+        A-C가 threshold를 훨씬 넘어도 한 그룹으로 묶이는 "연쇄 효과"가 있었다
+        (2026-09-12, 사용자가 "유사 사진으로 묶었는데 눈으로 봐도 너무 다르다"고
+        제보). 대표 방식은 그룹 안 임의의 두 사진 사이 거리를 항상
+        2*threshold 이내로 보장한다(삼각부등식: dist(i,j) <= dist(i,대표) +
+        dist(대표,j)). 부수 효과로 비교 횟수도 "사진 수 x 사진 수"에서
+        "사진 수 x 지금까지 만들어진 그룹 수"로 줄어든다 — 비슷한 사진(버스트샷
+        등)이 많을수록 그룹 수가 적어서 훨씬 빨라진다(3만~4만 장 스캔에서
+        오래 걸린다는 제보로 같이 개선)."""
         exact_dup_paths = {f.path for group in self.duplicate_groups() for f in group}
         candidates = [f for f in self.files if f.path not in exact_dup_paths]
         n = len(candidates)
@@ -138,16 +149,21 @@ class ScanResult:
             if base is not None and base.path != f.path:
                 union(i, index_of[base.path])
 
-        # 신호 2: 이미지 지문 유사도(해밍 거리) — 파일 수가 많으면 쌍 비교 비용이
-        # 커지지만(N^2), 백그라운드 스레드에서 돌리는 걸 전제로 한다
-        # (gui/similar_screen.py 참고).
-        hashed = [(i, int(f.perceptual_hash, 16)) for i, f in enumerate(candidates) if f.perceptual_hash]
-        for a in range(len(hashed)):
-            i, hash_i = hashed[a]
-            for b in range(a + 1, len(hashed)):
-                j, hash_j = hashed[b]
-                if bin(hash_i ^ hash_j).count("1") <= threshold:
-                    union(i, j)
+        # 신호 2: 이미지 지문 유사도(해밍 거리) — 대표 해시 방식(위 docstring 참고).
+        # representatives에는 그룹당 대표 1개(그 그룹에 처음 들어온 사진)의
+        # (인덱스, 해시)만 쌓인다. 새 후보는 이 대표들하고만 비교하고, 걸리면
+        # 첫 번째로 맞는 대표에 합류한 뒤 나머지 대표는 더 보지 않는다.
+        representatives: list[tuple[int, int]] = []
+        for i, f in enumerate(candidates):
+            if not f.perceptual_hash:
+                continue
+            hash_i = int(f.perceptual_hash, 16)
+            for rep_index, rep_hash in representatives:
+                if bin(hash_i ^ rep_hash).count("1") <= threshold:
+                    union(i, rep_index)
+                    break
+            else:
+                representatives.append((i, hash_i))
 
         clusters: dict[int, list[FileInfo]] = {}
         for i, f in enumerate(candidates):

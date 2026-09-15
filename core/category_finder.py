@@ -112,6 +112,7 @@ CATEGORIES: dict[str, CategoryDef] = {
         ],
         negative_prompts=[
             "a regular photo, not a screenshot or document",
+            "a photo of an object or product, not a screenshot",
             "a photo of a person",
             "a photo of a landscape or scenery",
             "a photo of food",
@@ -139,7 +140,7 @@ CATEGORIES: dict[str, CategoryDef] = {
             "a screenshot or a photo of a document with text",
             "a close-up photo of food",
         ],
-        threshold=0.6,
+        threshold=0.75,
     ),
     "landscape": CategoryDef(
         id="landscape",
@@ -177,9 +178,6 @@ class CategoryMatchResult:
     confidence: float  # 긍정 프롬프트 확률의 합(0~1)
 
 
-_category_model_cache: dict[str, tuple] = {}  # category_id -> (model, text_features)
-
-
 def is_available() -> bool:
     """이 기기에서 카테고리 찾기 기능들을 쓸 수 있는지(자산이 준비됐는지) —
     core/photo_category.py와 같은 자산을 공유하므로 그쪽이 available이면
@@ -189,28 +187,15 @@ def is_available() -> bool:
     return _is_available()
 
 
-def _get_category_model(category_id: str):
-    cached = _category_model_cache.get(category_id)
-    if cached is not None:
-        return cached
+def _get_text_embeddings(category_id: str):
+    """scripts/export_clip_onnx_assets.py가 미리 계산해둔 카테고리 텍스트
+    임베딩(numpy 배열)을 읽어온다 — 프롬프트가 코드에 고정돼 있어 런타임에
+    텍스트 인코더(torch/open_clip)를 띄울 필요가 없다(2026-09-13)."""
+    from core.text_embeddings import load_text_embeddings
 
-    import torch
-
-    from core.image_embedding_cache import get_model, get_tokenizer
-
-    model, _preprocess, device = get_model()
-    tokenizer = get_tokenizer()
-
-    category = CATEGORIES[category_id]
-    prompts = category.positive_prompts + category.negative_prompts
-    text = tokenizer(prompts).to(device)
-    with torch.no_grad():
-        text_features = model.encode_text(text)
-        text_features /= text_features.norm(dim=-1, keepdim=True)
-
-    result = (model, text_features)
-    _category_model_cache[category_id] = result
-    return result
+    data = load_text_embeddings()
+    entry = data["category_finder"][category_id]
+    return entry["embeddings"], entry["n_positive"], data["logit_scale"]
 
 
 def detect(category_id: str, path: str) -> CategoryMatchResult:
@@ -220,20 +205,30 @@ def detect(category_id: str, path: str) -> CategoryMatchResult:
     if not is_available():
         return CategoryMatchResult(matched=False, confidence=0.0)
 
-    import torch
+    import numpy as np
 
     from core.image_embedding_cache import get_embedding
 
     category = CATEGORIES[category_id]
-    model, text_features = _get_category_model(category_id)
+    text_features, n_positive, logit_scale = _get_text_embeddings(category_id)
     # 이 사진을 다른 카테고리 기능(사진 진단의 카테고리 판단, 다른 "찾기"
     # 화면 등)이 먼저 봤으면 이미지 인코딩을 다시 하지 않고 캐시를 그대로 쓴다.
     image_features = get_embedding(path)
 
-    with torch.no_grad():
-        logits = model.logit_scale.exp() * (image_features @ text_features.T).squeeze(0)
-        probs = logits.softmax(dim=-1)
+    logits = logit_scale * (image_features @ text_features.T)[0]
+    exp = np.exp(logits - logits.max())
+    probs = exp / exp.sum()
 
-    n_positive = len(category.positive_prompts)
     confidence = float(probs[:n_positive].sum())
     return CategoryMatchResult(matched=confidence >= category.threshold, confidence=confidence)
+
+
+def detect_all(path: str) -> dict[str, CategoryMatchResult]:
+    """사진 한 장을 CATEGORIES 전체와 한 번에 비교한다 — 이미지 인코딩(비싼
+    부분)은 core/image_embedding_cache.py 캐시 덕분에 단 한 번만 하고,
+    카테고리별 비교(행렬 곱)만 반복하므로 detect()를 카테고리 수만큼
+    호출하는 것과 비교해 오버헤드가 거의 없다. gui/organize_hub_screen.py가
+    정리 허브 진입 시 카드마다 배지 개수를 한 번에 채울 때 쓴다."""
+    if not is_available():
+        return {cat_id: CategoryMatchResult(matched=False, confidence=0.0) for cat_id in CATEGORIES}
+    return {cat_id: detect(cat_id, path) for cat_id in CATEGORIES}

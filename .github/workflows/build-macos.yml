@@ -8,6 +8,17 @@ name: Build macOS App
 # (assets/* 가 전부 .gitignore 대상이라 체크아웃에 없는데, scripts/fetch_*를
 # 실행하지 않았음). 받을 수 있는 자산은 받고, 못 받은 건 아티팩트 안에
 # BUILD_INFO.txt로 명시한다.
+#
+# 2026-09-13 수정: 화질 개선/얼굴 복원/디블러/디노이즈 4개 기능을 통째로
+# 제거하면서 그 자산(assets/realesrgan·deblur·denoise, RestoreFormer++.ckpt)도
+# 같이 뺐다. 같은 날 좀 더 지나서, "사진 진단"의 얼굴 탐지(facexlib)도
+# 제거했다 — 얼굴 복원이 없어진 뒤로는 "얼굴이 있어서 흐림" 문구 하나
+# 보여주는 게 유일한 용도였는데, 그거 하나 때문에 torch+facexlib(약 590MB)를
+# 유지할 이유가 없었다. 남은 AI 자산은 CLIP(AI 카테고리: 사진 진단 카테고리
+# 판단·카테고리 찾기) 하나뿐 — PyTorch가 아니라 ONNX Runtime + INT8 양자화로
+# 돌리므로, ViT-B-32.pt(원본 체크포인트)를 받은 뒤 export_clip_onnx_assets.py로
+# 변환한 결과(clip_visual_int8.onnx + text_embeddings.json)만 실제로 필요하다.
+# 이제 이 앱은 torch를 전혀 쓰지 않는다.
 
 on:
   workflow_dispatch:
@@ -39,33 +50,33 @@ jobs:
           pip install -r requirements.txt -r requirements-dev.txt
           pip install pyinstaller
 
-      # 모델 가중치는 합쳐서 약 1GB라 매번 받으면 빌드가 느리고 원본 호스트에도
-      # 부담이다. fetch 스크립트가 바뀌지 않는 한(=받는 파일이 그대로인 한) 캐시를 쓴다.
+      # 모델 가중치는 fetch 스크립트가 바뀌지 않는 한(=받는 파일이 그대로인 한)
+      # 캐시를 쓴다. clip_visual_int8.onnx·text_embeddings.json은 export
+      # 스크립트 결과물이라 그 스크립트 해시도 캐시 키에 포함한다.
       - name: Cache AI model assets
         uses: actions/cache@v4
         with:
-          path: |
-            assets/face_restore
-            assets/photo_category
-            assets/deblur
-            assets/denoise
-          key: ai-assets-${{ hashFiles('scripts/fetch_*_assets.py') }}
+          path: assets/photo_category
+          key: ai-assets-${{ hashFiles('scripts/fetch_photo_category_assets.py', 'scripts/export_clip_onnx_assets.py') }}
 
       - name: Fetch AI model assets (best effort)
         # 개별 자산을 못 받아도 빌드 자체는 계속한다 — 그 기능만 빠진 .app이
         # 나오고, 어떤 게 빠졌는지는 다음 스텝이 기록한다.
-        # deblur/denoise는 Google Drive라(gdown 사용) CI에서 특히 실패하기 쉽다.
         continue-on-error: true
         run: |
-          for s in face_restore photo_category deblur denoise; do
-            echo "::group::fetch_${s}_assets.py"
-            python "scripts/fetch_${s}_assets.py" || echo "!! ${s} 자산 받기 실패 (계속 진행)"
-            echo "::endgroup::"
-          done
-          # realesrgan(화질 개선)은 Windows 실행 파일만 배포돼 있어 macOS에서는
-          # 받을 수 없다 — RESTORATION_QUALITY_PLAN.md P2 "macOS Real-ESRGAN
-          # 바이너리 확보"가 해결되기 전까지는 이 기능이 빠진 채로 나간다.
-          echo "realesrgan: macOS 바이너리 미확보 — 건너뜀"
+          echo "::group::fetch_photo_category_assets.py + export_clip_onnx_assets.py"
+          if python scripts/fetch_photo_category_assets.py; then
+            if python scripts/export_clip_onnx_assets.py; then
+              # ViT-B-32.pt(354MB)는 변환용 원본일 뿐 런타임엔 필요 없다 —
+              # 지우지 않으면 .app 번들에 그대로 딸려 들어간다.
+              rm -f assets/photo_category/ViT-B-32.pt
+            else
+              echo "!! CLIP ONNX 변환 실패 (계속 진행)"
+            fi
+          else
+            echo "!! CLIP 원본 체크포인트 받기 실패 (계속 진행)"
+          fi
+          echo "::endgroup::"
 
       - name: Record what actually made it into the bundle
         run: |
@@ -75,14 +86,12 @@ jobs:
             echo "빌드 시각: $(date -u '+%Y-%m-%d %H:%M UTC')"
             echo ""
             echo "포함된 AI 기능 (자산이 실제로 받아진 것만 동작합니다):"
-            check() { if [ -d "assets/$1" ] && [ -n "$(ls -A "assets/$1" 2>/dev/null)" ]; then echo "  [O] $2"; else echo "  [X] $2 — 자산 없음, 이 빌드에서 동작하지 않음"; fi; }
-            check face_restore   "얼굴 복원"
-            check photo_category "사진 진단(카테고리 판단)"
-            check deblur         "디블러"
-            check denoise        "디노이즈"
-            check realesrgan     "화질 개선(업스케일)"
+            check_file() { if [ -f "$1" ]; then echo "  [O] $2"; else echo "  [X] $2 — 자산 없음, 이 빌드에서 동작하지 않음"; fi; }
+            check_file "assets/photo_category/clip_visual_int8.onnx" "AI 카테고리(사진 진단 카테고리 판단·카테고리 찾기)"
             echo ""
-            echo "진단/복구/정리 기능은 AI 자산과 무관하게 항상 포함됩니다."
+            echo "화질 개선/얼굴 복원/디블러/디노이즈, 사진 진단의 얼굴 탐지는"
+            echo "2026-09-13에 제거되어 더 이상 존재하지 않습니다."
+            echo "진단(얼굴 탐지 제외)/복구/정리 기능은 AI 자산과 무관하게 항상 포함됩니다."
           } | tee BUILD_INFO.txt
 
       - name: Run tests
