@@ -29,7 +29,7 @@ SCANNABLE_EXTENSIONS = MVP_SUPPORTED_EXTENSIONS | FUTURE_EXTENSIONS
 ProgressCallback = Callable[[int, int, str], None]  # (current, total, filename)
 
 
-def _is_candidate(path: Path) -> bool:
+def _is_candidate(path: Path, extensions: frozenset[str]) -> bool:
     # macOS가 만드는 리소스 포크(AppleDouble) 파일: 원본과 같은 확장자를 쓰지만
     # 실제로는 이미지가 아닌 메타데이터라 손상 파일로 오탐된다.
     if path.name.startswith("._"):
@@ -37,13 +37,14 @@ def _is_candidate(path: Path) -> bool:
     # 확장자가 전혀 이미지가 아닌 것으로 보이는 파일(.txt, .exe 등)은 건너뛴다.
     # 단, PRD 23.7 "잘못된 확장자" 케이스(확장자는 이미지인데 내용이 다름)는
     # 확장자 기준으로는 잡히므로 문제 없다.
-    return path.suffix.lower() in SCANNABLE_EXTENSIONS
+    return path.suffix.lower() in extensions
 
 
 def iter_candidate_files(
     root: Path,
     recursive: bool = True,
     should_cancel: Optional[Callable[[], bool]] = None,
+    extensions: Optional[frozenset[str]] = None,
 ) -> Iterable[Path]:
     """검사 대상이 될 수 있는 파일들을 나열한다 (확장자 기준 1차 필터링).
 
@@ -52,7 +53,12 @@ def iter_candidate_files(
     빠질 수 있다. 실제 경로(resolve) 기준으로 이미 방문한 디렉터리는 다시
     내려가지 않도록 막고, 순회 도중에도 should_cancel을 체크해 즉시 중단할
     수 있게 한다 (예전엔 이 단계가 끝나야만 취소 체크 루프에 도달했음).
+
+    extensions를 안 주면 기본(SCANNABLE_EXTENSIONS, 이미지)으로 찾는다 — 이미지가
+    아닌 다른 확장자(예: 라이브 포토용 .mov)를 찾을 때도 이 함수의 AppleDouble
+    필터링/심볼릭 링크 순환 차단을 그대로 쓰려면 extensions만 바꿔서 재사용한다.
     """
+    exts = extensions if extensions is not None else SCANNABLE_EXTENSIONS
     if root.is_file():
         yield root
         return
@@ -68,7 +74,7 @@ def iter_candidate_files(
             path = Path(entry.path)
             if not path.is_file():
                 continue
-            if _is_candidate(path):
+            if _is_candidate(path, exts):
                 yield path
         return
 
@@ -105,7 +111,7 @@ def iter_candidate_files(
             path = Path(dirpath) / name
             if not path.is_file():
                 continue
-            if _is_candidate(path):
+            if _is_candidate(path, exts):
                 yield path
 
 
