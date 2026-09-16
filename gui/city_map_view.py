@@ -21,7 +21,7 @@ utils/topojson.py로 디코딩해서 그린다. 나라 이름은 core/country_na
 
 from __future__ import annotations
 
-from PySide6.QtCore import QPointF, QRectF, Qt, Signal
+from PySide6.QtCore import QPointF, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QFont, QFontMetrics, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import QGraphicsItem, QGraphicsScene, QGraphicsView
 
@@ -241,6 +241,19 @@ class CityMapView(QGraphicsView):
         self.view_changed.connect(self._rebuild_markers)
         self.view_changed.connect(self._update_country_label_visibility)
 
+        # 드래그로 팬 하는 동안 scrollContentsBy가 픽셀 단위로 계속 불려서
+        # view_changed도 그만큼 자주(초당 수십 번) 발생한다 — 도시가 수십 개
+        # (실사용 4만 6천 장 규모 리포트)면 _rebuild_markers/_layout_labels가
+        # 매번 그 전부를 다시 계산해서 드래그 중 응답 없음처럼 보였다
+        # (2026-09-17, 사용자 리포트). gui/image_viewer.py::_refit_timer와
+        # 같은 이유로, 실제 재계산은 마지막 이벤트 뒤 잠깐(디바운스) 멈췄을
+        # 때만 한다 — wheelEvent/scrollContentsBy가 직접 view_changed를
+        # emit하지 않고 이 타이머를 재시작하도록 바꿨다(아래 참고).
+        self._view_changed_timer = QTimer(self)
+        self._view_changed_timer.setSingleShot(True)
+        self._view_changed_timer.setInterval(120)
+        self._view_changed_timer.timeout.connect(self.view_changed.emit)
+
     def set_points(self, points: list[tuple[float, float, int, str, str]]) -> None:
         """points = [(위도, 경도, 사진 개수, 라벨, 나라코드), ...]."""
         self._raw_points = points
@@ -401,11 +414,11 @@ class CityMapView(QGraphicsView):
         new_scale = self.transform().m11() * factor
         if self._MIN_SCALE <= new_scale <= self._MAX_SCALE:
             self.scale(factor, factor)
-            self.view_changed.emit()
+            self._view_changed_timer.start()
 
     def scrollContentsBy(self, dx: int, dy: int) -> None:
         super().scrollContentsBy(dx, dy)
-        self.view_changed.emit()
+        self._view_changed_timer.start()
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
