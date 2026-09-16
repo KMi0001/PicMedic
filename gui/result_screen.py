@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
     QFrame,
     QMenu,
     QToolButton,
+    QProgressBar,
 )
 
 from core.category_finder import CATEGORIES as CATEGORY_FINDER_DEFS
@@ -311,6 +312,8 @@ class ResultScreen(QWidget):
         self._category_by_path: dict[str, list[str]] = {}  # path -> 매칭된 category_id 목록(표시용)
         self._row_by_path: dict[str, int] = {}  # path -> 표 행 번호(카테고리 컬럼 실시간 갱신용)
         self._hub_worker: _HubCategoryWorker | None = None
+        self._category_scan_total = 0
+        self._category_scan_done = 0
         self.category_finder_cards: dict[str, QFrame] = {}  # _build_card로 채워짐(아래)
 
         outer = QVBoxLayout(self)
@@ -506,9 +509,27 @@ class ResultScreen(QWidget):
         outer.addLayout(bottom_row)
 
         # --- 정리 카드 (2026-09-13, 옛 gui/organize_hub_screen.py를 이 화면에 합침) ---
+        organize_header = QHBoxLayout()
         organize_label = QLabel("정리")
         organize_label.setStyleSheet("font-weight: 700; font-size: 14px; margin-top: 4px;")
-        outer.addWidget(organize_label)
+        organize_header.addWidget(organize_label)
+        organize_header.addStretch(1)
+        # 카테고리 찾기 백그라운드 계산(=사진 x 5개 카테고리 판단, 사진이
+        # 많으면 몇 분씩 걸릴 수 있음) 진행 중임을 알려주는 진행률 표시 —
+        # 2026-09-16, 사용자 요청("정리중인 파일들이 있으면 프로그레스바로
+        # 보여줘"). 모달 팝업이 아니라 이 줄에 붙는 인라인 바다 — 이 화면은
+        # 계산 중에도 계속 조작 가능해야 하므로(위 _HubCategoryWorker
+        # 독스트링 참고) 화면을 막는 ProgressDialog는 여기 원칙과 안 맞는다.
+        self.category_progress_label = QLabel("")
+        self.category_progress_label.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 11px;")
+        organize_header.addWidget(self.category_progress_label)
+        self.category_progress_bar = QProgressBar()
+        self.category_progress_bar.setFixedWidth(160)
+        self.category_progress_bar.setFixedHeight(10)
+        self.category_progress_bar.setTextVisible(False)
+        self.category_progress_bar.hide()
+        organize_header.addWidget(self.category_progress_bar)
+        outer.addLayout(organize_header)
 
         self.duplicates_card = self._build_card(
             "중복 파일", "완전히 똑같은 사진을 찾아요.", self.duplicates_requested.emit
@@ -976,6 +997,8 @@ class ResultScreen(QWidget):
         self._stop_category_scan()
         self._category_matches = None
         self._category_by_path = {}
+        self.category_progress_bar.hide()
+        self.category_progress_label.setText("")
 
         from core.category_finder import is_available
 
@@ -990,6 +1013,14 @@ class ResultScreen(QWidget):
             self._set_card_count(card, "분석 중")
 
         readable_files = [info for info in files if info.readable]
+        self._category_scan_total = len(readable_files)
+        self._category_scan_done = 0
+        if self._category_scan_total:
+            self.category_progress_bar.setRange(0, self._category_scan_total)
+            self.category_progress_bar.setValue(0)
+            self.category_progress_bar.show()
+            self.category_progress_label.setText(f"카테고리 분석 중 0/{self._category_scan_total}")
+
         self._hub_worker = _HubCategoryWorker(readable_files, self)
         self._hub_worker.file_classified.connect(self._on_file_classified)
         self._hub_worker.finished_all.connect(self._on_category_scan_finished)
@@ -998,6 +1029,13 @@ class ResultScreen(QWidget):
     def _on_file_classified(self, path: str, matched: list) -> None:
         if self._category_matches is None:
             return  # 새 스캔으로 교체된 뒤 도착한 이전 워커의 늦은 신호 — 무시
+
+        self._category_scan_done += 1
+        self.category_progress_bar.setValue(self._category_scan_done)
+        self.category_progress_label.setText(
+            f"카테고리 분석 중 {self._category_scan_done}/{self._category_scan_total}"
+        )
+
         matched_ids = [cat_id for cat_id, _confidence in matched]
         self._category_by_path[path] = matched_ids
         info = next((f for f in self.result.files if f.path == path), None) if self.result else None
@@ -1019,6 +1057,8 @@ class ResultScreen(QWidget):
 
     def _on_category_scan_finished(self) -> None:
         self._hub_worker = None
+        self.category_progress_bar.hide()
+        self.category_progress_label.setText("")
         if self._category_matches is not None:
             for matches in self._category_matches.values():
                 matches.sort(key=lambda pair: pair[1], reverse=True)  # 확신도 높은 순 — CategoryFinderScreen과 동일

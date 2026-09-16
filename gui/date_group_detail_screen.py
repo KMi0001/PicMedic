@@ -332,6 +332,12 @@ class DateGroupDetailScreen(QWidget):
         rows.append(("파일 크기", format_file_size(info.file_size)))
         if info.captured_at:
             rows.append(("촬영일", info.captured_at.strftime("%Y-%m-%d")))
+        # PHASE2_사진정리_기획.md "기기 정보" — 이 화면은 훑어보기 전용이라
+        # 다른 행들처럼 값이 없으면 그냥 행 자체를 생략한다(gui/detail_screen.py
+        # 처럼 "알 수 없음"을 강제로 보여주지 않음 — 이 화면의 기존 원칙 그대로).
+        camera_text = " ".join(part for part in (info.camera_make, info.camera_model) if part)
+        if camera_text:
+            rows.append(("촬영 기기", camera_text))
 
         for row, (label, value) in enumerate(rows):
             label_widget = QLabel(label)
