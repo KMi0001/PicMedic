@@ -15,7 +15,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QThread, Signal
+from PySide6.QtCore import Qt, QThread, QUrl, Signal
+from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QDialog,
     QFileDialog,
@@ -23,6 +24,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QListWidget,
     QListWidgetItem,
+    QMenu,
     QPushButton,
     QVBoxLayout,
     QWidget,
@@ -35,6 +37,7 @@ from core.live_photo_finder import (
     organize_live_photo_pairs,
 )
 from gui.common_dialogs import ProgressDialog, info_dialog, info_dialog_with_folder
+from gui.image_viewer import ImageViewer
 from gui.scan_session_workers import _OrganizeWorker
 from gui.theme import COLORS
 
@@ -107,6 +110,66 @@ def _default_output_root(paths: list[str]) -> Path:
     return origin if origin.is_dir() else origin.parent
 
 
+def _build_match_row(m: LivePhotoMatch) -> QWidget:
+    """목록 한 줄 — 파일명 줄 아래에 로컬 경로를 작은 글씨로 보여준다
+    (2026-09-17, 사용자 요청 — "목록에 로컬 경로 보여주고"). 경로를 말줄임
+    없이 그대로 보여주려고(PicMedic 전체 원칙 — 절대 자르지 않기) 한 줄
+    QListWidgetItem 텍스트 대신 QLabel 두 개짜리 위젯으로 교체했다."""
+    row = QWidget()
+    layout = QVBoxLayout(row)
+    layout.setContentsMargins(6, 4, 6, 4)
+    layout.setSpacing(2)
+
+    title = QLabel(f"{m.image_path.name}  ↔  {m.mov_path.name}")
+    title.setStyleSheet("font-size: 12.5px;")
+    layout.addWidget(title)
+
+    path_label = QLabel(str(m.image_path.parent))
+    path_label.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 11px;")
+    layout.addWidget(path_label)
+
+    return row
+
+
+def _on_match_context_menu(parent: QWidget, list_widget: QListWidget, pos) -> None:
+    item = list_widget.itemAt(pos)
+    if item is None:
+        return
+    match: LivePhotoMatch = item.data(Qt.UserRole)
+
+    menu = QMenu(list_widget)
+    preview_action = menu.addAction("미리보기")
+    open_folder_action = menu.addAction("로컬 폴더 위치 열기")
+    chosen = menu.exec(list_widget.mapToGlobal(pos))
+    if chosen is preview_action:
+        _open_live_photo_preview(parent, match)
+    elif chosen is open_folder_action:
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(match.image_path.parent)))
+
+
+def _open_live_photo_preview(parent: QWidget, match: LivePhotoMatch) -> None:
+    """사진(정지 이미지) 쪽만 미리보기로 보여준다 — 짝이 맞는지 눈으로
+    확인하는 용도라, 동영상까지 재생할 필요는 없다고 판단."""
+    dialog = QDialog(parent)
+    dialog.setWindowTitle(match.image_path.name)
+    dialog.setWindowModality(Qt.WindowModal)
+    dialog.resize(560, 560)
+
+    layout = QVBoxLayout(dialog)
+    layout.setContentsMargins(12, 12, 12, 12)
+
+    viewer = ImageViewer(overlay_controls=True)
+    viewer.set_image_path(str(match.image_path))
+    layout.addWidget(viewer, stretch=1)
+
+    path_label = QLabel(str(match.image_path))
+    path_label.setWordWrap(True)
+    path_label.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 11px;")
+    layout.addWidget(path_label)
+
+    dialog.exec()
+
+
 def _open_result_dialog(parent: QWidget, origin_paths: list[str], matches: list[LivePhotoMatch]) -> None:
     dialog = QDialog(parent)
     dialog.setWindowTitle("PicMedic — 라이브 포토")
@@ -131,7 +194,14 @@ def _open_result_dialog(parent: QWidget, origin_paths: list[str], matches: list[
 
     list_widget = QListWidget()
     for m in matches:
-        list_widget.addItem(QListWidgetItem(f"{m.image_path.name}  ↔  {m.mov_path.name}"))
+        item = QListWidgetItem()
+        item.setData(Qt.UserRole, m)
+        row = _build_match_row(m)
+        item.setSizeHint(row.sizeHint())
+        list_widget.addItem(item)
+        list_widget.setItemWidget(item, row)
+    list_widget.setContextMenuPolicy(Qt.CustomContextMenu)
+    list_widget.customContextMenuRequested.connect(lambda pos: _on_match_context_menu(dialog, list_widget, pos))
     layout.addWidget(list_widget)
 
     output_root = _default_output_root(origin_paths)
