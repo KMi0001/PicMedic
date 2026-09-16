@@ -17,6 +17,7 @@ from core.detector import MVP_SUPPORTED_EXTENSIONS, FUTURE_EXTENSIONS
 from models.file_info import FileInfo
 from models.scan_result import ScanResult
 from utils import logger
+from utils.trash import TRASH_FOLDER_NAME
 
 # PRD_MVP우선순위.md 갭 #8 조사로 확인됨: HEIC/HEIF는 HEVC 기반 디코딩이라
 # JPEG보다 10배 이상 느리다(실측 0.3~0.7초/장 vs JPEG 0.03초대). 이 형식이
@@ -95,6 +96,13 @@ def iter_candidate_files(
         # 폴더에 대해 resolve()를 그대로 수행한다.)
         keep = []
         for name in dirnames:
+            # 임시휴지통(utils/trash.py::TRASH_FOLDER_NAME)은 옮기려는 파일이
+            # 있던 폴더 바로 밑에 생기므로, 그 부모 폴더를 재귀 검사하면 이미
+            # 정리해서 치운 파일들까지 다시 검사 대상에 들어온다 — 정리 실행
+            # 직후 "다시 검사"를 누르면 방금 치운 중복 사진이 또 잡히는 식.
+            # (2026-09-17, 사용자 요청)
+            if name == TRASH_FOLDER_NAME:
+                continue
             try:
                 real = (Path(dirpath) / name).resolve()
             except OSError:

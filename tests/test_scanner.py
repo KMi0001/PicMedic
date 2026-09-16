@@ -16,6 +16,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from tests.helpers import check, skip
 
 from core.scanner import iter_candidate_files, scan_paths
+from utils.trash import TRASH_FOLDER_NAME
 
 TIMEOUT_SEC = 5
 
@@ -78,6 +79,31 @@ def test_scanner():
         check("취소 신호 후 파일 수집이 즉시 멈춤 (3개 이하)", len(seen) <= 3)
 
 
+def test_scanner_excludes_trash_folder():
+    """임시휴지통(utils/trash.py::TRASH_FOLDER_NAME)은 원래 폴더 바로 밑에
+    생기므로, 재귀 스캔이 그 폴더까지 다시 훑으면 방금 정리해서 치운 파일이
+    "다시 검사"에서 또 잡힌다(2026-09-17, 사용자 요청) — 재귀 스캔이 그
+    폴더 안으로는 아예 안 내려가야 한다."""
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp = Path(tmp)
+        (tmp / "keep.jpg").write_bytes(b"fake")
+
+        trash_dir = tmp / TRASH_FOLDER_NAME
+        trash_dir.mkdir()
+        (trash_dir / "already_trashed.jpg").write_bytes(b"fake")
+
+        names = {p.name for p in iter_candidate_files(tmp)}
+        check("임시휴지통 밖 파일은 그대로 검사됨", "keep.jpg" in names)
+        check("임시휴지통 안 파일은 검사 대상에서 빠짐", "already_trashed.jpg" not in names)
+
+        # 임시휴지통을 직접 지정해서 스캔하면(사용자가 일부러 그 폴더를 고른
+        # 경우) 그때는 정상적으로 보여야 한다 — 재귀 스캔 중 "우연히 지나치는"
+        # 경우만 막는 것이지, 직접 겨냥한 스캔까지 막을 이유는 없다.
+        direct_names = {p.name for p in iter_candidate_files(trash_dir)}
+        check("임시휴지통을 직접 스캔 대상으로 고르면 정상적으로 보임", "already_trashed.jpg" in direct_names)
+
+
 if __name__ == "__main__":  # pytest 없이 이 파일 하나만 돌려보고 싶을 때
     test_scanner()
+    test_scanner_excludes_trash_folder()
     print("OK")
