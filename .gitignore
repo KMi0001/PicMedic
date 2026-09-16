@@ -24,25 +24,8 @@ experiments/upscale_prototype/.venv/
 experiments/upscale_prototype/models/*.pb
 experiments/upscale_prototype/realesrgan/
 
-# 화질 개선 기능(core/quality_enhancer.py)용 Real-ESRGAN 실행 파일/모델(약 39MB) —
-# scripts/fetch_realesrgan_assets.py로 다시 받을 수 있어 git엔 커밋하지 않음
-assets/realesrgan/
-
-# 얼굴 복원 기능(core/face_restorer.py)용 RestoreFormer++ 체크포인트 +
-# facexlib 가중치(약 465MB) — scripts/fetch_face_restore_assets.py로 다시
-# 받을 수 있어 git엔 커밋하지 않음
-assets/face_restore/
-
-# 디블러 기능(core/deblur.py)용 NAFNet-GoPro 체크포인트(약 68MB) —
-# scripts/fetch_deblur_assets.py로 다시 받을 수 있어 git엔 커밋하지 않음
-assets/deblur/
-
-# 디노이즈 기능(core/denoise.py)용 NAFNet-SIDD 체크포인트(약 117MB) —
-# scripts/fetch_denoise_assets.py로 다시 받을 수 있어 git엔 커밋하지 않음
-assets/denoise/
-
-# 사진 진단의 카테고리 판단(core/photo_category.py)용 CLIP 체크포인트(약 354MB) —
-# scripts/fetch_photo_category_assets.py로 다시 받을 수 있어 git엔 커밋하지 않음
+# 카테고리 찾기(core/category_finder.py)용 CLIP ONNX 체크포인트 —
+# scripts/export_clip_onnx_assets.py로 다시 받을 수 있어 git엔 커밋하지 않음
 assets/photo_category/
 
 # 얼굴 복원 프로토타입(experiments/restore_prototype) — 가상환경과, 검증에만
@@ -80,6 +63,11 @@ experiments/geocoder_license_prototype/rg_cities1000.csv
 experiments/clip_onnx_prototype/_synthetic/
 experiments/clip_onnx_prototype/*.onnx
 experiments/clip_onnx_prototype/user_photos/
+
+# 정리 허브 리디자인 목업(experiments/organize_hub_redesign_mockup) — 실행할
+# 때마다 다시 만들 수 있는 스크린샷만 추적 제외(스크립트는 추적). 옵션 A가
+# 2026-09-13 gui/result_screen.py에 실제로 적용됨.
+experiments/organize_hub_redesign_mockup/*.png
 
 # OS
 Thumbs.db
