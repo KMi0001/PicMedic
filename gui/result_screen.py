@@ -418,23 +418,29 @@ class ResultScreen(QWidget):
         filter_row.addWidget(self.search_box)
         outer.addLayout(filter_row)
 
-        # 2026-09-13: 8번째 컬럼 "카테고리" 추가 — 옛 정리 허브 화면의 카테고리
+        # 2026-09-13: "카테고리" 컬럼 추가 — 옛 정리 허브 화면의 카테고리
         # 찾기(동물친구들 등) 백그라운드 계산 결과를 이 표에서 바로 보여준다.
-        # 2026-09-16: 9번째 컬럼 "촬영 기기" 추가 — 상세 화면까지 안 들어가도
-        # 목록에서 바로 보이도록(사용자 요청 — 상세 화면에 넣었더니 "결과
-        # 목록에 보이게 하라니깐" 이라는 피드백을 받음).
-        self.table = QTableWidget(0, 9)
+        # 2026-09-16: "촬영 기기" 컬럼 추가(상세 화면 두 곳에만 있던 걸 목록에도
+        # 노출 — "결과 목록에 보이게 하라니깐" 피드백) + "실제 형식" 컬럼 제거
+        # (검색으로는 여전히 걸리지만 표에는 더 이상 안 보임, 사용자 요청).
+        self.table = QTableWidget(0, 8)
         self._header = CheckAllHeaderView(self.table)
         self._header.toggled.connect(self._on_header_toggled)
         self.table.setHorizontalHeader(self._header)
         self.table.setHorizontalHeaderLabels(
-            ["", "상태", "파일명", "실제 형식", "확장자", "크기", "수정일", "카테고리", "촬영 기기"]
+            ["", "상태", "파일명", "확장자", "크기", "수정일", "카테고리", "촬영 기기"]
         )
         self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Fixed)
         self.table.setColumnWidth(0, 32)
         self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
+        self.table.horizontalHeader().setSectionResizeMode(6, QHeaderView.ResizeToContents)
         self.table.horizontalHeader().setSectionResizeMode(7, QHeaderView.ResizeToContents)
-        self.table.horizontalHeader().setSectionResizeMode(8, QHeaderView.ResizeToContents)
+        # 정렬(헤더 클릭)이 일어나면 Qt가 행 순서는 새로 맞춰주지만, setCellWidget로
+        # 심어둔 카테고리 배지는 행을 따라오지 않고 원래 위치에 남는 함정이 있다
+        # (experiments/organize_hub_redesign_mockup/merged_screen_options.py에서
+        # 이미 겪은 문제 — 그 스크립트는 한 번만 그려서 안 드러났을 뿐). 정렬이
+        # 바뀔 때마다 배지를 새 행 순서에 맞춰 다시 그린다.
+        self.table.horizontalHeader().sortIndicatorChanged.connect(self._on_sort_changed)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
@@ -739,7 +745,6 @@ class ResultScreen(QWidget):
                 status_item.setForeground(_qcolor(color))
 
                 name_item = QTableWidgetItem(info.filename)
-                format_item = QTableWidgetItem(info.detected_format or "-")
                 ext_item = QTableWidgetItem(info.extension)
 
                 size_item = _NumericSortItem(format_file_size(info.file_size))
@@ -750,15 +755,8 @@ class ResultScreen(QWidget):
                 date_item.setData(Qt.UserRole, mtime if mtime is not None else -1)
 
                 if not_recoverable:
-                    for cell in (status_item, name_item, format_item, ext_item, size_item, date_item):
+                    for cell in (status_item, name_item, ext_item, size_item, date_item):
                         cell.setToolTip("복구할 수 없는 파일입니다.")
-
-                category_item = QTableWidgetItem(self._category_cell_text(info.path))
-                category_color = self._category_cell_color(info.path)
-                if category_color is not None:
-                    category_item.setForeground(_qcolor(category_color))
-                if not_recoverable:
-                    category_item.setToolTip("복구할 수 없는 파일입니다.")
 
                 camera_text = " ".join(part for part in (info.camera_make, info.camera_model) if part)
                 camera_item = QTableWidgetItem(camera_text or "-")
@@ -768,12 +766,11 @@ class ResultScreen(QWidget):
                 self.table.setItem(row, 0, check_item)
                 self.table.setItem(row, 1, status_item)
                 self.table.setItem(row, 2, name_item)
-                self.table.setItem(row, 3, format_item)
-                self.table.setItem(row, 4, ext_item)
-                self.table.setItem(row, 5, size_item)
-                self.table.setItem(row, 6, date_item)
-                self.table.setItem(row, 7, category_item)
-                self.table.setItem(row, 8, camera_item)
+                self.table.setItem(row, 3, ext_item)
+                self.table.setItem(row, 4, size_item)
+                self.table.setItem(row, 5, date_item)
+                self._set_category_cell(row, info.path, not_recoverable)
+                self.table.setItem(row, 7, camera_item)
 
             self.table.blockSignals(False)
         finally:
@@ -979,6 +976,8 @@ class ResultScreen(QWidget):
     def _category_cell_text(self, path: str) -> str:
         # "아직 이 사진 차례가 안 왔다"(분석 중)와 "분석했는데 매칭 카테고리
         # 없음"(-)을 구분해야 한다 — _category_by_path에 키가 있는지로 판단.
+        # 뱃지 위젯이 화면엔 보이지만, 이 텍스트는 정렬 기준(가나다순 등)과
+        # 검색 대상으로 여전히 필요해서 item에 그대로 심어둔다.
         if path not in self._category_by_path:
             return "분석 중" if self._hub_worker is not None else "-"
         matched_ids = self._category_by_path[path]
@@ -986,14 +985,58 @@ class ResultScreen(QWidget):
             return "-"
         return ", ".join(CATEGORY_FINDER_DEFS[cat_id].title for cat_id in matched_ids)
 
-    def _category_cell_color(self, path: str) -> str | None:
-        """카테고리 1개에만 매칭된 사진만 그 카테고리 색으로 표시한다 — 2개
-        이상 매칭되면 어느 색을 대표로 써야 할지 애매해지므로 기본 글자색으로
-        둔다(카드 쪽은 색을 안 쓰므로 표 컬럼에만 적용되는 판단)."""
+    def _build_category_badges(self, matched_ids: list[str]) -> QWidget:
+        """카테고리별 색깔 알약(배지) 위젯 — 정리 허브 리디자인 목업
+        (experiments/organize_hub_redesign_mockup/mockup.py::build_category_badge)의
+        스타일을 그대로 가져왔다. 사진 한 장이 여러 카테고리에 매칭될 수 있어
+        배지를 가로로 나란히 놓는다."""
+        container = QWidget()
+        layout = QHBoxLayout(container)
+        layout.setContentsMargins(4, 2, 4, 2)
+        layout.setSpacing(4)
+        for cat_id in matched_ids:
+            category = CATEGORY_FINDER_DEFS[cat_id]
+            badge = QLabel(category.title)
+            badge.setStyleSheet(
+                f"color: white; background-color: {category.color}; border-radius: 8px; "
+                f"padding: 1px 7px; font-size: 11px; font-weight: 600;"
+            )
+            layout.addWidget(badge)
+        layout.addStretch(1)
+        return container
+
+    def _set_category_cell(self, row: int, path: str, not_recoverable: bool = False) -> None:
+        """카테고리 컬럼의 표시 아이템(정렬/검색용 텍스트)과 배지 위젯을 함께
+        갱신한다. 초기 채우기(_populate_table), 실시간 분류 결과 도착
+        (_on_file_classified), 정렬 후 재동기화(_on_sort_changed) 세 군데가
+        모두 이 함수 하나로 모인다 — 세 곳이 각자 따로 하다 어긋나기 쉬운
+        코드라 하나로 합침."""
+        item = QTableWidgetItem(self._category_cell_text(path))
+        if not_recoverable:
+            item.setToolTip("복구할 수 없는 파일입니다.")
+        self.table.setItem(row, 6, item)
+
         matched_ids = self._category_by_path.get(path)
-        if not matched_ids or len(matched_ids) != 1:
-            return None
-        return CATEGORY_FINDER_DEFS[matched_ids[0]].color
+        if matched_ids:
+            self.table.setCellWidget(row, 6, self._build_category_badges(matched_ids))
+        else:
+            self.table.removeCellWidget(row, 6)
+
+    def _on_sort_changed(self, *_args) -> None:
+        """헤더 클릭으로 행 순서가 바뀌면 Qt가 item은 같이 옮겨주지만, 앞서
+        setCellWidget로 심어둔 카테고리 배지는 원래 (행, 열) 위치에 그대로
+        남아 텍스트와 배지가 서로 다른 행으로 어긋난다(위 _build_category_badges
+        참고) — _row_by_path(카테고리 실시간 갱신용 매핑)도 옛 행 번호를 들고
+        있게 되므로 같이 새로 만든다."""
+        self._row_by_path = {}
+        for row in range(self.table.rowCount()):
+            check_item = self.table.item(row, 0)
+            info = check_item.data(Qt.UserRole) if check_item is not None else None
+            if info is None:
+                continue
+            self._row_by_path[info.path] = row
+            not_recoverable = info.recoverable == RecoveryPossibility.NOT_RECOVERABLE
+            self._set_category_cell(row, info.path, not_recoverable)
 
     def _stop_category_scan(self) -> None:
         if self._hub_worker is not None:
@@ -1061,11 +1104,7 @@ class ResultScreen(QWidget):
 
         row = self._row_by_path.get(path)
         if row is not None:
-            item = self.table.item(row, 7)
-            if item is not None:
-                item.setText(self._category_cell_text(path))
-                category_color = self._category_cell_color(path)
-                item.setForeground(_qcolor(category_color) if category_color is not None else _qcolor(COLORS["text"]))
+            self._set_category_cell(row, path)
 
     def _on_category_scan_finished(self) -> None:
         self._hub_worker = None
