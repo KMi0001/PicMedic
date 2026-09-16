@@ -97,9 +97,14 @@ def test_trash():
         (old_group_dir / "_사유.txt").write_text(
             f"옛날 방식 사유\n\n남긴 파일: {old_kept_source}", encoding="utf-8"
         )
-        manifest = trash._load_manifest(trash_dir)
+        # trash_dir은 이 테스트에서 이미 여러 번 move_to_trash/restore_from_trash를
+        # 거쳐서 매니페스트가 메모리 캐시에 있다(utils/trash.py — 대량 배치 성능
+        # 개선으로 파일마다 디스크에 바로 쓰지 않음, 2026-09-17). 그래서 여기서도
+        # _load_manifest/_save_manifest로 디스크를 직접 건드리면 캐시와 어긋나
+        # 방금 쓴 내용이 무시된다 — 캐시를 거치는 함수로 맞춰야 한다.
+        manifest = trash._get_manifest(trash_dir)
         manifest["2026-09-01_1430_그룹0001/old_dup.jpg"] = {"original": "C:/원본/old_dup.jpg"}
-        trash._save_manifest(trash_dir, manifest)
+        trash._mark_dirty(trash_dir)
 
         moved_count, migrate_failed = trash.migrate_group_folders_to_flat(trash_dir)
         check("마이그레이션이 옛 폴더의 파일 1개를 옮김", moved_count == 1, f"실제={moved_count}")
@@ -135,7 +140,54 @@ def test_trash():
             other_dest.parent == other_dir / trash.TRASH_FOLDER_NAME and other_dest.parent != trash_dir,
         )
 
+def test_trash_manifest_batching():
+    """2026-09-17 실사용 리포트: 중복 파일 22,132개 정리가 "응답없음"처럼
+    보임 — move_to_trash()가 파일마다 매니페스트 전체를 다시 읽고 다시 써서
+    (utils/trash.py) 매니페스트가 커질수록 갈수록 느려지는(사실상 O(n^2))
+    구조였다. 파일마다 디스크에 쓰지 않고 메모리에 모아뒀다가
+    flush_trash_manifests()가 한 번에 쓰도록 고쳤다 — 이 테스트는 실제로
+    디스크 쓰기 횟수가 파일 개수보다 훨씬 적은지 직접 센다."""
+    import time
+
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp = Path(tmp)
+        source_dir = tmp / "many_dups"
+        source_dir.mkdir()
+
+        save_calls = {"count": 0}
+        original_save = trash._save_manifest
+
+        def counting_save(trash_dir, manifest):
+            save_calls["count"] += 1
+            original_save(trash_dir, manifest)
+
+        trash._save_manifest = counting_save
+        try:
+            N = 450  # 자동 플러시 기준(200)을 두 번 넘기는 수
+            group_id = trash.new_group_id()
+            for i in range(N):
+                f = source_dir / f"dup_{i}.jpg"
+                f.write_text(f"content {i}")
+                trash.move_to_trash(f, group_id=group_id, reason="배치 테스트")
+            before_final_flush = save_calls["count"]
+            trash.flush_trash_manifests()
+            after_final_flush = save_calls["count"]
+        finally:
+            trash._save_manifest = original_save
+
+        check(
+            f"파일마다 디스크에 쓰지 않고 훨씬 적게 씀({N}개 옮겼는데 디스크 쓰기 {before_final_flush}회)",
+            before_final_flush < N / 2,
+            f"실제 쓰기 횟수={before_final_flush}",
+        )
+        check("배치 끝 flush로 최종 반영됨(추가로 최소 1번 더 씀)", after_final_flush > before_final_flush)
+
+        trash_dir = trash.trash_dir_for(source_dir)
+        on_disk = trash._load_manifest(trash_dir)  # 캐시를 거치지 않고 진짜 디스크 상태를 직접 확인
+        check(f"플러시 후 디스크 매니페스트에 {N}개 전부 반영됨", len(on_disk) == N, f"실제={len(on_disk)}")
+
 
 if __name__ == "__main__":  # pytest 없이 이 파일 하나만 돌려보고 싶을 때
     test_trash()
+    test_trash_manifest_batching()
     print("OK")

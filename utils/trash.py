@@ -66,6 +66,51 @@ def _save_manifest(trash_dir: Path, manifest: dict) -> None:
     _manifest_path(trash_dir).write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+# 매니페스트를 파일 1개 옮길 때마다 통째로 다시 읽고 다시 쓰면, 큰 배치(수천~
+# 수만 장을 한 번에 정리)에서 매니페스트가 커질수록 매번 더 느려져 사실상
+# O(n^2)이 된다(2026-09-17, 실사용 리포트 — 중복 파일 22,132개 정리가
+# "응답없음"처럼 보임). 그래서 프로세스 안에서 trash_dir별로 매니페스트를
+# 메모리에 캐싱해두고, 바뀐 것만 모아뒀다가 flush_trash_manifests()가 한 번에
+# 디스크에 쓴다. 이 모듈의 다른 함수(restore_from_trash 등)도 전부 이 캐시를
+# 거치므로, 같은 프로세스 안에서는 아직 디스크에 안 쓴 변경사항도 항상 최신
+# 상태로 보인다 — 다른 프로세스(동시에 뜬 다른 PicMedic 창)와의 동기화까지는
+# 보장하지 않는다(이 앱은 보통 한 사람이 한 번에 쓰는 데스크톱 앱이라 그 정도
+# 위험은 감수함).
+_manifest_cache: dict[Path, dict] = {}
+_dirty_trash_dirs: set[Path] = set()
+_WRITES_BEFORE_AUTO_FLUSH = 200  # 이 개수마다 자동으로 디스크에 써서, 배치 도중 죽어도 손실 범위를 제한
+
+
+def _get_manifest(trash_dir: Path) -> dict:
+    if trash_dir not in _manifest_cache:
+        _manifest_cache[trash_dir] = _load_manifest(trash_dir)
+    return _manifest_cache[trash_dir]
+
+
+def _mark_dirty(trash_dir: Path) -> None:
+    _dirty_trash_dirs.add(trash_dir)
+    if len(_dirty_trash_dirs) >= _WRITES_BEFORE_AUTO_FLUSH:
+        flush_trash_manifests()
+
+
+def flush_trash_manifests() -> None:
+    """캐시된 매니페스트 중 실제로 바뀐 것만 디스크에 쓴다. 대량 배치
+    (TrashMoveWorker, core/converter.py의 "원본 대체" 배치 등) 끝에서 반드시
+    호출해서 마지막 변경분이 메모리에만 남지 않게 해야 한다 — 자동 플러시
+    (_WRITES_BEFORE_AUTO_FLUSH)는 크래시 대비 안전장치일 뿐, 매 배치 끝에는
+    항상 명시적으로 불러야 한다.
+
+    trash_dir 하나가 그 사이 없어졌어도(예: 원본 폴더째로 삭제됨) 나머지
+    trash_dir들은 정상적으로 플러시돼야 한다 — utils/logger.py::_write와 같은
+    이유로 개별 실패를 조용히 건너뛴다."""
+    for trash_dir in list(_dirty_trash_dirs):
+        try:
+            _save_manifest(trash_dir, _manifest_cache[trash_dir])
+        except OSError:
+            continue
+        _dirty_trash_dirs.discard(trash_dir)
+
+
 def new_group_id() -> str:
     """"같이 옮겨진 파일들"(예: 중복 그룹 하나) 묶음을 나타내는 식별자 —
     폴더를 만들지 않으므로 매니페스트 안에서만 쓰이는 문자열 태그다. 사람이
@@ -111,7 +156,7 @@ def move_to_trash(
     dest = _unique_dest(trash_dir, path.name)
     shutil.move(str(path), str(dest))
 
-    manifest = _load_manifest(trash_dir)
+    manifest = _get_manifest(trash_dir)
     entry: dict = {"original": original}
     if group_id is not None:
         entry["group_id"] = group_id
@@ -120,7 +165,7 @@ def move_to_trash(
     if kept_path is not None:
         entry["kept_path"] = str(kept_path)
     manifest[dest.name] = entry
-    _save_manifest(trash_dir, manifest)
+    _mark_dirty(trash_dir)
 
     return dest
 
@@ -132,7 +177,7 @@ def entry_for(path: str | Path) -> dict | None:
     옮겨진 옛 항목(문자열 값만 있음)은 {"original": 그 문자열}로 정규화해서
     돌려준다."""
     path = Path(path)
-    manifest = _load_manifest(path.parent)
+    manifest = _get_manifest(path.parent)
     entry = manifest.get(path.name)
     if entry is None:
         return None
@@ -148,7 +193,7 @@ def restore_from_trash(path: str | Path) -> Path:
     이미 있으면 번호를 붙여 덮어쓰지 않는다."""
     path = Path(path)
     trash_dir = path.parent
-    manifest = _load_manifest(trash_dir)
+    manifest = _get_manifest(trash_dir)
     key = path.name
     entry = manifest.get(key)
     if not entry:
@@ -165,7 +210,11 @@ def restore_from_trash(path: str | Path) -> Path:
     shutil.move(str(path), str(dest))
 
     del manifest[key]
-    _save_manifest(trash_dir, manifest)
+    # 복원은 한 번에 하나씩, 사용자가 누를 때마다 바로 일어나는 동작이라
+    # (move_to_trash와 달리 배치로 안 몰림) 다음 자동 플러시까지 기다리지
+    # 않고 바로 디스크에 반영한다.
+    _mark_dirty(trash_dir)
+    flush_trash_manifests()
 
     return dest
 
@@ -191,7 +240,7 @@ def migrate_group_folders_to_flat(trash_dir: str | Path) -> tuple[int, list[str]
     if not trash_dir.exists():
         return 0, []
 
-    manifest = _load_manifest(trash_dir)
+    manifest = _get_manifest(trash_dir)
     moved_count = 0
     failed: list[str] = []
 
@@ -253,5 +302,6 @@ def migrate_group_folders_to_flat(trash_dir: str | Path) -> tuple[int, list[str]
         except OSError as exc:
             failed.append(f"{group_dir.name} 폴더 정리 실패: {exc}")
 
-    _save_manifest(trash_dir, manifest)
+    _mark_dirty(trash_dir)
+    flush_trash_manifests()
     return moved_count, failed

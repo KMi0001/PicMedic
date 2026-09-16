@@ -68,4 +68,10 @@ class TrashMoveWorker(QThread):
                 self.progress.emit(done, total, Path(info.path).name)
             completed_entry_indices.append(entry_idx)
 
+        # move_to_trash()는 매 파일마다 디스크에 쓰지 않고 메모리에 모아둔다
+        # (utils/trash.py — 대량 배치에서 매니페스트를 매번 다시 쓰면 갈수록
+        # 느려지는 문제, 2026-09-17 실사용 리포트로 발견). 배치가 끝나면(취소로
+        # 중간에 멈췄어도) 반드시 여기서 실제로 디스크에 써야 한다.
+        trash.flush_trash_manifests()
+
         self.finished_batch.emit(moved, failed, moved_infos, completed_entry_indices)

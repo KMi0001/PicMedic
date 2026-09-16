@@ -316,4 +316,9 @@ def recover_batch(
             # PRD 23.5: 저장 공간 부족 등으로 더 진행해도 소용없는 경우, 지금까지 성공한
             # 파일은 그대로 두고 나머지 파일 처리는 건너뛴다(전체 배치를 여기서 중단).
             break
+    # replace_original=True 배치는 파일마다 utils/trash.move_to_trash()를 불러
+    # 원본을 임시휴지통으로 옮기는데, 그 매니페스트 쓰기는 메모리에 모아뒀다가
+    # 나중에 한 번에 쓰는 방식으로 바뀌었다(gui/trash_worker.py와 같은 이유,
+    # 2026-09-17). replace_original이 아니면 아무것도 안 쌓였으니 그냥 no-op.
+    trash.flush_trash_manifests()
     return outcomes
