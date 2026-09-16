@@ -991,6 +991,12 @@ class ResultScreen(QWidget):
         스타일을 그대로 가져왔다. 사진 한 장이 여러 카테고리에 매칭될 수 있어
         배지를 가로로 나란히 놓는다."""
         container = QWidget()
+        # gui/theme.py의 전역 `QWidget { background-color: ... }` 규칙 때문에
+        # 배경을 안 지정하면 셀 전체가 앱 배경색으로 칠해져 표 위에 얼룩진
+        # 띠처럼 보인다(같은 파일의 QLabel 기본 투명 처리와 같은 이유 —
+        # QLabel/QRadioButton/QCheckBox는 이미 전역으로 처리돼 있지만 QWidget
+        # 컨테이너는 여기서 직접 투명 처리해야 한다).
+        container.setStyleSheet("background-color: transparent;")
         layout = QHBoxLayout(container)
         layout.setContentsMargins(4, 2, 4, 2)
         layout.setSpacing(4)
