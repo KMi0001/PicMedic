@@ -509,10 +509,18 @@ class DuplicateScreen(QWidget):
             toggle_btn.setCheckable(True)
             toggle_btn.setAutoRaise(True)
             toggle_btn.setCursor(Qt.PointingHandCursor)
-            toggle_btn.setToolTip(f"{folder}\n눌러서 이 폴더를 남겼을 때 지워질 파일을 확인하세요")
+            toggle_btn.setToolTip(f"{folder}\n눌러서 이 폴더를 남기도록 선택하고, 지워질 파일도 같이 확인하세요")
             toggle_btn.setStyleSheet(
                 "QToolButton { border: none; background: transparent; text-align: left; }"
             )
+            # 폴더명(이 버튼)을 누르면 펼침/접힘만 되고 실제 라디오 선택은
+            # 안 바뀌던 문제(2026-09-17, 사용자 리포트 — 폴더명을 눌러서
+            # "이걸 남기겠다"고 골랐다고 생각했는데 실제로는 선택이 안 바뀌어
+            # 반대 폴더가 지워짐) — 폴더명을 누르면 라디오도 같이 선택되게
+            # 한다. toggled가 아니라 clicked에 건다: toggled는 펼침 상태가
+            # "바뀔 때만" 오는데(이미 펼쳐둔 걸 다시 누르면 접히기만 하고
+            # 다시 안 옴), 라디오 선택은 매번 누를 때마다 반영돼야 한다.
+            toggle_btn.clicked.connect(lambda _checked=False, r=radio: r.setChecked(True))
             table.setCellWidget(row, 1, toggle_btn)
 
             keep_status_item = QTableWidgetItem("유지")
@@ -666,8 +674,16 @@ class DuplicateScreen(QWidget):
             path_label = _ClickableLabel(info.path)
             path_label.setWordWrap(True)
             path_label.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 12px;")
-            path_label.setToolTip("눌러서 사진 보기")
-            path_label.clicked.connect(lambda info=info: self.file_selected.emit(info, group))
+            path_label.setToolTip("눌러서 이 파일을 남기도록 선택하고, 사진도 같이 확인하세요")
+
+            def _on_path_clicked(info=info, r=radio):
+                # 경로를 눌러도 미리보기만 열리고 라디오 선택은 안 바뀌던 문제
+                # (위 _build_cluster_table과 같은 이유로 발견) — 경로를 누르면
+                # "이 파일을 남긴다" 선택도 같이 되게 한다.
+                r.setChecked(True)
+                self.file_selected.emit(info, group)
+
+            path_label.clicked.connect(_on_path_clicked)
             row.addWidget(path_label, stretch=1)
             layout.addLayout(row)
 
