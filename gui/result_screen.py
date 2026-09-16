@@ -420,15 +420,21 @@ class ResultScreen(QWidget):
 
         # 2026-09-13: 8번째 컬럼 "카테고리" 추가 — 옛 정리 허브 화면의 카테고리
         # 찾기(동물친구들 등) 백그라운드 계산 결과를 이 표에서 바로 보여준다.
-        self.table = QTableWidget(0, 8)
+        # 2026-09-16: 9번째 컬럼 "촬영 기기" 추가 — 상세 화면까지 안 들어가도
+        # 목록에서 바로 보이도록(사용자 요청 — 상세 화면에 넣었더니 "결과
+        # 목록에 보이게 하라니깐" 이라는 피드백을 받음).
+        self.table = QTableWidget(0, 9)
         self._header = CheckAllHeaderView(self.table)
         self._header.toggled.connect(self._on_header_toggled)
         self.table.setHorizontalHeader(self._header)
-        self.table.setHorizontalHeaderLabels(["", "상태", "파일명", "실제 형식", "확장자", "크기", "수정일", "카테고리"])
+        self.table.setHorizontalHeaderLabels(
+            ["", "상태", "파일명", "실제 형식", "확장자", "크기", "수정일", "카테고리", "촬영 기기"]
+        )
         self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Fixed)
         self.table.setColumnWidth(0, 32)
         self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
         self.table.horizontalHeader().setSectionResizeMode(7, QHeaderView.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(8, QHeaderView.ResizeToContents)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
@@ -754,6 +760,11 @@ class ResultScreen(QWidget):
                 if not_recoverable:
                     category_item.setToolTip("복구할 수 없는 파일입니다.")
 
+                camera_text = " ".join(part for part in (info.camera_make, info.camera_model) if part)
+                camera_item = QTableWidgetItem(camera_text or "-")
+                if not_recoverable:
+                    camera_item.setToolTip("복구할 수 없는 파일입니다.")
+
                 self.table.setItem(row, 0, check_item)
                 self.table.setItem(row, 1, status_item)
                 self.table.setItem(row, 2, name_item)
@@ -762,6 +773,7 @@ class ResultScreen(QWidget):
                 self.table.setItem(row, 5, size_item)
                 self.table.setItem(row, 6, date_item)
                 self.table.setItem(row, 7, category_item)
+                self.table.setItem(row, 8, camera_item)
 
             self.table.blockSignals(False)
         finally:
