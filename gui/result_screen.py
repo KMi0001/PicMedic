@@ -79,6 +79,12 @@ class _HubCategoryWorker(QThread):
 # 불가까지 한데 묶는다 — 사용자 요청(2026-09-08): "오류나 지원안함은 손상으로
 # 넣자, 어차피 손상정도면 복구 못해주잖아" — 어차피 복구 불가능은 매한가지라
 # 필터를 그만큼 잘게 나눌 필요가 없다는 판단.
+# 검사 결과 표의 "카테고리"/"촬영 기기" 컬럼 인덱스 — 정렬 잠금(카테고리
+# 배지가 실시간으로 바뀌는 동안 정렬을 막는 로직)과 셀 갱신 여러 군데서
+# 공유해서 쓴다(하드코딩된 숫자가 여기저기 흩어지지 않게).
+_CATEGORY_COLUMN = 6
+_CAMERA_COLUMN = 7
+
 _CORRUPTED_LIKE_STATUSES = (
     FileStatus.CORRUPTED,
     FileStatus.UNSUPPORTED,
@@ -163,6 +169,17 @@ class CheckAllHeaderView(QHeaderView):
         super().__init__(Qt.Horizontal, parent)
         self._checked = False
         self.setSectionsClickable(True)
+        # 카테고리 배지가 백그라운드에서 계속 채워지는 동안 그 컬럼으로 정렬을
+        # 걸면, 사진이 새로 분류될 때마다(setItem) Qt가 활성 정렬 컬럼 기준으로
+        # 자동 재정렬하면서 행이 계속 튀고 배지(셀 위젯)는 그 자리에 안 따라와
+        # 어긋난다(2026-09-17, 사용자 리포트 — "정리활성 상태인데 카테고리
+        # 선택하면 난장판됨"). 근본적으로 매 분류 결과마다 재정렬을 다시
+        # 맞추기보다, 분류가 끝날 때까지 그 컬럼 클릭 자체를 막는 쪽이 훨씬
+        # 단순하고 확실하다(사용자 제안).
+        self._sort_locked_column: int | None = None
+
+    def set_sort_locked_column(self, column: int | None) -> None:
+        self._sort_locked_column = column
 
     def set_checked(self, checked: bool):
         if self._checked != checked:
@@ -200,11 +217,14 @@ class CheckAllHeaderView(QHeaderView):
 
     def mousePressEvent(self, event):
         pos = event.position().toPoint() if hasattr(event, "position") else event.pos()
-        if self.logicalIndexAt(pos) == self.CHECK_COLUMN:
+        index = self.logicalIndexAt(pos)
+        if index == self.CHECK_COLUMN:
             self._checked = not self._checked
             self.updateSection(self.CHECK_COLUMN)
             self.toggled.emit(self._checked)
             return
+        if index == self._sort_locked_column:
+            return  # 분류 진행 중엔 이 컬럼 클릭을 무시해서 정렬이 안 걸리게 한다
         super().mousePressEvent(event)
 
 
@@ -433,8 +453,8 @@ class ResultScreen(QWidget):
         self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Fixed)
         self.table.setColumnWidth(0, 32)
         self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
-        self.table.horizontalHeader().setSectionResizeMode(6, QHeaderView.ResizeToContents)
-        self.table.horizontalHeader().setSectionResizeMode(7, QHeaderView.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(_CATEGORY_COLUMN, QHeaderView.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(_CAMERA_COLUMN, QHeaderView.ResizeToContents)
         # 정렬(헤더 클릭)이 일어나면 Qt가 행 순서는 새로 맞춰주지만, setCellWidget로
         # 심어둔 카테고리 배지는 행을 따라오지 않고 원래 위치에 남는 함정이 있다
         # (experiments/organize_hub_redesign_mockup/merged_screen_options.py에서
@@ -770,7 +790,7 @@ class ResultScreen(QWidget):
                 self.table.setItem(row, 4, size_item)
                 self.table.setItem(row, 5, date_item)
                 self._set_category_cell(row, info.path, not_recoverable)
-                self.table.setItem(row, 7, camera_item)
+                self.table.setItem(row, _CAMERA_COLUMN, camera_item)
 
             self.table.blockSignals(False)
         finally:
@@ -1020,13 +1040,13 @@ class ResultScreen(QWidget):
         item = QTableWidgetItem(self._category_cell_text(path))
         if not_recoverable:
             item.setToolTip("복구할 수 없는 파일입니다.")
-        self.table.setItem(row, 6, item)
+        self.table.setItem(row, _CATEGORY_COLUMN, item)
 
         matched_ids = self._category_by_path.get(path)
         if matched_ids:
-            self.table.setCellWidget(row, 6, self._build_category_badges(matched_ids))
+            self.table.setCellWidget(row, _CATEGORY_COLUMN, self._build_category_badges(matched_ids))
         else:
-            self.table.removeCellWidget(row, 6)
+            self.table.removeCellWidget(row, _CATEGORY_COLUMN)
 
     def _on_sort_changed(self, *_args) -> None:
         """헤더 클릭으로 행 순서가 바뀌면 Qt가 item은 같이 옮겨주지만, 앞서
@@ -1060,6 +1080,7 @@ class ResultScreen(QWidget):
         self._category_by_path = {}
         self.category_progress_bar.hide()
         self.category_progress_label.setText("")
+        self._header.set_sort_locked_column(None)  # 새로 시작하니 일단 풀고, 실제로 돌 때만 다시 잠금
 
         from core.category_finder import is_available
 
@@ -1074,6 +1095,12 @@ class ResultScreen(QWidget):
             self._set_card_count(card, "분석 중")
 
         readable_files = [info for info in files if info.readable]
+        if readable_files:
+            # 분류가 진행되는 동안 이 컬럼으로 정렬하면 사진이 새로 분류될
+            # 때마다 Qt가 자동 재정렬해서 행이 계속 튀고 배지가 어긋난다
+            # (CheckAllHeaderView.mousePressEvent 주석 참고) — 그래서 분류가
+            # 끝날 때까지 이 컬럼 클릭 자체를 막는다(2026-09-17, 사용자 제안).
+            self._header.set_sort_locked_column(_CATEGORY_COLUMN)
         self._category_scan_total = len(readable_files)
         self._category_scan_done = 0
         if self._category_scan_total:
@@ -1116,6 +1143,7 @@ class ResultScreen(QWidget):
         self._hub_worker = None
         self.category_progress_bar.hide()
         self.category_progress_label.setText("")
+        self._header.set_sort_locked_column(None)  # 분류 다 끝났으니 카테고리 컬럼 정렬 다시 허용
         if self._category_matches is not None:
             for matches in self._category_matches.values():
                 matches.sort(key=lambda pair: pair[1], reverse=True)  # 확신도 높은 순 — CategoryFinderScreen과 동일

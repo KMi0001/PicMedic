@@ -12,12 +12,13 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from tests.helpers import check
+from tests.helpers import check, skip
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QPoint
+from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
-from gui.result_screen import ResultScreen
+from gui.result_screen import ResultScreen, _CATEGORY_COLUMN
 from models.file_info import FileInfo, FileStatus, RecoveryPossibility
 from models.scan_result import ScanResult
 
@@ -153,6 +154,69 @@ def test_result_screen():
     check(f"필터 복귀 후 {N_TOTAL}행 전부 보임", mixed_screen.table.rowCount() == N_TOTAL)
 
 
+def test_category_scan_locks_column_sort():
+    """2026-09-17 실사용 리포트: "정리활성 상태인데 카테고리 선택해서 정렬하면
+    난장판됨" — 카테고리 분류가 백그라운드에서 도는 동안 그 컬럼으로 정렬을
+    걸면, 분류 결과가 하나씩 도착할 때마다(setItem) Qt가 활성 정렬 컬럼
+    기준으로 계속 자동 재정렬하면서 행이 튀고 배지(셀 위젯)는 안 따라와
+    어긋난다. 분류가 끝날 때까지 그 컬럼 헤더 클릭 자체를 막는 것으로 해결—
+    이 테스트는 잠금 상태 전환과 "잠겨있으면 클릭이 씹히는지"를 확인한다."""
+    from core.category_finder import is_available
+
+    if not is_available():
+        skip("카테고리 분류 자산(assets/photo_category)이 없어 건너뜀")
+        return
+
+    app = QApplication.instance() or QApplication(sys.argv)
+
+    result = ScanResult()
+    for i in range(5):
+        result.add(
+            FileInfo(
+                path=f"C:/fake/f{i}.jpg",
+                filename=f"f{i}.jpg",
+                extension=".jpg",
+                status=FileStatus.NORMAL,
+                recoverable=RecoveryPossibility.NOT_APPLICABLE,
+                readable=True,  # readable_files 필터를 통과해야 실제로 워커가 돌고 잠금도 걸림
+            )
+        )
+
+    screen = ResultScreen()
+    screen.show()
+    screen.set_result(result)
+    header = screen._header
+
+    check("검사 직후 카테고리 워커가 시작됨", screen._hub_worker is not None)
+    check(
+        f"분류 진행 중엔 카테고리 컬럼이 정렬 잠금됨",
+        header._sort_locked_column == _CATEGORY_COLUMN,
+        f"실제={header._sort_locked_column}",
+    )
+
+    clicked = {"count": 0}
+    header.sectionClicked.connect(lambda i: clicked.__setitem__("count", clicked["count"] + 1))
+    section_pos = header.sectionViewportPosition(_CATEGORY_COLUMN) + 5
+    click_point = QPoint(section_pos, header.height() // 2)
+
+    QTest.mouseClick(header.viewport(), Qt.LeftButton, Qt.NoModifier, click_point)
+    app.processEvents()
+    check("잠긴 동안 카테고리 헤더 클릭이 무시됨(sectionClicked 안 뜸)", clicked["count"] == 0)
+
+    if screen._hub_worker is not None:
+        screen._hub_worker.wait(5000)
+    for _ in range(100):
+        app.processEvents()
+        if header._sort_locked_column is None:
+            break
+    check("분류 완료 후 잠금이 풀림", header._sort_locked_column is None)
+
+    QTest.mouseClick(header.viewport(), Qt.LeftButton, Qt.NoModifier, click_point)
+    app.processEvents()
+    check("잠금 해제 후엔 카테고리 헤더 클릭이 정상 동작함", clicked["count"] == 1)
+
+
 if __name__ == "__main__":  # pytest 없이 이 파일 하나만 돌려보고 싶을 때
     test_result_screen()
+    test_category_scan_locks_column_sort()
     print("OK")
