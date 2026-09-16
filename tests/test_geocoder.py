@@ -14,7 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from tests.helpers import check
 
-from core.geocoder import country_name_ko, resolve_cities, resolve_country_codes, resolve_province_names
+from core.geocoder import _localize, country_name_ko, resolve_cities, resolve_country_codes, resolve_province_names
 
 
 def test_geocoder():
@@ -100,8 +100,31 @@ def test_resolve_province_names():
     check("도쿄는 admin1 원문(번역 테이블 밖)", provinces[3] not in ("", None), provinces[3])
 
 
+def test_localize_falls_back_to_province_for_unknown_city():
+    """2026-09-17 사용자 리포트: 지도에 "Fuyo"/"Kyosai" 같이 알아보기 힘든
+    로마자 소도시 이름이 그대로 나옴 — 번역 사전에 없는 도시는 로마자
+    표기 대신 시/도 이름으로 대체한다(시/도까지 없으면 그제서야 로마자)."""
+    check(
+        "국내 - 번역 사전에 없는 도시명은 시/도로 대체됨",
+        _localize("Buyeo", "KR", "Chungcheongnam-do") == "충청남도",
+        _localize("Buyeo", "KR", "Chungcheongnam-do"),
+    )
+    check("국내 - 번역 사전에 있는 유명 도시는 그대로(시/도로 안 바뀜)", _localize("Seoul", "KR", "Seoul") == "서울")
+    check(
+        "국내 - 시/도 정보까지 없으면 로마자 그대로(최후 수단)",
+        _localize("Buyeo", "KR", "") == "Buyeo",
+    )
+    check(
+        "해외 - 번역 사전에 없는 도시는 admin1로 대체",
+        _localize("Random Town", "US", "Texas") == "Texas, 미국",
+        _localize("Random Town", "US", "Texas"),
+    )
+    check("해외 - 번역 사전에 있는 유명 도시는 그대로", _localize("Tokyo", "JP", "Tokyo") == "도쿄, 일본")
+
+
 if __name__ == "__main__":  # pytest 없이 이 파일 하나만 돌려보고 싶을 때
     test_geocoder()
     test_resolve_country_codes()
     test_resolve_province_names()
+    test_localize_falls_back_to_province_for_unknown_city()
     print("OK")

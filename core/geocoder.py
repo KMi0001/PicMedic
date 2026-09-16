@@ -104,14 +104,26 @@ _KOREAN_COUNTRY_NAMES: dict[str, str] = {
 }
 
 
-def _localize(name: str, cc: str) -> str:
-    """(도시 로마자 표기, 국가 코드) -> 화면에 보여줄 한국어 라벨. 국내는
-    도시명만(국가 표기가 중복 정보라 생략), 해외는 "도시, 국가" 형태 —
-    둘 다 매핑에 없는 이름은 원래 로마자 표기를 그대로 보여준다."""
-    if cc == "KR":
-        return _KOREAN_CITY_NAMES.get(name, name)
+def _localize(name: str, cc: str, admin1: str = "") -> str:
+    """(도시 로마자 표기, 국가 코드, 시/도) -> 화면에 보여줄 한국어 라벨.
+    국내는 도시명만(국가 표기가 중복 정보라 생략), 해외는 "도시, 국가" 형태.
 
-    city = _INTL_CITY_NAMES.get(name, name)
+    둘 다 번역 사전(_KOREAN_CITY_NAMES/_INTL_CITY_NAMES)에 없는 이름은
+    GeoNames 최근접 매칭이 흔히 잘 모르는 소도시·읍면 단위까지 내려가서
+    "Fuyo"/"Kyosai" 같이 알아보기 힘든 로마자 표기가 그대로 나온다
+    (2026-09-17, 사용자 리포트 — 실사용 지도 스크린샷에서 확인). 그럴 땐
+    도시명 대신 시/도 이름으로 대체한다 — "부여시" 하나 모르는 것보다
+    "충청남도"가 훨씬 알아보기 쉽다는 판단. 시/도까지 없으면(드묾) 그냥
+    로마자 표기를 그대로 보여준다."""
+    if cc == "KR":
+        if name in _KOREAN_CITY_NAMES:
+            return _KOREAN_CITY_NAMES[name]
+        return _KOREAN_PROVINCE_NAMES.get(admin1, admin1) if admin1 else name
+
+    if name in _INTL_CITY_NAMES:
+        city = _INTL_CITY_NAMES[name]
+    else:
+        city = admin1 or name
     country = _KOREAN_COUNTRY_NAMES.get(cc, cc)
     return f"{city}, {country}"
 
@@ -211,7 +223,7 @@ def resolve_cities(coords: list[tuple[float, float]]) -> list[Optional[str]]:
     목록. 개별 좌표가 이상해도(예: 범위 밖) 항상 가장 가까운 지점을 찾아
     결과를 반환하므로 None은 나오지 않지만, 시그니처는 향후 실패 케이스를
     대비해 Optional로 둔다."""
-    return [_localize(r["name"], r["cc"]) for r in _resolve_raw(coords)]
+    return [_localize(r["name"], r["cc"], r.get("admin1", "")) for r in _resolve_raw(coords)]
 
 
 def resolve_country_codes(coords: list[tuple[float, float]]) -> list[str]:
