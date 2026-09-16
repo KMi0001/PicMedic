@@ -727,6 +727,9 @@ class ResultScreen(QWidget):
                         cell.setToolTip("복구할 수 없는 파일입니다.")
 
                 category_item = QTableWidgetItem(self._category_cell_text(info.path))
+                category_color = self._category_cell_color(info.path)
+                if category_color is not None:
+                    category_item.setForeground(_qcolor(category_color))
                 if not_recoverable:
                     category_item.setToolTip("복구할 수 없는 파일입니다.")
 
@@ -950,6 +953,15 @@ class ResultScreen(QWidget):
             return "-"
         return ", ".join(CATEGORY_FINDER_DEFS[cat_id].title for cat_id in matched_ids)
 
+    def _category_cell_color(self, path: str) -> str | None:
+        """카테고리 1개에만 매칭된 사진만 그 카테고리 색으로 표시한다 — 2개
+        이상 매칭되면 어느 색을 대표로 써야 할지 애매해지므로 기본 글자색으로
+        둔다(카드 쪽은 색을 안 쓰므로 표 컬럼에만 적용되는 판단)."""
+        matched_ids = self._category_by_path.get(path)
+        if not matched_ids or len(matched_ids) != 1:
+            return None
+        return CATEGORY_FINDER_DEFS[matched_ids[0]].color
+
     def _stop_category_scan(self) -> None:
         if self._hub_worker is not None:
             self._hub_worker.cancel()
@@ -1002,6 +1014,8 @@ class ResultScreen(QWidget):
             item = self.table.item(row, 7)
             if item is not None:
                 item.setText(self._category_cell_text(path))
+                category_color = self._category_cell_color(path)
+                item.setForeground(_qcolor(category_color) if category_color is not None else _qcolor(COLORS["text"]))
 
     def _on_category_scan_finished(self) -> None:
         self._hub_worker = None

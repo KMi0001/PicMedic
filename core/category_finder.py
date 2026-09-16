@@ -43,6 +43,7 @@ class CategoryDef:
     positive_prompts: list[str]
     negative_prompts: list[str]
     threshold: float
+    color: str  # 검사 결과 표 "카테고리" 컬럼 글자색(한 사진이 카테고리 1개에만 매칭됐을 때만 적용)
 
 
 # 영어 프롬프트로 정의 — CLIP 텍스트 인코더가 주로 영어로 학습돼 한국어
@@ -71,6 +72,7 @@ CATEGORIES: dict[str, CategoryDef] = {
             "a screenshot or a photo of a document with text",
         ],
         threshold=0.6,
+        color="#8FA06B",
     ),
     "food": CategoryDef(
         id="food",
@@ -94,6 +96,7 @@ CATEGORIES: dict[str, CategoryDef] = {
             "a screenshot or a photo of a document with text",
         ],
         threshold=0.6,
+        color="#D4934F",
     ),
     "document": CategoryDef(
         id="document",
@@ -118,6 +121,7 @@ CATEGORIES: dict[str, CategoryDef] = {
             "a photo of food",
         ],
         threshold=0.6,
+        color="#7A7060",
     ),
     "night": CategoryDef(
         id="night",
@@ -141,6 +145,7 @@ CATEGORIES: dict[str, CategoryDef] = {
             "a close-up photo of food",
         ],
         threshold=0.75,
+        color="#5C6BC0",
     ),
     "landscape": CategoryDef(
         id="landscape",
@@ -168,6 +173,7 @@ CATEGORIES: dict[str, CategoryDef] = {
             "a close-up photo of an animal's face",
         ],
         threshold=0.55,
+        color="#4E9A8F",
     ),
 }
 
