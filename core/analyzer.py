@@ -105,6 +105,8 @@ class _DecodeResult:
         "captured_at",
         "perceptual_hash",
         "gps",
+        "camera_make",
+        "camera_model",
         "error",
     )
 
@@ -117,6 +119,8 @@ class _DecodeResult:
         self.captured_at: Optional[datetime] = None
         self.perceptual_hash: Optional[str] = None
         self.gps: Optional[tuple[float, float]] = None
+        self.camera_make: Optional[str] = None
+        self.camera_model: Optional[str] = None
         self.error: Optional[str] = None
 
 
@@ -136,6 +140,7 @@ def _try_decode(path: Path) -> _DecodeResult:
             result.captured_at = _extract_captured_at(img)
             result.perceptual_hash = _extract_perceptual_hash(img)
             result.gps = _extract_gps(img)
+            result.camera_make, result.camera_model = _extract_camera_info(img)
             return result
     except Exception as first_error:
         result.error = str(first_error)
@@ -151,6 +156,7 @@ def _try_decode(path: Path) -> _DecodeResult:
             result.captured_at = _extract_captured_at(img)
             result.perceptual_hash = _extract_perceptual_hash(img)
             result.gps = _extract_gps(img)
+            result.camera_make, result.camera_model = _extract_camera_info(img)
     except Exception as second_error:
         result.readable = False
         result.error = result.error or str(second_error)
@@ -240,6 +246,25 @@ def _extract_gps(img: Image.Image) -> Optional[tuple[float, float]]:
         return (lat, lon)
     except Exception:
         return None
+
+
+def _extract_camera_info(img: Image.Image) -> tuple[Optional[str], Optional[str]]:
+    """EXIF Make/Model을 읽는다(Phase 2 '기기 정보'). DateTimeOriginal/GPSInfo와
+    달리 이 둘은 서브 IFD가 아니라 최상위 IFD0에 바로 있는 표준 태그라
+    exif.get_ifd() 없이 exif.get()만으로 꺼낼 수 있다. 스크린샷/편집 후
+    재저장/다운로드한 사진 등은 이 태그가 원래 없는 경우가 많으므로, 값이
+    없으면 그냥 None — "알 수 없음"으로 표시하는 건 호출하는 쪽(화면) 책임."""
+    try:
+        exif = img.getexif()
+        if not exif:
+            return None, None
+        make = exif.get(271)  # Make
+        model = exif.get(272)  # Model
+        make = make.strip() if isinstance(make, str) and make.strip() else None
+        model = model.strip() if isinstance(model, str) and model.strip() else None
+        return make, model
+    except Exception:
+        return None, None
 
 
 def _extract_perceptual_hash(img: Image.Image) -> Optional[str]:
@@ -341,6 +366,7 @@ def analyze_file(path: str | Path) -> FileInfo:
             info.perceptual_hash = decode.perceptual_hash
             if decode.gps:
                 info.latitude, info.longitude = decode.gps
+            info.camera_make, info.camera_model = decode.camera_make, decode.camera_model
             info.recoverable = RecoveryPossibility.PARTIALLY_RECOVERABLE
         else:
             info.status = FileStatus.CORRUPTED
@@ -377,6 +403,7 @@ def analyze_file(path: str | Path) -> FileInfo:
     info.perceptual_hash = decode.perceptual_hash
     if decode.gps:
         info.latitude, info.longitude = decode.gps
+    info.camera_make, info.camera_model = decode.camera_make, decode.camera_model
     info.error_message = decode.error
 
     if decode.readable and not decode.partial:

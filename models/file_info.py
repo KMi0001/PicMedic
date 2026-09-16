@@ -54,6 +54,8 @@ class FileInfo:
     captured_at: Optional[datetime] = None   # EXIF 촬영일(DateTimeOriginal, 없으면 DateTime) — Phase 2 '날짜별 정리'
     latitude: Optional[float] = None         # EXIF GPSInfo — Phase 2 '도시별 정리' (core/geocoder.py)
     longitude: Optional[float] = None
+    camera_make: Optional[str] = None        # EXIF Make — Phase 2 '기기 정보' (예: "Apple", "samsung")
+    camera_model: Optional[str] = None        # EXIF Model — 예: "iPhone 14 Pro"
 
     # --- 진단 결과 ---
     status: FileStatus = FileStatus.UNKNOWN

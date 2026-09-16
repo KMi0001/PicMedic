@@ -43,6 +43,17 @@ def test_analyzer():
         check("정상 JPEG -> readable=True", info.readable is True)
         check("정상 JPEG -> 해상도 인식", info.width == 20 and info.height == 20)
         check("정상 JPEG -> 복구불필요", info.recoverable == RecoveryPossibility.NOT_APPLICABLE)
+        check("EXIF 없는 JPEG -> camera_make/model=None", info.camera_make is None and info.camera_model is None)
+
+        # 1-1) EXIF Make/Model이 있는 JPEG (PHASE2_사진정리_기획.md "기기 정보")
+        p = tmp / "with_camera_info.jpg"
+        exif = Image.Exif()
+        exif[271] = "Apple"  # Make
+        exif[272] = "iPhone 14 Pro"  # Model
+        Image.new("RGB", (20, 20), color="red").save(p, format="JPEG", exif=exif)
+        info = analyze_file(p)
+        check("EXIF Make -> camera_make=Apple", info.camera_make == "Apple", info.camera_make)
+        check("EXIF Model -> camera_model=iPhone 14 Pro", info.camera_model == "iPhone 14 Pro", info.camera_model)
 
         # 2) HEIC인데 .jpg로 위장 (PRD 9장 핵심 케이스)
         p = tmp / "IMG_1234.jpg"

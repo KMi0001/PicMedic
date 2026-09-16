@@ -152,6 +152,11 @@ class DetailScreen(QWidget):
             self._add_row("해상도", f"{info.width} × {info.height}")
         else:
             self._add_row("해상도", "-")
+        # 스크린샷/편집 후 재저장/다운로드한 사진은 이 태그가 원래 없는 경우가
+        # 많음(PHASE2_사진정리_기획.md "기기 정보" 참고) — 필수 정보처럼 보이지
+        # 않게 "알 수 없음"으로만 표시.
+        camera_text = " ".join(part for part in (info.camera_make, info.camera_model) if part)
+        self._add_row("촬영 기기", camera_text or "알 수 없음")
         status_color = STATUS_COLORS.get(info.status.value, COLORS["text"])
         self._add_row("상태", info.status.value.replace("_", " "), color=status_color)
 
