@@ -2,8 +2,9 @@
 gui/city_organize_screen.py
 
 Phase 2 "도시별 정리" — PHASE2_사진정리_기획.md "위치 시각화" + "뷰어 우선"
-원칙 적용. gui/city_map_view.py 지도를 확대/이동하면 그 범위 안에 GPS가
-찍힌 사진만 아래 목록에 보여주고, 목록에서 사진을 고르면
+원칙 적용. gui/city_map_view.py 지도를 확대/이동하면 그 범위 안에 위치가
+있는(실측 GPS 또는 core/location_inference.py로 추정된) 사진만 아래 목록에
+보여주고, 목록에서 사진을 고르면
 gui/date_group_detail_screen.py(뷰어 + 하단 썸네일 목록, 체크박스로 그룹에서
 제외 가능)를 그대로 재사용해 자세히 볼 수 있다. gui/date_organize_screen.py와
 같은 원칙으로 "정리하기"(복사/이동)도 지원한다 — 미리보기(지도 훑어보기)와
@@ -14,9 +15,9 @@ gui/date_group_detail_screen.py(뷰어 + 하단 썸네일 목록, 체크박스�
 "정리하기" 대상과 정확히 대응되게 하기 위함(지도 범위는 줌/팬마다 바뀌어서
 그 자체를 그룹으로 삼으면 제외 목록이 무엇을 가리키는지 애매해진다).
 
-위치 정보 없는 사진은 지도에 찍을 좌표가 없어 이 화면에는 안 보이지만,
-"정리하기"를 실행하면 core/date_organizer.py::organize_by_city()가 별도
-폴더("위치없음")로 모아준다.
+실측 GPS도, 추정 위치도 없는 사진은 지도에 찍을 좌표가 없어 이 화면에는
+안 보이지만, "정리하기"를 실행하면 core/date_organizer.py::organize_by_city()가
+별도 폴더("위치없음")로 모아준다.
 experiments/city_organize_prototype에서 지도/줌 부분을 먼저 검증함.
 """
 
@@ -161,8 +162,9 @@ class CityOrganizeScreen(QWidget):
         outer.addLayout(title_row)
 
         hint = QLabel(
-            "미리보기예요 — 아직 아무 파일도 옮기지 않았어요. GPS 위치가 있는 사진만 지도에 찍혀요"
-            "(대략적인 위치). 휠로 확대/축소, 드래그로 이동하면 아래 목록이 그 범위 사진으로 바뀌어요."
+            "미리보기예요 — 아직 아무 파일도 옮기지 않았어요. GPS 위치가 있는 사진과, GPS는 없지만 "
+            "촬영 시각·비슷한 사진으로 위치를 추정한 사진이 지도에 찍혀요(대략적인 위치, 추정 위치는 "
+            "목록에 따로 표시). 휠로 확대/축소, 드래그로 이동하면 아래 목록이 그 범위 사진으로 바뀌어요."
         )
         hint.setWordWrap(True)
         hint.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 12px;")
@@ -343,18 +345,24 @@ class CityOrganizeScreen(QWidget):
 
     def _refresh_map(self) -> None:
         visible_groups = [(label, files) for label, files in self._visible_groups() if files]
-        map_points = [(files[0].latitude, files[0].longitude, len(files), label) for label, files in visible_groups]
+        map_points = [
+            (*files[0].effective_location(), len(files), label) for label, files in visible_groups
+        ]
         self.map_view.set_points(map_points)
 
     # --- 내부 로직 -----------------------------------------------------
 
     def _rows_in_view(self) -> list[FileInfo]:
         lat_min, lat_max, lon_min, lon_max = self.map_view.visible_bounds()
-        return [
-            f
-            for f in self._files
-            if lat_min <= f.latitude <= lat_max and lon_min <= f.longitude <= lon_max
-        ]
+        rows = []
+        for f in self._files:
+            location = f.effective_location()
+            if location is None:
+                continue
+            lat, lon = location
+            if lat_min <= lat <= lat_max and lon_min <= lon <= lon_max:
+                rows.append(f)
+        return rows
 
     def _refresh_region_list(self) -> None:
         """지도에 보이는 범위 안 사진을(_rows_in_view) 도시별로 묶어 카드로
@@ -385,12 +393,19 @@ class CityOrganizeScreen(QWidget):
         layout.setContentsMargins(14, 12, 14, 12)
         layout.setSpacing(4)
 
-        header = QLabel(f"{label} · {len(files)}장")
+        inferred_count = sum(1 for f in files if f.location_inferred_from)
+        header_text = f"{label} · {len(files)}장"
+        if inferred_count:
+            header_text += f" (그중 {inferred_count}장은 추정 위치)"
+        header = QLabel(header_text)
         header.setStyleSheet("font-weight: 700;")
         layout.addWidget(header)
 
         for info in files:
-            row = _ClickableFileRow(info.filename)
+            row_text = info.filename
+            if info.location_inferred_from:
+                row_text += f"  (추정 위치 · {info.location_inferred_from})"
+            row = _ClickableFileRow(row_text)
             row.setToolTip(info.path)
             row.clicked.connect(lambda info=info, label=label: self._open_detail(label, info))
             row.setContextMenuPolicy(Qt.CustomContextMenu)

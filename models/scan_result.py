@@ -196,25 +196,43 @@ class ScanResult:
         return groups
 
     def city_groups(self) -> list[tuple[str, list[FileInfo]]]:
-        """GPS 위경도(FileInfo.latitude/longitude) 기준으로 도시별로 묶어
-        반환한다(Phase 2 '도시별 정리', 뷰어 전용 — 실제 파일은 안 건드림).
-        date_groups()와 같은 원칙이지만, 도시 매칭 자체가 core/geocoder.py
-        호출(reverse_geocoder)이 필요해서 매번 계산한다 — GPS 없는 파일은
-        "위치 정보 없음"으로 묶어 맨 뒤에 둔다."""
+        """GPS 위경도(FileInfo.latitude/longitude, 없으면 추정 위치) 기준으로
+        도시별로 묶어 반환한다(Phase 2 '도시별 정리', 뷰어 전용 — 실제 파일은
+        안 건드림). date_groups()와 같은 원칙이지만, 도시 매칭 자체가
+        core/geocoder.py 호출(reverse_geocoder)이 필요해서 매번 계산한다.
+
+        실측 GPS가 없는 파일은 core/location_inference.py로 위치 추정을 먼저
+        시도한다(시간 보간 + 유사 사진 클러스터 전파) — 추정도 안 되는 파일만
+        "위치 정보 없음"으로 묶어 맨 뒤에 둔다. 추정된 파일은 FileInfo.
+        location_inferred_from에 방법이 남으므로, 화면에서 실측과 구분해서
+        보여줄 수 있다."""
         from core.geocoder import resolve_cities
+        from core.location_inference import infer_missing_locations
 
         with_gps = [f for f in self.files if f.latitude is not None and f.longitude is not None]
         no_gps = [f for f in self.files if f.latitude is None or f.longitude is None]
 
-        cities = resolve_cities([(f.latitude, f.longitude) for f in with_gps])
+        inferred = infer_missing_locations(self.files, self.similar_groups())
+        for f in no_gps:
+            entry = inferred.get(f.path)
+            if entry is not None:
+                f.inferred_latitude, f.inferred_longitude, f.location_inferred_from = entry
+            else:
+                f.inferred_latitude = f.inferred_longitude = f.location_inferred_from = None
+
+        located = with_gps + [f for f in no_gps if f.path in inferred]
+        still_no_location = [f for f in no_gps if f.path not in inferred]
+
+        coords = [f.effective_location() for f in located]
+        cities = resolve_cities(coords)
 
         buckets: dict[str, list[FileInfo]] = {}
-        for info, city in zip(with_gps, cities):
+        for info, city in zip(located, cities):
             buckets.setdefault(city, []).append(info)
 
         groups = [(city, files) for city, files in sorted(buckets.items(), key=lambda kv: -len(kv[1]))]
-        if no_gps:
-            groups.append(("위치 정보 없음", no_gps))
+        if still_no_location:
+            groups.append(("위치 정보 없음", still_no_location))
         return groups
 
     def merge(self, other: "ScanResult") -> "ScanResult":

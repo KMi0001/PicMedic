@@ -57,6 +57,24 @@ class FileInfo:
     camera_make: Optional[str] = None        # EXIF Make — Phase 2 '기기 정보' (예: "Apple", "samsung")
     camera_model: Optional[str] = None        # EXIF Model — 예: "iPhone 14 Pro"
 
+    # --- 위치 정보 추론 (Phase 2, GPS 없는 사진 보완) ---
+    # latitude/longitude(위)는 실측 EXIF GPS 전용 — 아래 필드와 절대 섞지 않는다.
+    # ScanResult.city_groups()가 매번 새로 계산해 채운다(core/location_inference.py).
+    inferred_latitude: Optional[float] = None
+    inferred_longitude: Optional[float] = None
+    location_inferred_from: Optional[str] = None  # None이면 실측 GPS 또는 위치 추정 불가. 아니면 "시간 보간"/"유사 사진"
+
+    def effective_location(self) -> Optional[tuple[float, float]]:
+        """실측 GPS가 있으면 그걸, 없으면 추정 위치를(있다면) 반환한다 —
+        지도에 점을 찍는 등 "어딘가에 위치가 있다"는 사실만 필요한 곳에서
+        사용. 실측/추정 구분이 필요한 곳(배지 표시 등)은 location_inferred_from을
+        직접 확인할 것."""
+        if self.latitude is not None and self.longitude is not None:
+            return (self.latitude, self.longitude)
+        if self.inferred_latitude is not None and self.inferred_longitude is not None:
+            return (self.inferred_latitude, self.inferred_longitude)
+        return None
+
     # --- 진단 결과 ---
     status: FileStatus = FileStatus.UNKNOWN
     readable: bool = False
