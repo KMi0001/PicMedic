@@ -14,7 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from tests.helpers import check
 
-from core.geocoder import country_name_ko, resolve_cities, resolve_country_codes
+from core.geocoder import country_name_ko, resolve_cities, resolve_country_codes, resolve_province_names
 
 
 def test_geocoder():
@@ -83,7 +83,25 @@ def test_resolve_country_codes():
     check("매핑에 없는 코드는 코드 그대로 반환", country_name_ko("ZZ") == "ZZ")
 
 
+def test_resolve_province_names():
+    """도시별 정리 지도의 시/도 단위 집계(gui/city_map_view.py, 2026-09-17,
+    같은 날 후속 — "확대/축소 할때마다 시/도 표기를 좀 넓게")용."""
+    check("빈 목록 입력 시 빈 목록 반환", resolve_province_names([]) == [])
+
+    provinces = resolve_province_names([
+        (37.5665, 126.9780),   # 서울
+        (35.1796, 129.0756),   # 부산(광역시라 시/도 이름 = 도시 이름)
+        (37.2636, 127.0286),   # 수원 -> 경기도
+        (35.6762, 139.6503),   # 도쿄(해외는 GeoNames admin1 원문)
+    ])
+    check("서울 -> 서울(광역시 자체가 시/도)", provinces[0] == "서울", provinces[0])
+    check("부산 -> 부산", provinces[1] == "부산", provinces[1])
+    check("수원 -> 경기도", provinces[2] == "경기도", provinces[2])
+    check("도쿄는 admin1 원문(번역 테이블 밖)", provinces[3] not in ("", None), provinces[3])
+
+
 if __name__ == "__main__":  # pytest 없이 이 파일 하나만 돌려보고 싶을 때
     test_geocoder()
     test_resolve_country_codes()
+    test_resolve_province_names()
     print("OK")

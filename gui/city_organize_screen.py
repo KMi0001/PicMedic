@@ -344,18 +344,20 @@ class CityOrganizeScreen(QWidget):
         self._refresh_map()
 
     def _refresh_map(self) -> None:
-        from core.geocoder import resolve_country_codes
+        from core.geocoder import resolve_country_codes, resolve_province_names
 
         visible_groups = [(label, files) for label, files in self._visible_groups() if files]
-        # 나라 코드는 지도가 "화면에 나라가 여러 개 보이면 도시 대신 나라
-        # 단위로 뭉쳐 보여주기"(gui/city_map_view.py) 위해 필요하다. 그룹의
-        # 대표 좌표(files[0]) 하나로만 판정 — 어차피 한 도시 그룹은 GPS가
-        # 서로 가까운 사진들이라 나라가 섞일 일이 없다.
+        # 나라 코드/시도명은 지도가 "화면에 나라가 여러 개 보이면 나라 단위,
+        # 한 나라 안에 도시가 너무 많으면 시/도 단위로 뭉쳐 보여주기"
+        # (gui/city_map_view.py)위해 필요하다. 그룹의 대표 좌표(files[0])
+        # 하나로만 판정 — 어차피 한 도시 그룹은 GPS가 서로 가까운 사진들이라
+        # 나라/시도가 섞일 일이 없다.
         coords = [files[0].effective_location() for _, files in visible_groups]
         country_codes = resolve_country_codes(coords) if coords else []
+        provinces = resolve_province_names(coords) if coords else []
         map_points = [
-            (*files[0].effective_location(), len(files), label, cc)
-            for (label, files), cc in zip(visible_groups, country_codes)
+            (*files[0].effective_location(), len(files), label, cc, province)
+            for (label, files), cc, province in zip(visible_groups, country_codes, provinces)
         ]
         self.map_view.set_points(map_points)
 

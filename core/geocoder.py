@@ -79,6 +79,21 @@ _INTL_CITY_NAMES: dict[str, str] = {
     "Sydney": "시드니", "Melbourne": "멜버른", "Auckland": "오클랜드",
 }
 
+# 한국 시/도(광역시·특별시 포함, GeoNames admin1 컬럼 기준) 한국어 이름 —
+# 도시별 정리 지도에서 한 나라 안에 도시가 너무 많이 보일 때 한 단계 더
+# 뭉쳐 보여주는 "시/도 단위"용(2026-09-17). 해외는 이 파일의 기존 원칙대로
+# 흔한 지명만 챙기지 않고 GeoNames admin1 원문을 그대로 보여준다(국내 사진이
+# 대부분일 거란 전제 — resolve_province_names 참고).
+_KOREAN_PROVINCE_NAMES: dict[str, str] = {
+    "Seoul": "서울", "Busan": "부산", "Daegu": "대구", "Incheon": "인천",
+    "Daejeon": "대전", "Gwangju": "광주", "Ulsan": "울산",
+    "Gyeonggi-do": "경기도", "Gangwon-do": "강원도",
+    "Chungcheongbuk-do": "충청북도", "Chungcheongnam-do": "충청남도",
+    "Jeollabuk-do": "전라북도", "Jeollanam-do": "전라남도",
+    "Gyeongsangbuk-do": "경상북도", "Gyeongsangnam-do": "경상남도",
+    "Jeju-do": "제주도",
+}
+
 _KOREAN_COUNTRY_NAMES: dict[str, str] = {
     "KR": "대한민국", "JP": "일본", "CN": "중국", "HK": "홍콩", "MO": "마카오",
     "TW": "대만", "TH": "태국", "SG": "싱가포르", "MY": "말레이시아",
@@ -212,3 +227,19 @@ def country_name_ko(cc: str) -> str:
     """나라 코드 -> 한국어 나라 이름(_KOREAN_COUNTRY_NAMES에 없으면 코드
     그대로). gui/city_map_view.py가 나라 단위로 뭉친 마커의 라벨에 쓴다."""
     return _KOREAN_COUNTRY_NAMES.get(cc, cc)
+
+
+def resolve_province_names(coords: list[tuple[float, float]]) -> list[str]:
+    """coords 각각이 속한 시/도 단위(GeoNames admin1) 라벨. 도시별 정리
+    지도가 한 나라 안에 도시 마커가 너무 많이 보일 때(예: 국내 사진만
+    수만 장) 시/도 단위로 한 단계 더 뭉쳐 보여주는 데 씀(2026-09-17, 사용자
+    요청 — "확대/축소 할때마다 시/도 표기를 좀 넓게"). admin1 정보가 없는
+    드문 경우엔 도시 라벨로 대신한다(빈 라벨보다 낫다)."""
+    result = []
+    for r in _resolve_raw(coords):
+        admin1 = r.get("admin1") or ""
+        if not admin1:
+            result.append(_localize(r["name"], r["cc"]))
+            continue
+        result.append(_KOREAN_PROVINCE_NAMES.get(admin1, admin1))
+    return result

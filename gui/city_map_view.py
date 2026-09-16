@@ -254,26 +254,38 @@ class CityMapView(QGraphicsView):
         self._view_changed_timer.setInterval(120)
         self._view_changed_timer.timeout.connect(self.view_changed.emit)
 
-    def set_points(self, points: list[tuple[float, float, int, str, str]]) -> None:
-        """points = [(위도, 경도, 사진 개수, 라벨, 나라코드), ...]."""
+    # 한 나라 안에서도 화면에 보이는 도시 마커가 이 개수를 넘으면 시/도
+    # 단위로 한 단계 더 뭉친다 — 국내 사진만 수만 장이면 도시가 수십 개
+    # 찍혀 라벨이 뒤죽박죽 겹친다는 피드백(2026-09-17, 사용자 제안 기준값).
+    _CITY_COUNT_THRESHOLD_FOR_PROVINCE = 15
+
+    def set_points(self, points: list[tuple[float, float, int, str, str, str]]) -> None:
+        """points = [(위도, 경도, 사진 개수, 도시 라벨, 나라코드, 시/도 라벨), ...]."""
         self._raw_points = points
         self._marker_mode = None  # 다음 _rebuild_markers가 무조건 다시 그리게
         self._rebuild_markers()
 
-    def _distinct_visible_countries(self) -> set[str]:
+    def _visible_points(self) -> list[tuple[float, float, int, str, str, str]]:
         visible_scene_rect = self.mapToScene(self.viewport().rect()).boundingRect()
-        return {
-            cc
-            for lat, lon, _count, _label, cc in self._raw_points
-            if visible_scene_rect.contains(QPointF(lon, -lat))
-        }
+        return [p for p in self._raw_points if visible_scene_rect.contains(QPointF(p[1], -p[0]))]
+
+    def _decide_marker_mode(self) -> str:
+        """화면에 실제로 보이는 점들만 기준으로 판단한다 — 팬/줌으로 보이는
+        범위가 좁아지면(도시 하나만 남으면) 전체 데이터가 여러 나라/도시를
+        아우르고 있어도 도시 단위로 되돌아가야 하기 때문."""
+        visible = self._visible_points()
+        if len({p[4] for p in visible}) >= 2:
+            return "country"
+        if len(visible) > self._CITY_COUNT_THRESHOLD_FOR_PROVINCE:
+            return "province"
+        return "city"
 
     def _rebuild_markers(self) -> None:
-        """화면에 나라가 2개 이상 보이면 도시 마커 대신 나라 단위로 뭉친
-        마커를 보여준다 — 여러 나라의 도시가 한꺼번에 보이면 이름이 빽빽하게
-        겹쳐 어지럽다는 피드백(2026-09-17). 나라가 1개(또는 GPS가 아예 하나도
-        안 보임)면 지금까지처럼 도시 단위 그대로."""
-        mode = "country" if len(self._distinct_visible_countries()) >= 2 else "city"
+        """화면에 나라가 2개 이상 보이면 나라 단위로, 한 나라 안에서도 도시가
+        너무 많이 보이면(_CITY_COUNT_THRESHOLD_FOR_PROVINCE) 시/도 단위로
+        뭉친다 — 여러 도시 이름이 한꺼번에 보이면 빽빽하게 겹쳐 어지럽다는
+        피드백(2026-09-17). 그 외엔 지금까지처럼 도시 단위 그대로."""
+        mode = self._decide_marker_mode()
         if mode == self._marker_mode:
             self._layout_labels()
             return
@@ -287,39 +299,43 @@ class CityMapView(QGraphicsView):
             return
 
         if mode == "country":
-            self._build_country_markers()
+            self._build_aggregated_markers(group_key=lambda p: p[4], label_for=lambda key: country_name_ko(key), base_radius=6, radius_span=12)
+        elif mode == "province":
+            self._build_aggregated_markers(group_key=lambda p: (p[4], p[5]), label_for=lambda key: key[1], base_radius=5.5, radius_span=11)
         else:
             self._build_city_markers()
         self._layout_labels()
 
     def _build_city_markers(self) -> None:
         max_count = max(p[2] for p in self._raw_points)
-        for lat, lon, count, label, _cc in self._raw_points:
+        for lat, lon, count, label, _cc, _province in self._raw_points:
             radius = 5 + (count / max_count) * 10
             marker = _CityMarker(radius, f"{label} ({count})")
             marker.setPos(lon, -lat)
             self.scene().addItem(marker)
             self._markers.append(marker)
 
-    def _build_country_markers(self) -> None:
-        """나라별로 사진 개수를 합치고, 위치는 그 나라 안 도시들의 가중
-        평균(사진 많은 도시 쪽으로 치우침)으로 잡는다 — 나라의 지리적 중심이
-        아니라 "실제 사진이 몰린 자리"에 마커가 찍히게 하기 위함(예: 일본
-        전체 중심이 아니라 도쿄/오사카 근처)."""
-        by_country: dict[str, list[tuple[float, float, int]]] = {}
-        for lat, lon, count, _label, cc in self._raw_points:
-            by_country.setdefault(cc, []).append((lat, lon, count))
+    def _build_aggregated_markers(self, *, group_key, label_for, base_radius: float, radius_span: float) -> None:
+        """나라 단위/시·도 단위 마커를 같은 방식으로 만든다 — group_key(점)가
+        그룹 식별자(나라 코드, 또는 (나라코드, 시/도) 쌍)를 돌려주고,
+        label_for(식별자)가 화면에 보일 이름을 돌려준다. 위치는 그룹 안
+        도시들의 사진 수 가중 평균(사진이 많은 쪽으로 치우침) — 행정구역의
+        지리적 중심이 아니라 "실제 사진이 몰린 자리"에 찍히게 하기 위함."""
+        groups: dict = {}
+        for lat, lon, count, _label, cc, province in self._raw_points:
+            key = group_key((lat, lon, count, _label, cc, province))
+            groups.setdefault(key, []).append((lat, lon, count))
 
         aggregated = []
-        for cc, entries in by_country.items():
+        for key, entries in groups.items():
             total = sum(e[2] for e in entries)
             avg_lat = sum(e[0] * e[2] for e in entries) / total
             avg_lon = sum(e[1] * e[2] for e in entries) / total
-            aggregated.append((avg_lat, avg_lon, total, country_name_ko(cc)))
+            aggregated.append((avg_lat, avg_lon, total, label_for(key)))
 
         max_count = max(a[2] for a in aggregated)
         for lat, lon, count, name in aggregated:
-            radius = 6 + (count / max_count) * 12
+            radius = base_radius + (count / max_count) * radius_span
             marker = _CityMarker(radius, f"{name} ({count})")
             marker.setPos(lon, -lat)
             self.scene().addItem(marker)
