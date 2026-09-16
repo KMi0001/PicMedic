@@ -114,7 +114,13 @@ def _build_match_row(m: LivePhotoMatch) -> QWidget:
     """목록 한 줄 — 파일명 줄 아래에 로컬 경로를 작은 글씨로 보여준다
     (2026-09-17, 사용자 요청 — "목록에 로컬 경로 보여주고"). 경로를 말줄임
     없이 그대로 보여주려고(PicMedic 전체 원칙 — 절대 자르지 않기) 한 줄
-    QListWidgetItem 텍스트 대신 QLabel 두 개짜리 위젯으로 교체했다."""
+    QListWidgetItem 텍스트 대신 QLabel 두 개짜리 위젯으로 교체했다.
+
+    사진과 MOV가 서로 다른 폴더에서 매칭될 수 있다(UUID로만 짝을 찾지
+    폴더는 안 따짐 — find_live_photo_matches 독스트링 참고, 예: 사진은 날짜별
+    폴더로 정리했지만 동영상은 안 옮긴 경우). 두 경로가 같으면 한 줄로
+    충분하지만, 다르면 "이 둘이 진짜 같은 폴더에 있다"고 착각하지 않도록
+    각자 경로를 구분해서 두 줄로 보여준다."""
     row = QWidget()
     layout = QVBoxLayout(row)
     layout.setContentsMargins(6, 4, 6, 4)
@@ -124,9 +130,18 @@ def _build_match_row(m: LivePhotoMatch) -> QWidget:
     title.setStyleSheet("font-size: 12.5px;")
     layout.addWidget(title)
 
-    path_label = QLabel(str(m.image_path.parent))
-    path_label.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 11px;")
-    layout.addWidget(path_label)
+    path_style = f"color: {COLORS['text_secondary']}; font-size: 11px;"
+    if m.image_path.parent == m.mov_path.parent:
+        path_label = QLabel(str(m.image_path.parent))
+        path_label.setStyleSheet(path_style)
+        layout.addWidget(path_label)
+    else:
+        image_path_label = QLabel(f"사진: {m.image_path.parent}")
+        image_path_label.setStyleSheet(path_style)
+        layout.addWidget(image_path_label)
+        mov_path_label = QLabel(f"동영상: {m.mov_path.parent}")
+        mov_path_label.setStyleSheet(path_style)
+        layout.addWidget(mov_path_label)
 
     return row
 
@@ -136,15 +151,24 @@ def _on_match_context_menu(parent: QWidget, list_widget: QListWidget, pos) -> No
     if item is None:
         return
     match: LivePhotoMatch = item.data(Qt.UserRole)
+    same_folder = match.image_path.parent == match.mov_path.parent
 
     menu = QMenu(list_widget)
     preview_action = menu.addAction("미리보기")
-    open_folder_action = menu.addAction("로컬 폴더 위치 열기")
+    if same_folder:
+        open_folder_action = menu.addAction("로컬 폴더 위치 열기")
+        open_image_folder_action = open_mov_folder_action = None
+    else:
+        open_folder_action = None
+        open_image_folder_action = menu.addAction("사진 폴더 열기")
+        open_mov_folder_action = menu.addAction("동영상 폴더 열기")
     chosen = menu.exec(list_widget.mapToGlobal(pos))
     if chosen is preview_action:
         _open_live_photo_preview(parent, match)
-    elif chosen is open_folder_action:
+    elif chosen is open_folder_action or chosen is open_image_folder_action:
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(match.image_path.parent)))
+    elif chosen is open_mov_folder_action:
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(match.mov_path.parent)))
 
 
 def _open_live_photo_preview(parent: QWidget, match: LivePhotoMatch) -> None:
