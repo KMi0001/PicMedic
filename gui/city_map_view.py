@@ -26,6 +26,7 @@ from PySide6.QtGui import QColor, QFont, QFontMetrics, QPainter, QPainterPath, Q
 from PySide6.QtWidgets import QGraphicsItem, QGraphicsScene, QGraphicsView
 
 from core.country_names_ko import COUNTRY_NAMES_KO
+from core.geocoder import country_name_ko
 from utils.assets import asset_path
 from utils.topojson import load_country_polygons
 
@@ -231,25 +232,85 @@ class CityMapView(QGraphicsView):
             label_item.setZValue(1)  # addPath로 새로 그린 육지 위로 라벨이 오게 다시 확인
 
         self._markers: list[_CityMarker] = []
+        self._raw_points: list[tuple[float, float, int, str, str]] = []
+        # "도시 단위" / "나라 단위(2개국 이상 보일 때)" 중 지금 뭘 그리고
+        # 있는지 — 팬/줌마다(_rebuild_markers) 매번 마커를 다시 만들면 드래그
+        # 중 버벅일 수 있어서, 이 값이 실제로 바뀔 때만 다시 만든다.
+        self._marker_mode: str | None = None
         self._centered_once = False
-        self.view_changed.connect(self._layout_labels)
+        self.view_changed.connect(self._rebuild_markers)
         self.view_changed.connect(self._update_country_label_visibility)
 
-    def set_points(self, points: list[tuple[float, float, int, str]]) -> None:
-        """points = [(위도, 경도, 사진 개수, 라벨), ...]."""
+    def set_points(self, points: list[tuple[float, float, int, str, str]]) -> None:
+        """points = [(위도, 경도, 사진 개수, 라벨, 나라코드), ...]."""
+        self._raw_points = points
+        self._marker_mode = None  # 다음 _rebuild_markers가 무조건 다시 그리게
+        self._rebuild_markers()
+
+    def _distinct_visible_countries(self) -> set[str]:
+        visible_scene_rect = self.mapToScene(self.viewport().rect()).boundingRect()
+        return {
+            cc
+            for lat, lon, _count, _label, cc in self._raw_points
+            if visible_scene_rect.contains(QPointF(lon, -lat))
+        }
+
+    def _rebuild_markers(self) -> None:
+        """화면에 나라가 2개 이상 보이면 도시 마커 대신 나라 단위로 뭉친
+        마커를 보여준다 — 여러 나라의 도시가 한꺼번에 보이면 이름이 빽빽하게
+        겹쳐 어지럽다는 피드백(2026-09-17). 나라가 1개(또는 GPS가 아예 하나도
+        안 보임)면 지금까지처럼 도시 단위 그대로."""
+        mode = "country" if len(self._distinct_visible_countries()) >= 2 else "city"
+        if mode == self._marker_mode:
+            self._layout_labels()
+            return
+        self._marker_mode = mode
+
         for marker in self._markers:
             self.scene().removeItem(marker)
         self._markers = []
-        if not points:
+        if not self._raw_points:
+            self._layout_labels()
             return
-        max_count = max(p[2] for p in points)
-        for lat, lon, count, label in points:
+
+        if mode == "country":
+            self._build_country_markers()
+        else:
+            self._build_city_markers()
+        self._layout_labels()
+
+    def _build_city_markers(self) -> None:
+        max_count = max(p[2] for p in self._raw_points)
+        for lat, lon, count, label, _cc in self._raw_points:
             radius = 5 + (count / max_count) * 10
             marker = _CityMarker(radius, f"{label} ({count})")
             marker.setPos(lon, -lat)
             self.scene().addItem(marker)
             self._markers.append(marker)
-        self._layout_labels()
+
+    def _build_country_markers(self) -> None:
+        """나라별로 사진 개수를 합치고, 위치는 그 나라 안 도시들의 가중
+        평균(사진 많은 도시 쪽으로 치우침)으로 잡는다 — 나라의 지리적 중심이
+        아니라 "실제 사진이 몰린 자리"에 마커가 찍히게 하기 위함(예: 일본
+        전체 중심이 아니라 도쿄/오사카 근처)."""
+        by_country: dict[str, list[tuple[float, float, int]]] = {}
+        for lat, lon, count, _label, cc in self._raw_points:
+            by_country.setdefault(cc, []).append((lat, lon, count))
+
+        aggregated = []
+        for cc, entries in by_country.items():
+            total = sum(e[2] for e in entries)
+            avg_lat = sum(e[0] * e[2] for e in entries) / total
+            avg_lon = sum(e[1] * e[2] for e in entries) / total
+            aggregated.append((avg_lat, avg_lon, total, country_name_ko(cc)))
+
+        max_count = max(a[2] for a in aggregated)
+        for lat, lon, count, name in aggregated:
+            radius = 6 + (count / max_count) * 12
+            marker = _CityMarker(radius, f"{name} ({count})")
+            marker.setPos(lon, -lat)
+            self.scene().addItem(marker)
+            self._markers.append(marker)
 
     def _layout_labels(self) -> None:
         """줌/팬으로 도시 점들의 화면 위치가 바뀔 때마다, 라벨끼리 겹치지
@@ -293,7 +354,15 @@ class CityMapView(QGraphicsView):
         먼저 그 나라가 지금 보이는 범위 안에 실제로 들어와 있는지부터
         확인해야 한다 — 안 그러면 화면 밖 먼 나라도(예: 한국을 확대했을 때
         저 멀리 있는 베트남) 그 나라 자체 크기가 크다는 이유만으로 "크게
-        보인다"고 착각해 라벨이 뜨는 버그가 있었다(실측으로 발견)."""
+        보인다"고 착각해 라벨이 뜨는 버그가 있었다(실측으로 발견).
+
+        나라 단위로 뭉친 마커(_build_country_markers)를 보여주는 중일 땐
+        마커 라벨에 이미 나라 이름이 있으니, 배경의 이탤릭 나라 이름까지
+        같이 뜨면 같은 정보가 겹쳐 보인다 — 그 동안은 전부 숨긴다."""
+        if self._marker_mode == "country":
+            for label_item, _, _ in self._country_anchors:
+                label_item.setVisible(False)
+            return
         visible_scene_rect = self.mapToScene(self.viewport().rect()).boundingRect()
         for label_item, _, bbox in self._country_anchors:
             # bbox는 (경도, 위도) 기준 — 씬 좌표계(경도, -위도)로 바꿔서 비교.

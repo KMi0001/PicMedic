@@ -167,12 +167,10 @@ def _nearest_kr_city(lat: float, lon: float) -> dict:
     return kr_locations[idx]
 
 
-def resolve_cities(coords: list[tuple[float, float]]) -> list[Optional[str]]:
-    """coords(위도, 경도) 목록을 한 번에 한국어 도시 라벨로 매칭한다(주요
-    도시만 번역, 나머지는 로마자 표기 — _localize 참고). 빈 목록이면 빈
-    목록. 개별 좌표가 이상해도(예: 범위 밖) 항상 가장 가까운 지점을 찾아
-    결과를 반환하므로 None은 나오지 않지만, 시그니처는 향후 실패 케이스를
-    대비해 Optional로 둔다."""
+def _resolve_raw(coords: list[tuple[float, float]]) -> list[dict]:
+    """coords 각각에 가장 가까운 GeoNames 도시 레코드(name/cc 등 원본 dict)를
+    찾는다. resolve_cities()·resolve_country_codes() 둘 다 같은 최근접 탐색
+    결과(한국 보정 포함)를 공유하도록 여기로 뽑아냈다."""
     if not coords:
         return []
 
@@ -189,4 +187,28 @@ def resolve_cities(coords: list[tuple[float, float]]) -> list[Optional[str]]:
         if results[i]["cc"] != "KR" and _in_korea_bbox(lat, lon):
             results[i] = _nearest_kr_city(lat, lon)
 
-    return [_localize(r["name"], r["cc"]) for r in results]
+    return results
+
+
+def resolve_cities(coords: list[tuple[float, float]]) -> list[Optional[str]]:
+    """coords(위도, 경도) 목록을 한 번에 한국어 도시 라벨로 매칭한다(주요
+    도시만 번역, 나머지는 로마자 표기 — _localize 참고). 빈 목록이면 빈
+    목록. 개별 좌표가 이상해도(예: 범위 밖) 항상 가장 가까운 지점을 찾아
+    결과를 반환하므로 None은 나오지 않지만, 시그니처는 향후 실패 케이스를
+    대비해 Optional로 둔다."""
+    return [_localize(r["name"], r["cc"]) for r in _resolve_raw(coords)]
+
+
+def resolve_country_codes(coords: list[tuple[float, float]]) -> list[str]:
+    """coords 각각이 속한 나라의 ISO 2자리 코드(예: "KR")를 반환한다 —
+    도시별 정리 지도가 화면에 나라가 여러 개 보일 때 도시 단위 대신 나라
+    단위로 뭉쳐 보여주기 위해 씀(2026-09-17, 사용자 요청: "국가가 2개 이상일
+    경우엔 나라 이름만"). resolve_cities()와 같은 최근접 탐색 결과를 쓰므로
+    같은 좌표에 대해 두 함수가 항상 같은 나라로 일치한다."""
+    return [r["cc"] for r in _resolve_raw(coords)]
+
+
+def country_name_ko(cc: str) -> str:
+    """나라 코드 -> 한국어 나라 이름(_KOREAN_COUNTRY_NAMES에 없으면 코드
+    그대로). gui/city_map_view.py가 나라 단위로 뭉친 마커의 라벨에 쓴다."""
+    return _KOREAN_COUNTRY_NAMES.get(cc, cc)

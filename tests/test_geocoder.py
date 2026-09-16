@@ -14,7 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from tests.helpers import check
 
-from core.geocoder import resolve_cities
+from core.geocoder import country_name_ko, resolve_cities, resolve_country_codes
 
 
 def test_geocoder():
@@ -55,6 +55,35 @@ def test_geocoder():
     )
 
 
+def test_resolve_country_codes():
+    """도시별 정리 지도의 나라 단위 집계(gui/city_map_view.py, 2026-09-17)용
+    — resolve_cities와 같은 좌표에 대해 항상 같은 나라로 일치해야 한다."""
+    check("빈 목록 입력 시 빈 목록 반환", resolve_country_codes([]) == [])
+
+    coords = [
+        (37.5665, 126.9780),   # 서울
+        (35.1796, 129.0756),   # 부산
+        (35.6762, 139.6503),   # 도쿄
+        (40.7128, -74.0060),   # New York
+    ]
+    codes = resolve_country_codes(coords)
+    check("서울 -> KR", codes[0] == "KR", codes[0])
+    check("부산 -> KR", codes[1] == "KR", codes[1])
+    check("도쿄 -> JP", codes[2] == "JP", codes[2])
+    check("뉴욕 -> US", codes[3] == "US", codes[3])
+
+    # 백령도(국경 오탐 보정 대상)도 resolve_cities와 똑같이 KR로 나와야
+    # 두 함수가 어긋나지 않는다 — 어긋나면 지도에서 도시 라벨은 "한국"인데
+    # 나라 단위로 뭉칠 땐 다른 나라 마커에 섞이는 모순이 생긴다.
+    baengnyeongdo_code = resolve_country_codes([(37.9522, 124.6314)])[0]
+    check("백령도 나라 코드도 KR(도시명 보정과 일치)", baengnyeongdo_code == "KR", baengnyeongdo_code)
+
+    check("국가명 한국어 변환 - KR", country_name_ko("KR") == "대한민국")
+    check("국가명 한국어 변환 - JP", country_name_ko("JP") == "일본")
+    check("매핑에 없는 코드는 코드 그대로 반환", country_name_ko("ZZ") == "ZZ")
+
+
 if __name__ == "__main__":  # pytest 없이 이 파일 하나만 돌려보고 싶을 때
     test_geocoder()
+    test_resolve_country_codes()
     print("OK")
