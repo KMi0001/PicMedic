@@ -10,7 +10,7 @@ gui/scan_session_window.py의 _info_dialog)을, 세 번째 화면(gui/duplicate_
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, QUrl, Signal
+from PySide6.QtCore import Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import QDesktopServices, QPixmap
 from PySide6.QtWidgets import (
     QDialog,
@@ -203,6 +203,21 @@ class ProgressDialog(QDialog):
         self.title_label.setStyleSheet("font-weight: 700; font-size: 14px;")
         header_row.addWidget(self.title_label)
         header_row.addStretch(1)
+        # 원형(회전) 스피너 — 2026-09-17, 사용자 리포트: 파일이 아주 많으면
+        # (2만 개+) 항목 하나 처리에 걸리는 시간이 늘어나면서 퍼센트 막대가
+        # 한동안 안 움직이는 것처럼 보여서 "멈춘 줄 알았다"는 피드백. 진행률
+        # 신호가 뜸하게 와도 이 라벨만은 파일 처리 속도와 무관하게 계속
+        # 회전해서 "죽지 않았다"를 보여준다 — 실제 진행 신호(update_progress)에
+        # 기대지 않고 자체 QTimer로 애니메이션한다.
+        self._spinner_label = QLabel("")
+        self._spinner_label.setStyleSheet(f"color: {COLORS['primary']}; font-size: 15px;")
+        header_row.addWidget(self._spinner_label)
+        self._spinner_frames = "◐◓◑◒"
+        self._spinner_frame_idx = 0
+        self._spinner_timer = QTimer(self)
+        self._spinner_timer.setInterval(150)
+        self._spinner_timer.timeout.connect(self._advance_spinner)
+        self.finished.connect(lambda _result: self._spinner_timer.stop())
         layout.addLayout(header_row)
 
         self.bar = QProgressBar()
@@ -224,6 +239,13 @@ class ProgressDialog(QDialog):
         self.status_label.setText("준비 중...")
         self.cancel_btn.setEnabled(True)
         self.cancel_btn.setText("취소")
+        self._spinner_frame_idx = 0
+        self._spinner_label.setText(self._spinner_frames[0])
+        self._spinner_timer.start()
+
+    def _advance_spinner(self) -> None:
+        self._spinner_frame_idx = (self._spinner_frame_idx + 1) % len(self._spinner_frames)
+        self._spinner_label.setText(self._spinner_frames[self._spinner_frame_idx])
 
     def update_progress(self, current: int, total: int, filename: str):
         pct = int((current / total) * 100) if total else 0
