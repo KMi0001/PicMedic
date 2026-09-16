@@ -81,6 +81,11 @@ def test_cluster_folder_click_selects_radio():
         f"실제={keep_folder}",
     )
 
+    # "건너뛰기" 칸도 같은 이유로 고쳤다 — 폴더 라디오를 선택한 뒤 다시
+    # "건너뛰기" 칸을 클릭하면 skip_radio로 되돌아가야 한다.
+    table.cellClicked.emit(0, 1)
+    check("건너뛰기 칸 클릭 후 skip_radio가 선택됨", entry.skip_radio.isChecked() is True)
+
 
 def test_manual_card_path_click_selects_radio():
     """폴더로 안 갈리는(같은 폴더 안 중복) 그룹의 개별 카드도 같은 문제라

@@ -481,6 +481,15 @@ class DuplicateScreen(QWidget):
         skip_item = QTableWidgetItem(SKIP_LABEL)
         skip_item.setToolTip(summary_text)
         table.setItem(row, 1, skip_item)
+        # 폴더명 클릭이 라디오를 안 바꾸던 버그(위 folders 루프 참고)를 고치는
+        # 김에, "건너뛰기" 칸 클릭도 같은 이유로 라디오를 선택하게 한다 —
+        # 위젯이 아니라 QTableWidgetItem이라 클릭이 cellClicked로 온다.
+        skip_row = row
+        table.cellClicked.connect(
+            lambda r, c, skip_row=skip_row, skip_radio=skip_radio: skip_radio.setChecked(True)
+            if r == skip_row and c == 1
+            else None
+        )
         for c in (2, 3):
             dash_item = QTableWidgetItem("-")
             dash_item.setFlags(Qt.NoItemFlags)
