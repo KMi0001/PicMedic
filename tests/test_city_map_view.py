@@ -283,6 +283,48 @@ def test_pin_click_opens_and_closes_view():
     )
 
 
+def test_pin_click_respects_max_zoom_cap():
+    """2026-09-18 사용자 요청: "확대는 제한을 좀 하자 시/도 이상은 더 확대
+    못하게 해줘". 휠/버튼 줌(_zoom_by)은 원래부터 _MAX_SCALE을 넘는 배율
+    자체를 거부해서 안전했지만, 핀 클릭이 쓰는 _fit_scene_rect는 rect 크기에
+    맞춰 fitInView가 배율을 자동 계산할 뿐 캡을 전혀 안 봤다 — 그래서 점
+    하나짜리(폭/높이가 0이라 min_span=0.05 바닥이 적용되는) 핀을 열면
+    _MAX_SCALE을 훌쩍 넘겨 확대됐다. _fit_scene_rect가 fitInView 직후 실제
+    배율을 캡 안으로 눌러주는지 확인한다."""
+    app = QApplication.instance() or QApplication(sys.argv)
+
+    view = CityMapView()
+    view.resize(800, 600)
+    view.show()
+
+    # 단일 지점(서울 하나) — min_span 바닥이 적용되는, 캡 없이는 가장 깊이
+    # 확대되는 케이스.
+    points = [(37.5665, 126.9780, 100, "서울", "KR", "서울")]
+    view.set_points(points)
+    view.resetTransform()
+    view.fitInView(QRectF(-180, -90, 360, 180), Qt.KeepAspectRatio)
+    view.view_changed.emit()
+
+    view._fit_scene_rect(view._points_bounds(points))
+    app.processEvents()
+    actual_scale = view.transform().m11()
+    check(
+        f"단일 지점 핀을 열어도 _MAX_SCALE({view._MAX_SCALE})을 넘지 않음(실측 {actual_scale:.1f})",
+        actual_scale <= view._MAX_SCALE + 1e-6,
+        actual_scale,
+    )
+
+    # 세계 전체보다도 훨씬 넓은 rect를 억지로 넣어 _MIN_SCALE 쪽 캡도 확인.
+    view._fit_scene_rect(QRectF(-3600, -1800, 7200, 3600))
+    app.processEvents()
+    actual_scale_min = view.transform().m11()
+    check(
+        f"과도하게 넓은 범위를 열어도 _MIN_SCALE({view._MIN_SCALE}) 밑으로 안 내려감(실측 {actual_scale_min:.4f})",
+        actual_scale_min >= view._MIN_SCALE - 1e-6,
+        actual_scale_min,
+    )
+
+
 def test_city_map_handles_empty_points():
     app = QApplication.instance() or QApplication(sys.argv)
 
@@ -304,5 +346,6 @@ if __name__ == "__main__":  # pytest 없이 이 파일 하나만 돌려보고 �
     test_overlay_buttons_recenter_and_zoom()
     test_marker_click_vs_drag()
     test_pin_click_opens_and_closes_view()
+    test_pin_click_respects_max_zoom_cap()
     test_city_map_handles_empty_points()
     print("OK")

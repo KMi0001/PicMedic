@@ -215,7 +215,13 @@ class CityMapView(QGraphicsView):
     view_changed = Signal()  # 줌/팬이 끝날 때마다(보이는 범위가 바뀔 때마다) 발생
 
     _MIN_SCALE = 1.5   # 세계 전체가 겨우 들어오는 수준
-    _MAX_SCALE = 6000.0  # 도시 안쪽까지 확대 가능한 수준
+    # 이 지도는 실제 지도 타일이 아니라 국가 윤곽선만 그린 정적 지도라(위
+    # 클래스 독스트링 참고), 시/도보다 더 깊이 확대해봤자 거리·건물 같은
+    # 참고할 지형지물이 하나도 없는 빈 배경만 보여서 오히려 방향을 잃는다
+    # (2026-09-17, 사용자 리포트 — "확대는 제한을 좀 하자 시/도 이상은 더
+    # 확대 못하게 해줘"). 800px 기준 화면 폭에서 약 0.5도(작은 시/도 하나
+    # 크기)는 항상 남도록 잡은 값 — 800/0.5 = 1600.
+    _MAX_SCALE = 1600.0
 
     def __init__(self, parent=None):
         scene = QGraphicsScene(-180, -90, 360, 180)
@@ -585,6 +591,18 @@ class CityMapView(QGraphicsView):
         self.fitInView(rect, Qt.KeepAspectRatio)
         # 확대 직후 너무 빡빡하게 붙지 않도록 살짝 더 축소(20% 여백).
         self.scale(1 / 1.2, 1 / 1.2)
+        # _zoom_by(휠/버튼 줌)는 _MIN_SCALE/_MAX_SCALE을 넘는 배율 자체를
+        # 거부해서 절대 못 넘어가지만, fitInView는 rect 크기에 맞춰 배율을
+        # 자동 계산하므로 같은 보장이 없다 — 핀 하나만 있는 도시를 클릭하면
+        # min_span=0.05짜리 좁은 rect가 되어 이 캡 없이는 시/도보다 훨씬
+        # 깊이 확대돼버렸다(2026-09-18, "확대는 제한을 좀 하자 시/도 이상은
+        # 더 확대 못하게 해줘"). fitInView 직후 실제 배율을 읽어 캡 안으로
+        # 다시 눌러준다.
+        current_scale = self.transform().m11()
+        if current_scale > self._MAX_SCALE:
+            self.scale(self._MAX_SCALE / current_scale, self._MAX_SCALE / current_scale)
+        elif current_scale < self._MIN_SCALE:
+            self.scale(self._MIN_SCALE / current_scale, self._MIN_SCALE / current_scale)
         self.setTransformationAnchor(anchor)  # 휠 줌 등 평소 동작을 위해 원래대로 복구
         self.view_changed.emit()
 
