@@ -397,6 +397,14 @@ class CityOrganizeScreen(QWidget):
 
         self.region_empty_label.setVisible(not any_group)
 
+    # 한 도시 카드에 파일 행을 이 개수까지만 그린다 — 실사용(4만 6천 장)
+    # 리포트: 사진이 몰린 도시(예: "서울" 수천~수만 장) 카드 하나를 만드는
+    # 데만 실측 2초 가까이 걸려서, 팬/줌마다(디바운스해도) 이게 다시 돌면
+    # 여전히 느리게 느껴졌다(2026-09-17). 행 위젯 수 자체를 제한해서 카드
+    # 생성 비용의 상한을 건다 — 도시 카드는 "훑어보기"용이라 몇 장인지
+    # 정확한 파일명 목록 전부가 항상 필요하진 않다는 판단.
+    _MAX_FILE_ROWS_PER_CARD = 200
+
     def _build_city_card(self, label: str, files: list[FileInfo]) -> QFrame:
         card = QFrame()
         card.setObjectName("Card")
@@ -412,7 +420,8 @@ class CityOrganizeScreen(QWidget):
         header.setStyleSheet("font-weight: 700;")
         layout.addWidget(header)
 
-        for info in files:
+        shown_files = files[: self._MAX_FILE_ROWS_PER_CARD]
+        for info in shown_files:
             row_text = info.filename
             if info.location_inferred_from:
                 row_text += f"  (추정 위치 · {info.location_inferred_from})"
@@ -424,6 +433,12 @@ class CityOrganizeScreen(QWidget):
                 lambda pos, w=row, info=info, label=label: self._on_row_context_menu(w, pos, info, label)
             )
             layout.addWidget(row)
+
+        remaining = len(files) - len(shown_files)
+        if remaining > 0:
+            more_label = QLabel(f"...외 {remaining:,}장 더 있음 (이 카드는 처음 {self._MAX_FILE_ROWS_PER_CARD}장만 표시)")
+            more_label.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 11px;")
+            layout.addWidget(more_label)
 
         return card
 
