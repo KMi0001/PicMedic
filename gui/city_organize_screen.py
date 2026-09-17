@@ -417,19 +417,55 @@ class CityOrganizeScreen(QWidget):
         header_text = f"{label} · {len(files)}장"
         if inferred_count:
             header_text += f" (그중 {inferred_count}장은 추정 위치)"
-        header = QLabel(header_text)
-        header.setStyleSheet("font-weight: 700;")
-        layout.addWidget(header)
 
+        # 카드 자체를 기본으로 접어둔다 — 지도에 보이는 도시가 여러 개면
+        # 카드마다 파일 목록이 다 펼쳐진 채로 쌓여서 화면을 감당 안 될
+        # 만큼 길게 만들었다(2026-09-18, 사용자 리포트: "접기(그룹화)를
+        # 안 만들어주는거야"). 헤더를 눌러야 그 도시의 파일 목록을 펼치고,
+        # 그때 처음으로 행 위젯을 만든다(_MAX_FILE_ROWS_PER_CARD를 둔
+        # 이유였던 카드 생성 비용이, 접혀 있는 동안은 여러 도시 카드가
+        # 동시에 화면에 있어도 전혀 들지 않는다).
+        header_btn = QToolButton()
+        header_btn.setCheckable(True)
+        header_btn.setAutoRaise(True)
+        header_btn.setCursor(Qt.PointingHandCursor)
+        header_btn.setText(f"▸ {header_text}")
+        header_btn.setStyleSheet("QToolButton { border: none; background: transparent; "
+                                  "text-align: left; font-weight: 700; }")
+        layout.addWidget(header_btn)
+
+        body = QWidget()
+        body_layout = QVBoxLayout(body)
+        body_layout.setContentsMargins(0, 4, 0, 0)
+        body_layout.setSpacing(4)
+        body.setVisible(False)
+        layout.addWidget(body)
+
+        built = {"done": False}
+
+        def _on_header_toggled(checked: bool) -> None:
+            if checked and not built["done"]:
+                self._populate_city_card_body(body_layout, files, label)
+                built["done"] = True
+            body.setVisible(checked)
+            header_btn.setText(("▾ " if checked else "▸ ") + header_text)
+
+        header_btn.toggled.connect(_on_header_toggled)
+
+        return card
+
+    def _populate_city_card_body(self, layout: QVBoxLayout, files: list[FileInfo], label: str) -> None:
+        """도시 카드가 처음 펼쳐질 때 딱 한 번만 불린다(_build_city_card 참고).
+        파일 행 개수 상한과 상한 넘는 파일의 "더 보기" 토글은 카드 접기/펴기
+        기능이 생기기 전부터 있던 동작 그대로다."""
         shown_files = files[: self._MAX_FILE_ROWS_PER_CARD]
         for info in shown_files:
             layout.addWidget(self._build_file_row(info, label))
 
         remaining_files = files[self._MAX_FILE_ROWS_PER_CARD :]
         if remaining_files:
-            # 상한 넘는 파일은 접어둔다 — 상한 자체(_MAX_FILE_ROWS_PER_CARD)를
-            # 둔 이유(카드 생성 비용)가 그대로 적용되므로, 실제로 위젯을
-            # 만드는 건 사용자가 "더 보기"를 눌렀을 때 딱 한 번만(2026-09-17,
+            # 상한 넘는 파일은 마찬가지로 접어둔다 — 실제로 위젯을 만드는
+            # 건 사용자가 "더 보기"를 눌렀을 때 딱 한 번만(2026-09-17,
             # 사용자 요청 — "목록의 접기펴기는 왜 구현이 안된거야").
             toggle_btn = QToolButton()
             toggle_btn.setCheckable(True)
@@ -459,8 +495,6 @@ class CityOrganizeScreen(QWidget):
                 btn.setText("▾ 접기" if checked else f"▸ 외 {len(remaining_files):,}장 더 보기")
 
             toggle_btn.toggled.connect(_on_toggled)
-
-        return card
 
     def _build_file_row(self, info: FileInfo, label: str) -> _ClickableFileRow:
         row_text = info.filename
