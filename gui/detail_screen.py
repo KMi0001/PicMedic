@@ -199,17 +199,43 @@ class DetailScreen(QWidget):
         )
 
         self._load_preview(info)
+        self._update_nav_buttons()
         self.setFocus()  # 클릭 없이 바로 방향키가 먹도록
 
     def keyPressEvent(self, event) -> None:
-        if event.key() in (Qt.Key_Left, Qt.Key_Right) and len(self._group) > 1 and self.current_info in self._group:
-            delta = -1 if event.key() == Qt.Key_Left else 1
-            idx = self._group.index(self.current_info)
-            next_info = self._group[(idx + delta) % len(self._group)]
-            self.set_file(next_info, group=self._group)
-            event.accept()
-            return
+        if event.key() in (Qt.Key_Left, Qt.Key_Right):
+            if self._step(-1 if event.key() == Qt.Key_Left else 1):
+                event.accept()
+                return
         super().keyPressEvent(event)
+
+    def _step(self, delta: int) -> bool:
+        """그룹 안에서 다음/이전 사진으로 넘어간다. 끝에 도달하면(윈도우
+        기본 사진 앱처럼) 넘어가지 않고 그대로 멈춘다 — 예전엔 양끝을 넘으면
+        처음/끝으로 순환했는데, 화면에 보이는 이전/다음 버튼이 끝에서
+        숨겨지는 것과 어긋나서(2026-09-18, "[버튼]사진[버튼]... 윈도우 기본
+        사진앱처럼" 요청 중 버튼과 방향키 동작을 맞추기 위해 순환을 없앴다)."""
+        if len(self._group) <= 1 or self.current_info not in self._group:
+            return False
+        idx = self._group.index(self.current_info)
+        new_idx = idx + delta
+        if not (0 <= new_idx < len(self._group)):
+            return False
+        self.set_file(self._group[new_idx], group=self._group)
+        return True
+
+    def _update_nav_buttons(self) -> None:
+        """이전/다음 오버레이 버튼(gui/image_viewer.py) 연결 — 끝에서는
+        해당 방향 콜백을 안 줘서 그 버튼이 자동으로 숨겨진다."""
+        has_prev = has_next = False
+        if len(self._group) > 1 and self.current_info in self._group:
+            idx = self._group.index(self.current_info)
+            has_prev = idx > 0
+            has_next = idx < len(self._group) - 1
+        self.preview_viewer.set_navigation(
+            (lambda: self._step(-1)) if has_prev else None,
+            (lambda: self._step(1)) if has_next else None,
+        )
 
     # --- 내부 로직 -----------------------------------------------------
 

@@ -16,7 +16,7 @@ gui/thumbnail.py::load_thumbnail_qimage는 화면 목록용으로 일부러 축�
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 from PySide6.QtCore import Qt, QSize, QTimer, Signal
 from PySide6.QtGui import QImage, QImageReader, QPainter, QPixmap
@@ -94,6 +94,24 @@ _OVERLAY_TOOLBAR_STYLESHEET = (
     "}"
     "QToolButton:disabled {"
     " color: rgba(255, 255, 255, 90);"
+    "}"
+)
+
+
+# 이전/다음 사진 버튼 — 윈도우 기본 사진 앱처럼 사진 좌우 가장자리에 반투명
+# 버튼을 겹쳐 보여준다(2026-09-18, 사용자 요청 — "[버튼]사진[버튼] 이런
+# 느낌으로... 윈도우 기본 사진앱처럼"). _OVERLAY_TOOLBAR_STYLESHEET와 같은
+# 색/두께 원칙이지만 좌우 가장자리에 붙는 세로로 긴 모양이라 별도 스타일로 뺐다.
+_NAV_BUTTON_STYLESHEET = (
+    "QToolButton {"
+    " background-color: rgba(20, 18, 15, 130);"
+    " border: none;"
+    " border-radius: 10px;"
+    " color: white;"
+    " font-size: 18px;"
+    "}"
+    "QToolButton:hover {"
+    " background-color: rgba(20, 18, 15, 190);"
     "}"
 )
 
@@ -220,9 +238,43 @@ class ImageViewer(QWidget):
         self._stack.addWidget(self._placeholder)
         layout.addWidget(self._stack, stretch=1)
 
+        # 이전/다음 버튼 — overlay_controls 여부와 무관하게 항상 쓸 수 있다
+        # (회전/맞추기와 별개 기능). 이 위젯 자체는 "그룹 안 몇 번째 사진인지"를
+        # 모르므로, 실제 다음/이전 파일로 넘기는 로직은 콜백으로 주입받는다
+        # (set_navigation 참고) — gui/city_map_view.py 마커의 on_left_click
+        # 주입 패턴과 같은 이유.
+        self._on_prev: Optional[Callable[[], None]] = None
+        self._on_next: Optional[Callable[[], None]] = None
+        self._prev_btn = QToolButton(self)
+        self._prev_btn.setText("◀")
+        self._prev_btn.setToolTip("이전 사진")
+        self._prev_btn.setCursor(Qt.PointingHandCursor)
+        self._prev_btn.setFixedSize(28, 56)
+        self._prev_btn.setStyleSheet(_NAV_BUTTON_STYLESHEET)
+        self._prev_btn.clicked.connect(lambda: self._on_prev() if self._on_prev else None)
+        self._next_btn = QToolButton(self)
+        self._next_btn.setText("▶")
+        self._next_btn.setToolTip("다음 사진")
+        self._next_btn.setCursor(Qt.PointingHandCursor)
+        self._next_btn.setFixedSize(28, 56)
+        self._next_btn.setStyleSheet(_NAV_BUTTON_STYLESHEET)
+        self._next_btn.clicked.connect(lambda: self._on_next() if self._on_next else None)
+        self._prev_btn.hide()
+        self._next_btn.hide()
+
         self._set_controls_enabled(False)
         if self._overlay_toolbar is not None:
             self._reposition_overlay_toolbar()
+        self._reposition_nav_buttons()
+
+    def set_navigation(self, on_prev: Optional[Callable[[], None]], on_next: Optional[Callable[[], None]]) -> None:
+        """이전/다음 버튼을 연결한다. None을 주면 그 방향 버튼을 숨긴다 —
+        윈도우 기본 사진 앱처럼 첫/마지막 사진에서는 그쪽 버튼이 아예 안
+        보인다(2026-09-18, 사용자 요청). 사진을 바꿀 때마다(다음 사진의
+        이전/다음 존재 여부가 다르므로) 호출부가 다시 불러줘야 한다."""
+        self._on_prev = on_prev
+        self._on_next = on_next
+        self._update_nav_visibility()
 
     def set_image_path(self, path: str) -> None:
         self.set_pixmap(load_full_pixmap(path))
@@ -234,6 +286,7 @@ class ImageViewer(QWidget):
         if pixmap is None or pixmap.isNull():
             self._stack.setCurrentWidget(self._placeholder)
             self._set_controls_enabled(False)
+            self._update_nav_visibility()
             return
         self._pixmap_item = self._scene.addPixmap(pixmap)
         self._pixmap_item.setTransformationMode(Qt.SmoothTransformation)
@@ -246,6 +299,7 @@ class ImageViewer(QWidget):
         self._scene.setSceneRect(self._pixmap_item.boundingRect())
         self._stack.setCurrentWidget(self._view)
         self._set_controls_enabled(True)
+        self._update_nav_visibility()
         self.fit_to_view()
 
     def fit_to_view(self) -> None:
@@ -256,6 +310,7 @@ class ImageViewer(QWidget):
         self._user_zoomed = False
         if self._overlay_toolbar is not None:
             self._reposition_overlay_toolbar()
+        self._reposition_nav_buttons()
 
     def _rotate(self, delta: int) -> None:
         if self._pixmap_item is None:
@@ -283,26 +338,43 @@ class ImageViewer(QWidget):
             self._refit_timer.start()
         if self._overlay_toolbar is not None:
             self._reposition_overlay_toolbar()
+        self._reposition_nav_buttons()
 
-    def _reposition_overlay_toolbar(self) -> None:
-        """오버레이 툴바를 실제로 사진이 그려지는 영역 하단 중앙에 겹치게
-        둔다. fitInView()는 종횡비를 지키느라 뷰 안에 사진을 레터박스로
-        띄우므로, 뷰 전체 영역을 기준으로 삼으면 사진이 없는 여백 아래에
-        툴바가 떠 버린다 — 그래서 뷰가 아니라 사진 아이템 자체의 화면상
-        경계(sceneBoundingRect를 뷰 좌표로 변환)를 기준으로 삼는다."""
-        toolbar = self._overlay_toolbar
-        toolbar.adjustSize()
-
+    def _current_display_area(self) -> tuple[int, int, int, int]:
+        """사진이 실제로 그려지는 화면 영역(x, y, w, h) — 오버레이 툴바와
+        이전/다음 버튼이 공통으로 쓴다. fitInView()는 종횡비를 지키느라 뷰
+        안에 사진을 레터박스로 띄우므로, 뷰 전체 영역을 기준으로 삼으면
+        사진이 없는 여백에 버튼이 떠 버린다 — 그래서 뷰가 아니라 사진
+        아이템 자체의 화면상 경계(sceneBoundingRect를 뷰 좌표로 변환)를
+        기준으로 삼는다."""
         if self._pixmap_item is not None and self._stack.currentWidget() is self._view:
             image_rect = self._view.mapFromScene(self._pixmap_item.sceneBoundingRect()).boundingRect()
             origin = self._view.mapTo(self, image_rect.topLeft())
-            area_x, area_y = origin.x(), origin.y()
-            area_w, area_h = image_rect.width(), image_rect.height()
-        else:
-            area = self._stack.geometry()
-            area_x, area_y, area_w, area_h = area.x(), area.y(), area.width(), area.height()
+            return origin.x(), origin.y(), image_rect.width(), image_rect.height()
+        area = self._stack.geometry()
+        return area.x(), area.y(), area.width(), area.height()
 
+    def _reposition_overlay_toolbar(self) -> None:
+        """오버레이 툴바를 실제로 사진이 그려지는 영역 하단 중앙에 겹치게 둔다."""
+        toolbar = self._overlay_toolbar
+        toolbar.adjustSize()
+        area_x, area_y, area_w, area_h = self._current_display_area()
         x = area_x + (area_w - toolbar.width()) // 2
         y = area_y + area_h - toolbar.height() - 14
         toolbar.move(x, y)
-        toolbar.raise_()
+
+    def _update_nav_visibility(self) -> None:
+        has_image = self._pixmap_item is not None
+        self._prev_btn.setVisible(has_image and self._on_prev is not None)
+        self._next_btn.setVisible(has_image and self._on_next is not None)
+        self._reposition_nav_buttons()
+
+    def _reposition_nav_buttons(self) -> None:
+        """이전/다음 버튼을 사진이 그려지는 영역의 좌/우 가장자리, 세로
+        중앙에 겹쳐 둔다(윈도우 기본 사진 앱과 같은 배치)."""
+        area_x, area_y, area_w, area_h = self._current_display_area()
+        y = area_y + (area_h - self._prev_btn.height()) // 2
+        self._prev_btn.move(area_x + 6, y)
+        self._next_btn.move(area_x + area_w - self._next_btn.width() - 6, y)
+        self._prev_btn.raise_()
+        self._next_btn.raise_()
