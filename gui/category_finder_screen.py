@@ -56,6 +56,7 @@ from PySide6.QtWidgets import (
 
 from core.category_finder import CATEGORIES, detect, is_available
 from gui.common_dialogs import info_dialog, ProgressDialog
+from gui.image_viewer import ImageViewer
 from gui.result_screen import SummaryChip
 from gui.theme import COLORS
 
@@ -187,6 +188,28 @@ class CategoryFinderScreen(QWidget):
         self.empty_label.setAlignment(Qt.AlignCenter)
         outer.addWidget(self.empty_label)
 
+        # 표 옆 인라인 미리보기 — gui/result_screen.py 뷰어 패널과 같은 구성
+        # (ImageViewer, overlay_controls=True). 예전엔 이 화면에 미리보기가
+        # 아예 없어서 행을 확인하려면 더블클릭/우클릭으로 완전히 다른 화면
+        # (상세보기)으로 넘어가야 했다(2026-09-18, 사용자 요청 — "정리_동물
+        # 친구들~풍경사진 상세 화면에도 미리보기 보여주자"). 더블클릭/우클릭
+        # "미리보기"는 기존 그대로 전체 상세 화면을 열고, 행을 한 번 클릭해
+        # 선택하면(그 정도로도 충분한 훑어보기용) 이 인라인 패널이 바로
+        # 갱신된다.
+        content_row = QHBoxLayout()
+        content_row.setSpacing(12)
+
+        viewer_panel = QFrame()
+        viewer_panel.setObjectName("Card")
+        viewer_panel.setFixedWidth(320)
+        viewer_layout = QVBoxLayout(viewer_panel)
+        viewer_layout.setContentsMargins(4, 4, 4, 4)
+        self.inline_viewer = ImageViewer(
+            placeholder_text="사진을 선택하면 미리보기가 표시됩니다.", overlay_controls=True
+        )
+        viewer_layout.addWidget(self.inline_viewer)
+        content_row.addWidget(viewer_panel)
+
         self.table = QTableWidget(0, 3)
         self.table.setHorizontalHeaderLabels(["파일명 (로컬주소)", "폴더", "확신도"])
         self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
@@ -194,16 +217,21 @@ class CategoryFinderScreen(QWidget):
         self.table.setColumnWidth(2, CONFIDENCE_COLUMN_WIDTH)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
-        self.table.setSelectionMode(QAbstractItemView.NoSelection)
+        # 인라인 미리보기를 추가하며 NoSelection -> SingleSelection으로
+        # 바꿨다 — 행 클릭이 미리보기를 갱신하려면 선택 상태 자체가 있어야
+        # 한다(선택 신호는 itemSelectionChanged로 받음, 아래 connect 참고).
+        self.table.setSelectionMode(QAbstractItemView.SingleSelection)
         self.table.verticalHeader().setVisible(False)
         # gui/duplicate_screen.py와 같은 이유(2026-09-08) — col이 Stretch라
         # 표 자체의 가로 스크롤은 필요 없고, 켜두면 오른쪽 칸이 숨어 보일 수 있다.
         self.table.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self.table.setFocusPolicy(Qt.NoFocus)
         self.table.setContextMenuPolicy(Qt.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self._on_context_menu)
         self.table.doubleClicked.connect(self._on_row_double_clicked)
-        outer.addWidget(self.table, stretch=1)
+        self.table.itemSelectionChanged.connect(self._refresh_inline_viewer)
+        content_row.addWidget(self.table, stretch=1)
+
+        outer.addLayout(content_row, stretch=1)
 
         # --- 하단: 방식 선택 + 저장 위치 + 실행 — gui/date_organize_screen.py와
         # 같은 위젯 구성/문구(복사 기본값, 이동은 경고색). 찾은 사진 전부를
@@ -333,6 +361,17 @@ class CategoryFinderScreen(QWidget):
             confidence_item = QTableWidgetItem(f"{confidence * 100:.0f}%")
             confidence_item.setTextAlignment(Qt.AlignCenter)
             self.table.setItem(row, 2, confidence_item)
+        # setRowCount(0)이 기존 선택을 지우므로, 인라인 미리보기도 같이
+        # 비워야 방금 지운 행의 사진이 그대로 남아있지 않는다.
+        self._refresh_inline_viewer()
+
+    def _refresh_inline_viewer(self) -> None:
+        row = self.table.currentRow()
+        if 0 <= row < len(self._matches):
+            info, _confidence = self._matches[row]
+            self.inline_viewer.set_image_path(info.path)
+        else:
+            self.inline_viewer.set_pixmap(None)
 
     def _all_files(self) -> list:
         return [info for info, _confidence in self._matches]
