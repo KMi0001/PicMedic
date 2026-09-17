@@ -493,7 +493,9 @@ class ResultScreen(QWidget):
             placeholder_text="파일을 선택하면 미리보기가 표시됩니다.", overlay_controls=True
         )
         viewer_layout.addWidget(self.inline_viewer)
-        self.viewer_panel.hide()
+        # 기본으로 펼쳐둔다 — "검사결과 목록 미리보기 활성상태가 기본"
+        # (2026-09-18, 사용자 요청). 예전엔 접힌 채 시작해서 매번 손잡이를
+        # 눌러 열어야 했다.
 
         # 목록 경계에 붙는 손잡이 — 접혀있을 땐 ">"(누르면 열림), 펴져있을 땐
         # "<"(누르면 닫힘) 아이콘을 보여준다. 헤더/필터 줄에 있던 별도 텍스트
@@ -503,12 +505,14 @@ class ResultScreen(QWidget):
         # 밀어내서 아예 안 보이는 문제가 있었다 — QToolButton은 그 규칙의
         # 대상이 아니라서 자체 스타일만 먹는다.
         self.viewer_handle_btn = QToolButton()
-        self.viewer_handle_btn.setIcon(QIcon(_chevron_icon_pixmap(COLORS["text_secondary"], "right")))
+        # 패널이 기본으로 펼쳐져 있으니(위 viewer_panel 주석 참고) 아이콘/툴팁도
+        # "열림"(눌러서 닫기) 상태로 시작해야 실제 상태와 맞는다.
+        self.viewer_handle_btn.setIcon(QIcon(_chevron_icon_pixmap(COLORS["text_secondary"], "left")))
         self.viewer_handle_btn.setIconSize(QSize(14, 14))
         self.viewer_handle_btn.setFixedWidth(22)
         self.viewer_handle_btn.setAutoRaise(True)
         self.viewer_handle_btn.setCursor(Qt.PointingHandCursor)
-        self.viewer_handle_btn.setToolTip("뷰어 열기")
+        self.viewer_handle_btn.setToolTip("뷰어 닫기")
         self.viewer_handle_btn.setStyleSheet(
             f"QToolButton {{ background-color: {COLORS['surface']}; border: 1px solid {COLORS['border']}; "
             f"border-radius: 4px; padding: 2px; }} "

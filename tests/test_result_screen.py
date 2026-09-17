@@ -7,6 +7,7 @@ gui/result_screen.py 테스트
 """
 
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -14,6 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from tests.helpers import check, skip
 
+from PIL import Image
 from PySide6.QtCore import Qt, QPoint
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
@@ -154,6 +156,54 @@ def test_result_screen():
     check(f"필터 복귀 후 {N_TOTAL}행 전부 보임", mixed_screen.table.rowCount() == N_TOTAL)
 
 
+def test_inline_viewer_panel_starts_open():
+    """2026-09-18 사용자 요청: "검사결과 목록 미리보기 활성상태가 기본" —
+    예전엔 뷰어 패널이 접힌 채 시작해서 매번 손잡이를 눌러야 했다. 이제
+    기본으로 펼쳐져 있어야 하고, 손잡이 버튼 툴팁도 실제 상태("닫기")와
+    맞아야 한다. 행을 선택하면(선택 신호는 이미 있던 로직) 패널이 열려
+    있으므로 바로 미리보기가 채워지는지도 확인한다(가짜 경로가 아니라
+    실제 임시 이미지 파일을 써서 픽스맵이 진짜 로드되는지까지 본다)."""
+    app = QApplication.instance() or QApplication(sys.argv)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        img_path = Path(tmp) / "seoul.jpg"
+        Image.new("RGB", (40, 30), color="blue").save(img_path)
+
+        info = FileInfo(
+            path=str(img_path),
+            filename="seoul.jpg",
+            extension=".jpg",
+            status=FileStatus.NORMAL,
+            recoverable=RecoveryPossibility.NOT_RECOVERABLE,
+        )
+        result = ScanResult()
+        result.add(info)
+
+        screen = ResultScreen()
+        # _toggle_viewer가 self.viewer_panel.isVisible()로 현재 상태를
+        # 판단하는데, isVisible()은 화면 자체가 show()되지 않으면 조상
+        # 체인 때문에 항상 False로 나온다 — 실제 앱에서는 이 화면이 항상
+        # show()된 채로 쓰이므로, 토글 로직을 제대로 검증하려면 여기서도
+        # show()가 필요하다.
+        screen.show()
+        check("뷰어 패널이 기본으로 열려 있음", screen.viewer_panel.isVisible())
+        check(
+            "손잡이 버튼 툴팁이 '닫기'로 시작함(열린 상태와 일치)",
+            screen.viewer_handle_btn.toolTip() == "뷰어 닫기",
+        )
+
+        screen.set_result(result)
+        screen.table.selectRow(0)
+        check(
+            "행을 선택하면 인라인 뷰어에 실제로 사진이 로드됨(패널이 이미 열려 있으므로)",
+            screen.inline_viewer._pixmap_item is not None,
+        )
+
+        screen._toggle_viewer()
+        check("손잡이를 누르면 닫힘", not screen.viewer_panel.isVisible())
+        check("닫힌 상태 툴팁은 '열기'", screen.viewer_handle_btn.toolTip() == "뷰어 열기")
+
+
 def test_category_scan_locks_column_sort():
     """2026-09-17 실사용 리포트: "정리활성 상태인데 카테고리 선택해서 정렬하면
     난장판됨" — 카테고리 분류가 백그라운드에서 도는 동안 그 컬럼으로 정렬을
@@ -218,5 +268,6 @@ def test_category_scan_locks_column_sort():
 
 if __name__ == "__main__":  # pytest 없이 이 파일 하나만 돌려보고 싶을 때
     test_result_screen()
+    test_inline_viewer_panel_starts_open()
     test_category_scan_locks_column_sort()
     print("OK")
