@@ -22,7 +22,7 @@ from PySide6.QtCore import QEvent, QPoint, QPointF, Qt, QRectF
 from PySide6.QtGui import QMouseEvent
 from PySide6.QtWidgets import QApplication
 
-from gui.city_map_view import CityMapView
+from gui.city_map_view import CityMapView, _CityMarker
 
 
 def test_city_map_aggregates_by_country_when_multiple_visible():
@@ -187,6 +187,70 @@ def test_marker_colors_vary_by_key():
         "같은 도시는 다시 만들어도 항상 같은 색(결정적)",
         seoul_marker_again._color.name() == seoul_color_first,
         (seoul_marker_again._color.name(), seoul_color_first),
+    )
+
+
+def test_marker_shape_is_circle_not_full_label_bounding_rect():
+    """2026-09-18 사용자 리포트: "서울 선택하면 인천으로", "대한민국
+    선택해도 대만으로 가고 있다" — 지도 핀 좌표를 그룹 평균으로 고쳐도
+    (직전 두 커밋) 재현이 그대로였던 진짜 원인. _CityMarker가 shape()를
+    따로 안 줘서 Qt가 기본값으로 boundingRect() 전체(원 오른쪽으로 라벨
+    텍스트를 위해 최대 220 화면단위 넓힌 사각형)를 클릭 판정 영역으로
+    썼다 — 마커 두 개가 화면에서 가까우면 한쪽의 "안 보이는" 라벨 영역이
+    반대쪽의 눈에 보이는 원 위까지 뒤덮어서, 분명 A의 원을 눌렀는데 스택에
+    있는 B가 대신 클릭됐다. shape()를 실제 원 크기로 좁혔으니, 라벨
+    텍스트가 그려지는 자리(원에서 한참 오른쪽)는 더 이상 클릭 판정에 걸리면
+    안 된다."""
+    marker = _CityMarker(radius=8, label="테스트도시")
+    shape = marker.shape()
+
+    check("원 중심은 클릭 판정 영역 안에 있음", shape.contains(QPointF(0, 0)))
+    check("원 가장자리 바로 안쪽도 클릭 판정 영역 안에 있음", shape.contains(QPointF(7, 0)))
+    check(
+        "라벨 텍스트가 그려지는 자리(원 오른쪽 멀리)는 클릭 판정 영역 밖(예전엔 220 단위까지 걸렸음)",
+        not shape.contains(QPointF(100, 4)),
+    )
+    check(
+        "boundingRect()는 여전히 라벨 영역까지 넉넉히 포함함(그리기/무효화 범위 계산용 — shape와는 다른 목적)",
+        marker.boundingRect().contains(QPointF(100, 4)),
+    )
+
+
+def test_close_markers_click_hits_correct_pin_not_neighbors_label_area():
+    """위 shape() 단위 테스트가 고친 매커니즘을, 실제 사용자 시나리오
+    ("세계지도 상태에서 대한민국 선택해도 다른나라로 가고 있어.. (대만으로
+    가고있네)")에 가깝게 재현한다. 대만은 대한민국보다 서쪽(왼쪽 화면)에
+    있고 라벨은 마커 오른쪽에 그려지므로, 대만 마커의 "라벨 영역"이 동쪽
+    (오른쪽)으로 뻗어 대한민국 마커의 원 위까지 뒤덮을 수 있을 만큼
+    가깝게(화면상 110px 안팎) 배치한다 — shape()를 고치기 전이었다면
+    itemAt()이 대만 마커를 돌려줬을 배치."""
+    app = QApplication.instance() or QApplication(sys.argv)
+
+    view = CityMapView()
+    view.resize(800, 600)
+    view.show()
+
+    points = [
+        (37.5665, 126.9780, 13, "서울", "KR", "서울"),
+        (25.0330, 121.5654, 5, "타이베이", "TW", "Taipei"),
+    ]
+    view.set_points(points)
+    view.resetTransform()
+    view.fitInView(QRectF(80, -60, 120, 90), Qt.KeepAspectRatio)
+    view.view_changed.emit()
+    check("나라 2개가 country 모드로 보임", view._marker_mode == "country", view._marker_mode)
+
+    kr_marker = next(m for m in view._markers if "대한민국" in m.label_text())
+    tw_marker = next(m for m in view._markers if "대만" in m.label_text())
+    gap_px = (view.mapFromScene(kr_marker.pos()) - view.mapFromScene(tw_marker.pos())).manhattanLength()
+    check(f"두 마커가 화면상 220px보다 가까움(겹침 재현 전제, 실측 {gap_px}px)", gap_px < 220, gap_px)
+
+    kr_screen_pos = view.mapFromScene(kr_marker.pos())
+    hit = view.itemAt(kr_screen_pos)
+    check(
+        "대한민국 핀의 정확한 화면 위치를 클릭하면 대한민국 마커가 잡힘(이웃 마커의 라벨 영역에 안 뺏김)",
+        hit is kr_marker,
+        hit.label_text() if isinstance(hit, _CityMarker) else hit,
     )
 
 
@@ -429,6 +493,8 @@ if __name__ == "__main__":  # pytest 없이 이 파일 하나만 돌려보고 �
     test_city_map_aggregates_by_province_when_too_many_cities()
     test_set_points_fits_view_to_all_countries_initially()
     test_marker_colors_vary_by_key()
+    test_marker_shape_is_circle_not_full_label_bounding_rect()
+    test_close_markers_click_hits_correct_pin_not_neighbors_label_area()
     test_overlay_buttons_recenter_and_zoom()
     test_marker_click_vs_drag()
     test_pin_click_opens_and_closes_view()

@@ -186,6 +186,22 @@ class _CityMarker(QGraphicsItem):
         height = self._radius * 2 + self._MAX_LABEL_DY * 2
         return QRectF(-self._radius, top, self._radius * 2 + 220, height)
 
+    def shape(self) -> QPainterPath:
+        """boundingRect()는 라벨 텍스트 영역(원 오른쪽으로 최대 220 단위,
+        위아래로 라벨이 밀렸을 때 대비 ±80 단위)까지 넉넉히 잡는다 —
+        update()/repaint 범위 계산용으로는 맞는데, shape()를 따로 안 주면
+        Qt가 기본으로 boundingRect() 전체를 클릭 판정 영역으로 쓴다
+        (QGraphicsItem 문서). 그러면 마커 여러 개가 가까이 있을 때(특히
+        나라/세계지도 단위로 줌아웃했을 때) 한 마커의 "보이지도 않는" 라벨
+        영역이 옆 마커의 눈에 보이는 원 위까지 뒤덮어서, 분명 A를 눌렀는데
+        겹친 B의 라벨 영역이 위 스택에 있으면 B가 클릭된 걸로 잡혔다 —
+        "서울 선택하면 인천으로", "대한민국 선택해도 대만으로 가고 있다"는
+        리포트의 실제 원인(2026-09-18). 실제로 보이는 원만 클릭 판정
+        영역으로 좁힌다."""
+        path = QPainterPath()
+        path.addEllipse(QPointF(0, 0), self._radius, self._radius)
+        return path
+
     def paint(self, painter: QPainter, option, widget=None) -> None:
         painter.setRenderHint(QPainter.Antialiasing)
         painter.setPen(Qt.NoPen)
