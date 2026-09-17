@@ -33,8 +33,8 @@ PySide6가 UI 차이를 흡수하므로, 필요한 경우에만 `sys.platform` �
 ## 참고 문서
 
 - [README.md](README.md) — 설치/실행/테스트/빌드 방법
-- [PicMedic_PRD_v2.md](PicMedic_PRD_v2.md) — 기획서
-- [PRD_MVP우선순위.md](PRD_MVP우선순위.md) — 우선순위별 구현 체크리스트
 - [DESIGN.md](DESIGN.md) — 색상/아이콘/팝업 등 UI 디자인 가이드 (새 화면·컴포넌트 추가 시 참고)
-- [PLATFORM_EXPANSION.md](PLATFORM_EXPANSION.md) — 웹/앱(모바일) 확장 검토 메모 (아직 미착수, 방향만 정리됨)
-- [사진이_이상해요_기획_web.md](사진이_이상해요_기획_web.md) — 웹버전(`PicMedic-Web` 저장소) 1차 기능 기획
+- **기획/PRD 문서는 2026-09-17부터 Notion으로 이전됨** (저장소의 .md 원본은 삭제됨) — PRD v2,
+  PRD MVP 우선순위, Phase2 사진정리 기획, 웹/앱 확장 검토, 웹버전(사진이 이상해요) 기획,
+  복원 기능 퀄리티업 계획, 개인정보처리방침 초안. 노션 워크스페이스에서 "PicMedic 기획문서"
+  페이지 검색.
