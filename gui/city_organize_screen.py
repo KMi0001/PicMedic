@@ -435,6 +435,12 @@ class CityOrganizeScreen(QWidget):
         layout.addWidget(header_btn)
 
         body = QWidget()
+        # 전역 `QWidget { background-color: ... }` 규칙(gui/theme.py) 때문에
+        # 아무 스타일도 안 주면 이 컨테이너가 카드 배경(surface)과 다른
+        # 페이지 배경색(bg)으로 칠해져 카드 안에 이질적인 배경 패치가
+        # 생긴다 — 카테고리 배지 컨테이너에서 이미 한 번 겪은 것과 같은
+        # 버그 패턴(2026-09-18, 사용자 리포트: "목록에 배경색이 들어간다").
+        body.setStyleSheet("background-color: transparent;")
         body_layout = QVBoxLayout(body)
         body_layout.setContentsMargins(0, 4, 0, 0)
         body_layout.setSpacing(4)
