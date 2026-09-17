@@ -292,6 +292,7 @@ class CityOrganizeScreen(QWidget):
         if result is not getattr(self, "_result", None):
             self._group_exclusions = {}
             self._expanded_city_labels = set()
+            self.map_view.reset_initial_view()
         self._result = result
 
         all_groups = result.city_groups() if result and result.files else []

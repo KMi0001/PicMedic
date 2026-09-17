@@ -106,45 +106,87 @@ def test_city_map_aggregates_by_province_when_too_many_cities():
     check("도시 수가 임계값 이하로 줄면 city 모드로 돌아감", view._marker_mode == "city", view._marker_mode)
 
 
-def test_marker_colors_vary_by_country():
-    """2026-09-18 사용자 요청: "핀 색상을 좀 다양하게 할 수 있나?" — 예전엔
-    나라와 무관하게 핀이 전부 같은 빨간색이었다. 나라코드별로 색을 고정
-    배정해서 (1) 같은 화면에 여러 나라가 보이면 색이 달라 구분되고,
-    (2) 같은 나라는 도시/나라 어느 집계 단계에서 봐도 항상 같은 색이
-    나오는지(줌 레벨 바뀌어도 시각적 일관성 유지) 확인한다."""
+def test_set_points_fits_view_to_all_countries_initially():
+    """2026-09-18 사용자 리포트: "나라별로 있으면 지도에 다보이기로 하지
+    않았나?" — 실제로는 위젯이 뜨자마자(스캔 결과가 아직 없을 때) resizeEvent가
+    KOREA_CENTER 언저리 14도 박스로 한 번 맞춰버린 뒤로는, 나중에 set_points로
+    진짜 데이터(예: 한국+브라질처럼 서로 먼 나라)가 들어와도 다시는 자동으로
+    맞춰주지 않아서 그 박스 밖 나라는 화면에 아예 안 잡혔다(나라 단위 집계도
+    안 됨 — _visible_points가 애초에 못 봄). set_points가 실제 데이터를 처음
+    받으면 그 데이터 전체가 보이게 자동으로 맞춰야 한다."""
+    app = QApplication.instance() or QApplication(sys.argv)
+
+    view = CityMapView()
+    view.resize(800, 600)
+    view.show()  # resizeEvent가 먼저 발생 — 이 시점엔 아직 데이터가 없어 KOREA_CENTER로 맞춰짐
+    app.processEvents()
+
+    # 한국과 지구 반대편 브라질 — KOREA_CENTER의 기본 14도 span으로는 절대
+    # 같이 안 보이는 조합.
+    points = [
+        (37.5665, 126.9780, 8, "서울", "KR", "서울"),
+        (-23.5505, -46.6333, 3, "상파울루", "BR", "Sao Paulo"),
+    ]
+    view.set_points(points)  # 수동으로 fitInView/center_on을 따로 부르지 않음 — 자동으로 맞춰져야 함
+    app.processEvents()
+
+    visible = view.mapToScene(view.viewport().rect()).boundingRect()
+    check(
+        "set_points만으로 서울이 화면 범위 안에 들어옴(수동 확대 없이)",
+        visible.contains(126.9780, -37.5665),
+        visible,
+    )
+    check(
+        "set_points만으로 상파울루도 화면 범위 안에 들어옴(수동 확대 없이)",
+        visible.contains(-46.6333, 23.5505),
+        visible,
+    )
+    check("두 나라가 다 보이니 country 모드로 집계됨", view._marker_mode == "country", view._marker_mode)
+    check("나라 단위 마커가 2개 생김", len(view._markers) == 2, len(view._markers))
+
+
+def test_marker_colors_vary_by_key():
+    """2026-09-18 사용자 요청 히스토리: 처음엔 "핀 색상을 좀 다양하게 할 수
+    있나?"로 나라코드별 색을 넣었는데(같은 나라 도시는 전부 같은 색),
+    바로 이어서 "핀 색상은 도시별로 바꿔줘"로 바뀌었다 — 지금은 마커가
+    대표하는 단위 자체(도시 라벨/(나라,시도) 쌍/나라 코드)로 색을 나눈다.
+    같은 나라 안 도시들도 서로 다른 색이 나와야 하는 게 이번 요청의
+    핵심이고, 같은 값은 (같은 프로세스 안에서) 항상 같은 색이 결정적으로
+    나와야 한다."""
     app = QApplication.instance() or QApplication(sys.argv)
 
     view = CityMapView()
     view.resize(800, 600)
     view.show()
 
+    # 같은 나라(KR) 안에 도시 4개 — 나라가 같아도 도시마다 색이 달라야 한다.
     points = [
         (37.5665, 126.9780, 8, "서울", "KR", "서울"),
-        (35.6762, 139.6503, 5, "도쿄", "JP", "Tokyo"),
-        (21.0278, 105.8342, 4, "하노이", "VN", "Hanoi"),
+        (35.1796, 129.0756, 3, "부산", "KR", "부산"),
+        (35.8714, 128.6014, 2, "대구", "KR", "대구"),
+        (35.1595, 126.8526, 1, "광주", "KR", "광주"),
     ]
     view.set_points(points)
-
     view.resetTransform()
-    view.fitInView(QRectF(-180, -90, 360, 180), Qt.KeepAspectRatio)
+    view.fitInView(QRectF(126, -38, 4, 4), Qt.KeepAspectRatio)
     view.view_changed.emit()
-    check("나라 3개가 보이면 country 모드", view._marker_mode == "country", view._marker_mode)
+    check("도시 4개가 city 모드로 보임(나라 1개·도시 4개 < 임계값)", view._marker_mode == "city", view._marker_mode)
+    check("도시 마커가 4개 있음", len(view._markers) == 4, len(view._markers))
 
-    country_colors = {m.label_text().split(" (")[0]: m._color.name() for m in view._markers}
+    city_colors = {m.label_text().split(" (")[0]: m._color.name() for m in view._markers}
     check(
-        "나라 단위 마커 3개가 서로 다른 색을 가짐(다양화 확인)",
-        len(set(country_colors.values())) == 3,
-        country_colors,
+        "같은 나라 안 도시들도 서로 다른 색을 가짐(도시별 다양화)",
+        len(set(city_colors.values())) == 4,
+        city_colors,
     )
 
-    kr_country_color = next(color for label, color in country_colors.items() if "대한민국" in label)
-    view.center_on(36.5, 127.8, span_deg=2.0)
-    check("한국만 보이면 city 모드로 전환됨", view._marker_mode == "city", view._marker_mode)
-    seoul_marker = next(m for m in view._markers if "서울" in m.label_text())
+    seoul_color_first = city_colors["서울"]
+    view.set_points(points)  # 팬/줌으로 마커가 다시 만들어지는 상황 흉내
+    seoul_marker_again = next(m for m in view._markers if "서울" in m.label_text())
     check(
-        "도시 단위로 봐도 같은 나라는 나라 단위일 때와 같은 색(일관성)",
-        seoul_marker._color.name() == kr_country_color,
-        (seoul_marker._color.name(), kr_country_color),
+        "같은 도시는 다시 만들어도 항상 같은 색(결정적)",
+        seoul_marker_again._color.name() == seoul_color_first,
+        (seoul_marker_again._color.name(), seoul_color_first),
     )
 
 
@@ -385,7 +427,8 @@ def test_city_map_handles_empty_points():
 if __name__ == "__main__":  # pytest 없이 이 파일 하나만 돌려보고 싶을 때
     test_city_map_aggregates_by_country_when_multiple_visible()
     test_city_map_aggregates_by_province_when_too_many_cities()
-    test_marker_colors_vary_by_country()
+    test_set_points_fits_view_to_all_countries_initially()
+    test_marker_colors_vary_by_key()
     test_overlay_buttons_recenter_and_zoom()
     test_marker_click_vs_drag()
     test_pin_click_opens_and_closes_view()

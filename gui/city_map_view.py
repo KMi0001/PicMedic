@@ -40,12 +40,13 @@ _LAND_FILL_COLOR = "#CDE8DC"
 _LAND_BORDER_COLOR = "#9FC6B0"
 _COUNTRY_LABEL_COLOR = QColor(90, 120, 105, 200)
 
-# 핀 색상 팔레트 — 예전엔 나라와 무관하게 전부 같은 빨간색이었는데
-# "핀 색상을 좀 다양하게 할 수 있나?"(2026-09-18) 요청으로 나라코드별로
-# 색을 달리했다. 도시/시·도/나라 단위 어느 모드에서 보든 같은 나라는
-# 항상 같은 색이 나오도록(줌 레벨이 바뀌어도 시각적 일관성 유지) 나라
-# 하나당 색 하나를 고정 배정한다. 옅은 바다(#DCEEF5)/땅(#CDE8DC) 배경
-# 위에서 잘 도드라지도록 채도를 충분히 준 8가지 색.
+# 핀 색상 팔레트 — 예전엔 전부 같은 빨간색이었는데 "핀 색상을 좀 다양하게
+# 할 수 있나?"(2026-09-18)로 나라코드별로 색을 달리했다가, 바로 이어서
+# "핀 색상은 도시별로 바꿔줘"로 다시 바뀌었다 — 지금은 마커가 실제로
+# 대표하는 단위 자체(도시 라벨/시도 (나라,시도) 쌍/나라 코드 — 어느 걸
+# 보든 그 마커의 고유 식별자)로 색을 나눈다(_marker_color_for_key 참고).
+# 옅은 바다(#DCEEF5)/땅(#CDE8DC) 배경 위에서 잘 도드라지도록 채도를
+# 충분히 준 8가지 색.
 _MARKER_PALETTE = [
     QColor(218, 90, 90, 210),   # 빨강 (기존 기본색 유지)
     QColor(74, 120, 196, 210),  # 파랑
@@ -58,13 +59,15 @@ _MARKER_PALETTE = [
 ]
 
 
-def _marker_color_for_country(cc: str) -> QColor:
-    """나라코드(cc)마다 항상 같은 색을 돌려준다 — Python 내장 hash()는
-    프로세스마다 시드가 달라 같은 나라도 실행할 때마다 색이 바뀔 수 있어서
-    (해시 랜덤화), 대신 결정적인 crc32를 쓴다."""
-    if not cc:
+def _marker_color_for_key(key) -> QColor:
+    """마커 하나를 특정하는 값(도시 라벨, (나라코드, 시/도) 쌍, 나라 코드
+    등 — 그 마커가 화면에 실제로 대표하는 단위)마다 항상 같은 색을
+    돌려준다. Python 내장 hash()는 프로세스마다 시드가 달라 같은 값도
+    실행할 때마다 색이 바뀔 수 있어서(해시 랜덤화), 대신 결정적인 crc32를
+    쓴다."""
+    if not key:
         return _MARKER_PALETTE[0]
-    index = zlib.crc32(cc.encode("utf-8")) % len(_MARKER_PALETTE)
+    index = zlib.crc32(str(key).encode("utf-8")) % len(_MARKER_PALETTE)
     return _MARKER_PALETTE[index]
 
 # 나라 이름 라벨을 보여줄 최소 화면 크기(px) — 이보다 작게 보이면(세계 전체를
@@ -247,12 +250,14 @@ class CityMapView(QGraphicsView):
     # 이 지도는 실제 지도 타일이 아니라 국가 윤곽선만 그린 정적 지도라(위
     # 클래스 독스트링 참고), 너무 깊이 확대해봤자 거리·건물 같은 참고할
     # 지형지물이 하나도 없는 빈 배경만 보여서 오히려 방향을 잃는다. 처음엔
-    # 1600(시/도 하나 크기)까지 허용했지만(2026-09-17), 도시 카드를
-    # 선택했을 때(항상 이 캡까지 확대됨 — 점 하나짜리 지점은 늘 최대
-    # 배율에 걸림) "너무 확대된다"는 리포트로 한 번 더 줄였다(2026-09-18)
-    # — "지금 선택한 상태에서 [-] 다섯 번 누른 정도"라는 사용자 기준을
-    # 그대로 식으로 옮김(줌 버튼 한 번이 ×1.2, _zoom_by 참고).
-    _MAX_SCALE = 1600.0 / (1.2**5)  # ≈ 643
+    # 1600(시/도 하나 크기)까지 허용했다가(2026-09-17), 도시 카드를
+    # 선택하면 항상 이 캡까지 확대되는데(점 하나짜리 지점은 늘 최대 배율에
+    # 걸림) "너무 확대된다"는 리포트로 한 번 줄였고(2026-09-18, 1600→643,
+    # "[-] 다섯 번 누른 정도"), 그래도 여전히 너무 확대된다는 같은 날
+    # 후속 리포트로 한 번 더 같은 폭(다시 [-] 다섯 번)만큼 줄였다 — 결과적
+    # 으로 원래 1600에서 [-]를 열 번 누른 셈(줌 버튼 한 번이 ×1.2,
+    # _zoom_by 참고).
+    _MAX_SCALE = 1600.0 / (1.2**10)  # ≈ 258
 
     def __init__(self, parent=None):
         scene = QGraphicsScene(-180, -90, 360, 180)
@@ -340,6 +345,16 @@ class CityMapView(QGraphicsView):
         # 중 버벅일 수 있어서, 이 값이 실제로 바뀔 때만 다시 만든다.
         self._marker_mode: str | None = None
         self._centered_once = False
+        # 실제 데이터(set_points)가 처음 들어왔을 때 딱 한 번만 전체 데이터가
+        # 다 보이게 맞춘다 — "나라별로 있으면 지도에 다 보이기로 하지
+        # 않았나?"(2026-09-18) 리포트로 발견: resizeEvent가 뷰가 뜨자마자
+        # (스캔 결과가 아직 없을 때) _centered_once를 소비해버려서, 나중에
+        # set_points로 진짜 데이터(예: 한국+유럽+미국)가 들어와도 다시는
+        # 자동으로 맞춰주지 않고 KOREA_CENTER의 좁은 14도 박스에 그대로
+        # 머물러 있었다 — 그 박스 밖 나라들은 뷰포트에 안 걸려서
+        # _visible_points()에도 안 잡히니 나라 단위 집계 자체가 그 나라들을
+        # 아예 없는 셈 쳤다.
+        self._data_view_fitted = False
         self.view_changed.connect(self._rebuild_markers)
         self.view_changed.connect(self._update_country_label_visibility)
 
@@ -430,7 +445,18 @@ class CityMapView(QGraphicsView):
         """points = [(위도, 경도, 사진 개수, 도시 라벨, 나라코드, 시/도 라벨), ...]."""
         self._raw_points = points
         self._marker_mode = None  # 다음 _rebuild_markers가 무조건 다시 그리게
+        if points and not self._data_view_fitted and self.viewport().width() > 0:
+            self.zoom_out_to_all()
+            self._data_view_fitted = True
+            self._centered_once = True  # resizeEvent의 KOREA_CENTER 기본값으로 되돌아가지 않게
         self._rebuild_markers()
+
+    def reset_initial_view(self) -> None:
+        """새 스캔 결과가 들어오면(gui/city_organize_screen.py::set_result가
+        새 result를 감지했을 때 호출) 이전 데이터에 맞춰 확대해둔 상태를
+        잊는다 — 다음 set_points 때 새 데이터 전체가 다시 자동으로 다
+        보이게 하기 위함."""
+        self._data_view_fitted = False
 
     def _visible_points(self) -> list[tuple[float, float, int, str, str, str]]:
         visible_scene_rect = self.mapToScene(self.viewport().rect()).boundingRect()
@@ -469,7 +495,7 @@ class CityMapView(QGraphicsView):
             self._build_aggregated_markers(
                 group_key=lambda p: p[4],
                 label_for=lambda key: country_name_ko(key),
-                color_for=lambda key: _marker_color_for_country(key),
+                color_for=lambda key: _marker_color_for_key(key),
                 base_radius=6,
                 radius_span=12,
             )
@@ -477,7 +503,7 @@ class CityMapView(QGraphicsView):
             self._build_aggregated_markers(
                 group_key=lambda p: (p[4], p[5]),
                 label_for=lambda key: key[1],
-                color_for=lambda key: _marker_color_for_country(key[0]),
+                color_for=lambda key: _marker_color_for_key(key),
                 base_radius=5.5,
                 radius_span=11,
             )
@@ -487,9 +513,9 @@ class CityMapView(QGraphicsView):
 
     def _build_city_markers(self) -> None:
         max_count = max(p[2] for p in self._raw_points)
-        for lat, lon, count, label, cc, _province in self._raw_points:
+        for lat, lon, count, label, _cc, _province in self._raw_points:
             radius = 5 + (count / max_count) * 10
-            marker = _CityMarker(radius, f"{label} ({count})", color=_marker_color_for_country(cc))
+            marker = _CityMarker(radius, f"{label} ({count})", color=_marker_color_for_key(label))
             marker.setPos(lon, -lat)
             self._wire_marker_clicks(marker, [(lat, lon)])
             self.scene().addItem(marker)
@@ -743,7 +769,16 @@ class CityMapView(QGraphicsView):
         super().resizeEvent(event)
         if not self._centered_once:
             self._centered_once = True
-            self.center_on(*KOREA_CENTER)
+            # set_points가 데이터를 이미 들고 있었는데 그때는 뷰포트 크기가
+            # 아직 0이라 zoom_out_to_all을 못 했던 경우(위젯이 보이기 전에
+            # 스캔 결과가 먼저 들어온 경우) — 지금 크기가 잡혔으니 여기서
+            # 마저 맞춘다. 데이터가 아직 없으면(스캔 전) 기존처럼 한국
+            # 언저리를 기본값으로 보여준다.
+            if self._raw_points:
+                self.zoom_out_to_all()
+                self._data_view_fitted = True
+            else:
+                self.center_on(*KOREA_CENTER)
         else:
             self._update_country_label_visibility()
         overlay = getattr(self, "_overlay_toolbar", None)
