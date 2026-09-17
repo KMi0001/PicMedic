@@ -18,7 +18,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from tests.helpers import check
 
-from PySide6.QtCore import Qt, QRectF
+from PySide6.QtCore import QEvent, QPoint, QPointF, Qt, QRectF
+from PySide6.QtGui import QMouseEvent
 from PySide6.QtWidgets import QApplication
 
 from gui.city_map_view import CityMapView
@@ -151,6 +152,73 @@ def test_overlay_buttons_recenter_and_zoom():
     )
 
 
+def test_marker_click_vs_drag():
+    """2026-09-17 사용자 리포트: "클릭으로 드래그 하고싶은데 자꾸 확대되서
+    길을 잃어" — 핀 위에서 마우스를 누르는 즉시(mousePressEvent) 확대해
+    버려서, 그 자리에서 드래그(지도 패닝)를 시작하려던 제스처까지 전부
+    확대로 처리되던 버그. 실제 QMouseEvent를 뷰(viewport)에 보내서 진짜
+    클릭과 드래그를 구분해서 검증한다(마커 자신의 콜백을 직접 부르는
+    test_pin_click_opens_and_closes_view와 달리, 여기는 이벤트 전달 경로
+    자체를 검증)."""
+    app = QApplication.instance() or QApplication(sys.argv)
+
+    view = CityMapView()
+    view.resize(800, 600)
+    view.show()
+
+    points = [
+        (37.5665, 126.9780, 5, "seoul", "KR", "서울"),
+        (35.6762, 139.6503, 20, "tokyo", "JP", "Tokyo"),
+    ]
+    view.set_points(points)
+    view.resetTransform()
+    view.fitInView(QRectF(-180, -90, 360, 180), Qt.KeepAspectRatio)
+    view.view_changed.emit()
+
+    marker = view._markers[0]
+    clicked = {"count": 0}
+    marker.on_left_click = lambda: clicked.__setitem__("count", clicked["count"] + 1)
+    marker_pos = view.mapFromScene(marker.pos())
+
+    check(
+        "마커가 마우스 버튼 이벤트를 아예 안 받음(패닝이 핀 위에서도 막히지 않도록)",
+        marker.acceptedMouseButtons() == Qt.NoButton,
+    )
+
+    # 진짜 클릭(누르고 거의 그 자리에서 뗌) -> on_left_click 호출돼야 함
+    app.sendEvent(
+        view.viewport(),
+        QMouseEvent(QEvent.MouseButtonPress, QPointF(marker_pos), Qt.LeftButton, Qt.LeftButton, Qt.NoModifier),
+    )
+    app.sendEvent(
+        view.viewport(),
+        QMouseEvent(QEvent.MouseButtonRelease, QPointF(marker_pos), Qt.LeftButton, Qt.NoButton, Qt.NoModifier),
+    )
+    app.processEvents()
+    check("핀을 클릭(이동 없이 누르고 뗌)하면 on_left_click이 호출됨", clicked["count"] == 1, clicked["count"])
+
+    # 드래그(핀 위에서 눌러서 꽤 이동한 뒤 뗌) -> on_left_click이 호출되면 안 됨
+    clicked["count"] = 0
+    drag_end = marker_pos + QPoint(60, 40)
+    app.sendEvent(
+        view.viewport(),
+        QMouseEvent(QEvent.MouseButtonPress, QPointF(marker_pos), Qt.LeftButton, Qt.LeftButton, Qt.NoModifier),
+    )
+    app.sendEvent(
+        view.viewport(), QMouseEvent(QEvent.MouseMove, QPointF(drag_end), Qt.NoButton, Qt.LeftButton, Qt.NoModifier)
+    )
+    app.sendEvent(
+        view.viewport(),
+        QMouseEvent(QEvent.MouseButtonRelease, QPointF(drag_end), Qt.LeftButton, Qt.NoButton, Qt.NoModifier),
+    )
+    app.processEvents()
+    check(
+        "핀 위에서 눌러서 드래그하면(60,40 이동) on_left_click이 호출되지 않음",
+        clicked["count"] == 0,
+        clicked["count"],
+    )
+
+
 def test_pin_click_opens_and_closes_view():
     """2026-09-17 사용자 요청(같은 날 후속): "핀별로 열고 닫기 기능 추가".
     좌클릭(핀 열기)은 그 핀이 대표하는 지점들이 화면에 꽉 차게 확대해야
@@ -234,6 +302,7 @@ if __name__ == "__main__":  # pytest 없이 이 파일 하나만 돌려보고 �
     test_city_map_aggregates_by_country_when_multiple_visible()
     test_city_map_aggregates_by_province_when_too_many_cities()
     test_overlay_buttons_recenter_and_zoom()
+    test_marker_click_vs_drag()
     test_pin_click_opens_and_closes_view()
     test_city_map_handles_empty_points()
     print("OK")

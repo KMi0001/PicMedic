@@ -120,6 +120,15 @@ class _CityMarker(QGraphicsItem):
         self.setFlag(QGraphicsItem.ItemIgnoresTransformations)
         self.setZValue(10)
         self.setCursor(Qt.PointingHandCursor)
+        # 이 아이템이 왼쪽 버튼 press/release를 아예 안 받게 한다 — 받으면
+        # (설령 ignore()해도) CityMapView의 기본 드래그 패닝(ScrollHandDrag)이
+        # 핀 위에서 시작할 땐 실제로 안 먹히는 걸 실측으로 확인했다(2026-09-17,
+        # 사용자 리포트 — "핀 위에서 드래그하면 확대되고 패닝이 안 됨"). 클릭
+        # 판정은 CityMapView.mouseReleaseEvent가 itemAt()으로 직접 하므로
+        # (아래 mousePressEvent 삭제, contextMenuEvent만 남김) 이 아이템이
+        # 마우스 이벤트를 안 받아도 클릭은 그대로 인식된다 — itemAt()은
+        # acceptedMouseButtons와 무관하게 순수 도형 히트테스트다.
+        self.setAcceptedMouseButtons(Qt.NoButton)
         # CityMapView가 마커를 만든 직후 채워준다 — 좌클릭(그 지역으로 확대,
         # "핀 열기") / 우클릭(전체 보기로 축소, "핀 닫기") 둘 다 이 마커가
         # 뭘 대표하는지 CityMapView만 알기 때문에, 콜백을 주입받는 방식으로
@@ -162,13 +171,6 @@ class _CityMarker(QGraphicsItem):
             painter.drawLine(QPointF(0, label_pos.y() - 4), QPointF(self._radius + 2, label_pos.y() - 4))
         painter.setPen(QColor("#222"))
         painter.drawText(label_pos, self._label)
-
-    def mousePressEvent(self, event) -> None:
-        if event.button() == Qt.LeftButton and self.on_left_click is not None:
-            self.on_left_click()
-            event.accept()
-            return
-        super().mousePressEvent(event)
 
     def contextMenuEvent(self, event) -> None:
         if self.on_right_click is not None:
@@ -303,6 +305,12 @@ class CityMapView(QGraphicsView):
         self._centered_once = False
         self.view_changed.connect(self._rebuild_markers)
         self.view_changed.connect(self._update_country_label_visibility)
+
+        # 핀 클릭("열기")을 눌렀다 뗀 위치가 거의 안 움직였을 때만 클릭으로
+        # 인정하기 위한 상태 — _CityMarker.mousePressEvent가 press를 일부러
+        # ignore()해서 뷰가 press/release를 둘 다 받으므로, 클릭 판정은 여기
+        # (뷰 레벨)에서 한다.
+        self._marker_press_pos = None
 
         self._build_overlay_toolbar()
 
@@ -621,6 +629,32 @@ class CityMapView(QGraphicsView):
     def scrollContentsBy(self, dx: int, dy: int) -> None:
         super().scrollContentsBy(dx, dy)
         self._start_view_changed_timer()
+
+    @staticmethod
+    def _event_pos(event):
+        return event.position().toPoint() if hasattr(event, "position") else event.pos()
+
+    def mousePressEvent(self, event) -> None:
+        if event.button() == Qt.LeftButton:
+            self._marker_press_pos = self._event_pos(event)
+        super().mousePressEvent(event)
+
+    def mouseReleaseEvent(self, event) -> None:
+        super().mouseReleaseEvent(event)
+        # 핀 클릭("열기") 판정 — _CityMarker가 마우스 버튼을 아예 안 받게
+        # 했으므로(setAcceptedMouseButtons(Qt.NoButton), 안 그러면 핀 위에서
+        # 시작한 드래그가 패닝되지 않는 문제가 있었다 — 2026-09-17, 사용자
+        # 리포트) press/release가 항상 여기(뷰)로 온다. 눌렀다 뗀 위치가 몇
+        # 픽셀 이내면 클릭, 그보다 많이 움직였으면 드래그(패닝)로 보고 아무
+        # 것도 안 한다.
+        pos = self._event_pos(event)
+        if event.button() == Qt.LeftButton and self._marker_press_pos is not None:
+            moved = (pos - self._marker_press_pos).manhattanLength()
+            if moved <= 4:
+                item = self.itemAt(pos)
+                if isinstance(item, _CityMarker) and item.on_left_click is not None:
+                    item.on_left_click()
+            self._marker_press_pos = None
 
     def _start_view_changed_timer(self) -> None:
         # QGraphicsScene에 국가 경계를 채우는 동안이나(생성자), 위젯이
