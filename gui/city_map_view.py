@@ -23,7 +23,7 @@ from __future__ import annotations
 
 from PySide6.QtCore import QPointF, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QFont, QFontMetrics, QPainter, QPainterPath, QPen
-from PySide6.QtWidgets import QGraphicsItem, QGraphicsScene, QGraphicsView
+from PySide6.QtWidgets import QGraphicsItem, QGraphicsScene, QGraphicsView, QHBoxLayout, QToolButton, QWidget
 
 from core.country_names_ko import COUNTRY_NAMES_KO
 from core.geocoder import country_name_ko
@@ -40,9 +40,32 @@ _COUNTRY_LABEL_COLOR = QColor(90, 120, 105, 200)
 _MARKER_COLOR = QColor(218, 90, 90, 210)  # theme.py COLORS['danger']에 알파 추가
 
 # 나라 이름 라벨을 보여줄 최소 화면 크기(px) — 이보다 작게 보이면(세계 전체를
-# 보는 중이라 그 나라가 작게 찍히면) 숨긴다. 확대할수록 큰 나라부터, 더
+# 보는 중이라 그 나라가 작게 보이면) 숨긴다. 확대할수록 큰 나라부터, 더
 # 확대하면 작은 나라까지 순서대로 나타난다.
 _COUNTRY_LABEL_MIN_PX = 50
+
+# 지도 위에 얹는 컨트롤 버튼(재중심/확대/축소) 스타일 — gui/image_viewer.py의
+# 오버레이 툴바(_OVERLAY_TOOLBAR_STYLESHEET)와 같은 반투명 알약 스타일
+# (2026-09-17, 사용자 요청: "gps를 추적할 순 없으니까 사진이 가장 많은 나라
+# 기준으로 지도를 표기해주는 버튼이랑 +/- 확대 축소 버튼").
+_MAP_OVERLAY_STYLESHEET = (
+    "QWidget#MapOverlayToolbar {"
+    " background-color: rgba(20, 18, 15, 150);"
+    " border-radius: 16px;"
+    "}"
+    "QToolButton {"
+    " background: transparent;"
+    " border: none;"
+    " color: white;"
+    "}"
+    "QToolButton:hover {"
+    " background-color: rgba(255, 255, 255, 40);"
+    " border-radius: 8px;"
+    "}"
+    "QToolButton:disabled {"
+    " color: rgba(255, 255, 255, 90);"
+    "}"
+)
 
 
 def _ring_area_and_centroid(ring: list[tuple[float, float]]) -> tuple[float, tuple[float, float]]:
@@ -280,6 +303,78 @@ class CityMapView(QGraphicsView):
         self._centered_once = False
         self.view_changed.connect(self._rebuild_markers)
         self.view_changed.connect(self._update_country_label_visibility)
+
+        self._build_overlay_toolbar()
+
+    def _build_overlay_toolbar(self) -> None:
+        """지도 안(오른쪽 아래)에 재중심/확대/축소 버튼 3개를 얹는다 — 실시간
+        GPS 위치를 추적할 수 없는 데스크톱 앱이라 "지금 내 위치로" 대신
+        "사진이 가장 많은 나라로" 재중심하는 버튼을 대신 둔다(2026-09-17,
+        사용자 요청). gui/image_viewer.py의 오버레이 툴바와 같은 패턴 —
+        일반 레이아웃에 안 넣고 self를 부모로 둔 채 resizeEvent에서 위치를
+        직접 잡는다."""
+        self._overlay_toolbar = QWidget(self)
+        self._overlay_toolbar.setObjectName("MapOverlayToolbar")
+        self._overlay_toolbar.setStyleSheet(_MAP_OVERLAY_STYLESHEET)
+        layout = QHBoxLayout(self._overlay_toolbar)
+        layout.setContentsMargins(6, 4, 6, 4)
+        layout.setSpacing(2)
+
+        def _btn(text: str, tooltip: str) -> QToolButton:
+            b = QToolButton()
+            b.setText(text)
+            b.setToolTip(tooltip)
+            b.setAutoRaise(True)
+            b.setCursor(Qt.PointingHandCursor)
+            b.setFixedSize(26, 22)
+            layout.addWidget(b)
+            return b
+
+        self._recenter_btn = _btn("⌂", "사진이 가장 많은 나라로 이동")
+        self._zoom_in_btn = _btn("+", "확대")
+        self._zoom_out_btn = _btn("－", "축소")
+        self._recenter_btn.clicked.connect(self._recenter_to_busiest_country)
+        self._zoom_in_btn.clicked.connect(lambda: self._zoom_by(1.2))
+        self._zoom_out_btn.clicked.connect(lambda: self._zoom_by(1 / 1.2))
+
+        self._overlay_toolbar.adjustSize()
+        self._position_overlay_toolbar()
+
+    def _position_overlay_toolbar(self) -> None:
+        self._overlay_toolbar.adjustSize()
+        margin = 14
+        x = self.width() - self._overlay_toolbar.width() - margin
+        y = self.height() - self._overlay_toolbar.height() - margin
+        self._overlay_toolbar.move(max(0, x), max(0, y))
+        self._overlay_toolbar.raise_()
+
+    def _zoom_by(self, factor: float) -> None:
+        """+/- 버튼 — wheelEvent와 같은 배율(1.2배)을 그대로 써서 휠로
+        돌렸을 때와 손맛이 같게 한다."""
+        new_scale = self.transform().m11() * factor
+        if self._MIN_SCALE <= new_scale <= self._MAX_SCALE:
+            self.scale(factor, factor)
+            self._start_view_changed_timer()
+
+    def _country_with_most_photos(self) -> str | None:
+        totals: dict[str, int] = {}
+        for _lat, _lon, count, _label, cc, _province in self._raw_points:
+            totals[cc] = totals.get(cc, 0) + count
+        if not totals:
+            return None
+        return max(totals, key=totals.get)
+
+    def _recenter_to_busiest_country(self) -> None:
+        """실시간 GPS 위치를 알 수 없으니, 대신 사진이 가장 많이 찍힌 나라를
+        "내 위치" 삼아 그 나라 사진들이 화면에 꽉 차게 재중심한다."""
+        busiest_cc = self._country_with_most_photos()
+        if busiest_cc is None:
+            self.center_on(*KOREA_CENTER)
+            return
+        member_points = [
+            (lat, lon) for lat, lon, _count, _label, cc, _province in self._raw_points if cc == busiest_cc
+        ]
+        self._fit_scene_rect(self._points_bounds(member_points))
 
     # 한 나라 안에서도 화면에 보이는 도시 마커가 이 개수를 넘으면 시/도
     # 단위로 한 단계 더 뭉친다 — 국내 사진만 수만 장이면 도시가 수십 개
@@ -521,11 +616,7 @@ class CityMapView(QGraphicsView):
             delta = event.pixelDelta().y()
         if delta == 0:
             return
-        factor = 1.2 if delta > 0 else 1 / 1.2
-        new_scale = self.transform().m11() * factor
-        if self._MIN_SCALE <= new_scale <= self._MAX_SCALE:
-            self.scale(factor, factor)
-            self._start_view_changed_timer()
+        self._zoom_by(1.2 if delta > 0 else 1 / 1.2)
 
     def scrollContentsBy(self, dx: int, dy: int) -> None:
         super().scrollContentsBy(dx, dy)
@@ -549,3 +640,6 @@ class CityMapView(QGraphicsView):
             self.center_on(*KOREA_CENTER)
         else:
             self._update_country_label_visibility()
+        overlay = getattr(self, "_overlay_toolbar", None)
+        if overlay is not None:
+            self._position_overlay_toolbar()

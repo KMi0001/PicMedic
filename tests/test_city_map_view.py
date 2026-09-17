@@ -105,6 +105,52 @@ def test_city_map_aggregates_by_province_when_too_many_cities():
     check("도시 수가 임계값 이하로 줄면 city 모드로 돌아감", view._marker_mode == "city", view._marker_mode)
 
 
+def test_overlay_buttons_recenter_and_zoom():
+    """2026-09-17 사용자 요청(같은 날 후속): "지도 안에 버튼을 만들자. gps를
+    추적할 순 없으니까 사진이 가장많은 나라 기준으로 지도를 표기해주는
+    버튼이랑 +/- 확대 축소 해주는 버튼." 재중심 버튼은 GPS가 아니라
+    self._raw_points 안에서 사진 수를 나라별로 합산해 가장 많은 나라로
+    이동해야 한다."""
+    app = QApplication.instance() or QApplication(sys.argv)
+
+    view = CityMapView()
+    view.resize(800, 600)
+    view.show()
+
+    check("오버레이 툴바가 생성됨", hasattr(view, "_overlay_toolbar"))
+    check(
+        "재중심/확대/축소 버튼 3개가 모두 있음",
+        hasattr(view, "_recenter_btn") and hasattr(view, "_zoom_in_btn") and hasattr(view, "_zoom_out_btn"),
+    )
+
+    # 한국 5장, 일본 20장 -> 일본이 "사진이 가장 많은 나라"여야 한다.
+    points = [
+        (37.5665, 126.9780, 5, "seoul", "KR", "서울"),
+        (35.6762, 139.6503, 20, "tokyo", "JP", "Tokyo"),
+    ]
+    view.set_points(points)
+    check("사진이 가장 많은 나라를 정확히 찾음(일본 20장 > 한국 5장)", view._country_with_most_photos() == "JP")
+
+    before_scale = view.transform().m11()
+    view._zoom_by(1.2)
+    check("+ 버튼(확대)을 누르면 배율이 커짐", view.transform().m11() > before_scale)
+
+    after_zoom_in = view.transform().m11()
+    view._zoom_by(1 / 1.2)
+    check("- 버튼(축소)을 누르면 배율이 작아짐", view.transform().m11() < after_zoom_in)
+
+    # 아주 멀리 축소된 상태에서 재중심하면 일본 지점이 화면 안에 들어와야 한다.
+    view.resetTransform()
+    view.scale(0.001, 0.001)
+    view._recenter_to_busiest_country()
+    visible = view.mapToScene(view.viewport().rect()).boundingRect()
+    check(
+        "재중심 버튼을 누르면 사진이 가장 많은 나라(일본) 지점이 화면 안에 들어옴",
+        visible.contains(139.6503, -35.6762),
+        visible,
+    )
+
+
 def test_pin_click_opens_and_closes_view():
     """2026-09-17 사용자 요청(같은 날 후속): "핀별로 열고 닫기 기능 추가".
     좌클릭(핀 열기)은 그 핀이 대표하는 지점들이 화면에 꽉 차게 확대해야
@@ -187,6 +233,7 @@ def test_city_map_handles_empty_points():
 if __name__ == "__main__":  # pytest 없이 이 파일 하나만 돌려보고 싶을 때
     test_city_map_aggregates_by_country_when_multiple_visible()
     test_city_map_aggregates_by_province_when_too_many_cities()
+    test_overlay_buttons_recenter_and_zoom()
     test_pin_click_opens_and_closes_view()
     test_city_map_handles_empty_points()
     print("OK")
