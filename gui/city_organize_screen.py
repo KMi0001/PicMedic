@@ -490,9 +490,16 @@ class CityOrganizeScreen(QWidget):
             # 지도를 움직였으면 좋겠는데").
             if not checked:
                 return
-            locations = [loc for f in files if (loc := f.effective_location())]
-            if locations:
-                self.map_view.focus_on_locations(locations)
+            # 그룹 안 모든 파일의 실제 좌표를 바운딩박스로 잡으면(예전 방식)
+            # 그중 딱 한 장이라도 그룹 라벨과 안 맞는 곳(예: "서울" 그룹의
+            # 사진 한 장이 인천 경계 근처)에 있을 때 그 좌표까지 억지로
+            # 포함하려고 중심이 그쪽으로 끌려갔다 — 첫 파일만 대표로 썼던
+            # 지도 핀 좌표를 그룹 평균으로 고친 것(_refresh_map)과 똑같은
+            # 버그가 여기 남아 있었다("아직도 서울누르면 인천 포커싱된다",
+            # 2026-09-18 재확인 리포트). 지도 핀이 실제로 서 있는 좌표(그룹
+            # 평균) 하나로 포커스해서, 핀을 직접 클릭했을 때와 똑같이
+            # 동작하게 만든다.
+            self.map_view.focus_on_locations([self._group_centroid(files)])
 
         header_btn.toggled.connect(_on_header_toggled)
         header_btn.clicked.connect(_on_header_clicked)

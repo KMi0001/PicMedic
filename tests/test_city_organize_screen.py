@@ -108,6 +108,55 @@ def test_refresh_map_uses_group_centroid_not_first_file():
     )
 
 
+def test_selecting_city_card_with_outlier_file_still_focuses_seoul():
+    """2026-09-18 재확인 리포트: "아직도 서울누르면 인천 포커싱된다 다시
+    확인!" — _refresh_map의 지도 핀 좌표는 평균으로 고쳤지만(바로 위 테스트),
+    도시 카드를 클릭했을 때 지도를 이동시키는 코드(_on_header_clicked)는
+    여전히 그룹 안 모든 파일의 실제 좌표를 바운딩박스로 잡고 있었다 — 그중
+    딱 한 장이라도 인천 근처처럼 멀리 튀면, 서울-인천을 다 담으려는
+    바운딩박스의 중심이 그 튀는 파일 쪽으로 끌려가서 정작 사진 대부분이
+    몰려 있는 서울에서 벗어나 보였다. 카드 클릭도 지도 핀과 똑같이 그룹
+    평균 한 점만 보고 포커스하도록 고쳤으니, 이제 카드를 눌러도(핀을 직접
+    누른 것과 동일하게) 서울 좌표 쪽에 훨씬 가깝게 이동해야 한다."""
+    app = QApplication.instance() or QApplication(sys.argv)
+
+    screen = CityOrganizeScreen()
+    screen.map_view.resize(800, 600)
+    screen.map_view.show()
+    screen.map_view.resetTransform()
+    screen.map_view.fitInView(QRectF(-180, -90, 360, 180), Qt.KeepAspectRatio)
+
+    seoul_lat, seoul_lon = 37.5665, 126.9780
+    incheon_like_outlier = FileInfo(
+        path="C:/fake/outlier.jpg", filename="outlier.jpg", extension=".jpg",
+        status=FileStatus.NORMAL, recoverable=RecoveryPossibility.NOT_RECOVERABLE,
+        latitude=37.30, longitude=126.50,  # 인천 쪽으로 치우친 좌표(서울 그룹 안 이상값)
+    )
+    seoul_files = [incheon_like_outlier] + [_info(i) for i in range(9)]  # 9:1로 서울이 다수
+    card = screen._build_city_card("서울", seoul_files)
+    header_btn, _ = _header_and_body(card)
+
+    header_btn.click()  # 실제 클릭 시뮬레이션
+    app.processEvents()
+
+    visible = screen.map_view.mapToScene(screen.map_view.viewport().rect()).boundingRect()
+    center = visible.center()
+    dist_to_seoul = ((center.y() - (-seoul_lat)) ** 2 + (center.x() - seoul_lon) ** 2) ** 0.5
+    dist_to_outlier = (
+        (center.y() - (-incheon_like_outlier.latitude)) ** 2 + (center.x() - incheon_like_outlier.longitude) ** 2
+    ) ** 0.5
+    check(
+        "튀는 파일 한 장이 있어도 화면 중심이 인천 쪽보다 서울 쪽에 훨씬 가까움",
+        dist_to_seoul < dist_to_outlier,
+        (center.x(), center.y(), dist_to_seoul, dist_to_outlier),
+    )
+    check(
+        "서울 좌표 자체가 화면 안에 들어옴",
+        visible.contains(seoul_lon, -seoul_lat),
+        visible,
+    )
+
+
 def test_city_card_starts_collapsed():
     """카드는 기본적으로 접혀 있어야(헤더만 보임) 하고, 파일 행 위젯은
     펼치기 전까진 아예 만들어지지 않아야 한다 — 상한(_MAX_FILE_ROWS_PER_CARD)을
@@ -281,6 +330,7 @@ def test_city_card_toggle_expands_and_collapses():
 if __name__ == "__main__":  # pytest 없이 이 파일 하나만 돌려보고 싶을 때
     test_group_centroid_helper()
     test_refresh_map_uses_group_centroid_not_first_file()
+    test_selecting_city_card_with_outlier_file_still_focuses_seoul()
     test_city_card_starts_collapsed()
     test_selecting_city_card_moves_map()
     test_city_card_row_count_is_capped()
