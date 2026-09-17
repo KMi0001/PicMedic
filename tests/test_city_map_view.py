@@ -106,6 +106,48 @@ def test_city_map_aggregates_by_province_when_too_many_cities():
     check("도시 수가 임계값 이하로 줄면 city 모드로 돌아감", view._marker_mode == "city", view._marker_mode)
 
 
+def test_marker_colors_vary_by_country():
+    """2026-09-18 사용자 요청: "핀 색상을 좀 다양하게 할 수 있나?" — 예전엔
+    나라와 무관하게 핀이 전부 같은 빨간색이었다. 나라코드별로 색을 고정
+    배정해서 (1) 같은 화면에 여러 나라가 보이면 색이 달라 구분되고,
+    (2) 같은 나라는 도시/나라 어느 집계 단계에서 봐도 항상 같은 색이
+    나오는지(줌 레벨 바뀌어도 시각적 일관성 유지) 확인한다."""
+    app = QApplication.instance() or QApplication(sys.argv)
+
+    view = CityMapView()
+    view.resize(800, 600)
+    view.show()
+
+    points = [
+        (37.5665, 126.9780, 8, "서울", "KR", "서울"),
+        (35.6762, 139.6503, 5, "도쿄", "JP", "Tokyo"),
+        (21.0278, 105.8342, 4, "하노이", "VN", "Hanoi"),
+    ]
+    view.set_points(points)
+
+    view.resetTransform()
+    view.fitInView(QRectF(-180, -90, 360, 180), Qt.KeepAspectRatio)
+    view.view_changed.emit()
+    check("나라 3개가 보이면 country 모드", view._marker_mode == "country", view._marker_mode)
+
+    country_colors = {m.label_text().split(" (")[0]: m._color.name() for m in view._markers}
+    check(
+        "나라 단위 마커 3개가 서로 다른 색을 가짐(다양화 확인)",
+        len(set(country_colors.values())) == 3,
+        country_colors,
+    )
+
+    kr_country_color = next(color for label, color in country_colors.items() if "대한민국" in label)
+    view.center_on(36.5, 127.8, span_deg=2.0)
+    check("한국만 보이면 city 모드로 전환됨", view._marker_mode == "city", view._marker_mode)
+    seoul_marker = next(m for m in view._markers if "서울" in m.label_text())
+    check(
+        "도시 단위로 봐도 같은 나라는 나라 단위일 때와 같은 색(일관성)",
+        seoul_marker._color.name() == kr_country_color,
+        (seoul_marker._color.name(), kr_country_color),
+    )
+
+
 def test_overlay_buttons_recenter_and_zoom():
     """2026-09-17 사용자 요청(같은 날 후속): "지도 안에 버튼을 만들자. gps를
     추적할 순 없으니까 사진이 가장많은 나라 기준으로 지도를 표기해주는
@@ -343,6 +385,7 @@ def test_city_map_handles_empty_points():
 if __name__ == "__main__":  # pytest 없이 이 파일 하나만 돌려보고 싶을 때
     test_city_map_aggregates_by_country_when_multiple_visible()
     test_city_map_aggregates_by_province_when_too_many_cities()
+    test_marker_colors_vary_by_country()
     test_overlay_buttons_recenter_and_zoom()
     test_marker_click_vs_drag()
     test_pin_click_opens_and_closes_view()

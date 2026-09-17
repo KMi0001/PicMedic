@@ -21,6 +21,8 @@ utils/topojson.py로 디코딩해서 그린다. 나라 이름은 core/country_na
 
 from __future__ import annotations
 
+import zlib
+
 from PySide6.QtCore import QPointF, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QFont, QFontMetrics, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import QGraphicsItem, QGraphicsScene, QGraphicsView, QHBoxLayout, QToolButton, QWidget
@@ -37,7 +39,33 @@ _OCEAN_COLOR = "#DCEEF5"
 _LAND_FILL_COLOR = "#CDE8DC"
 _LAND_BORDER_COLOR = "#9FC6B0"
 _COUNTRY_LABEL_COLOR = QColor(90, 120, 105, 200)
-_MARKER_COLOR = QColor(218, 90, 90, 210)  # theme.py COLORS['danger']에 알파 추가
+
+# 핀 색상 팔레트 — 예전엔 나라와 무관하게 전부 같은 빨간색이었는데
+# "핀 색상을 좀 다양하게 할 수 있나?"(2026-09-18) 요청으로 나라코드별로
+# 색을 달리했다. 도시/시·도/나라 단위 어느 모드에서 보든 같은 나라는
+# 항상 같은 색이 나오도록(줌 레벨이 바뀌어도 시각적 일관성 유지) 나라
+# 하나당 색 하나를 고정 배정한다. 옅은 바다(#DCEEF5)/땅(#CDE8DC) 배경
+# 위에서 잘 도드라지도록 채도를 충분히 준 8가지 색.
+_MARKER_PALETTE = [
+    QColor(218, 90, 90, 210),   # 빨강 (기존 기본색 유지)
+    QColor(74, 120, 196, 210),  # 파랑
+    QColor(217, 138, 43, 210),  # 주황
+    QColor(123, 95, 196, 210),  # 보라
+    QColor(30, 156, 110, 210),  # 초록
+    QColor(194, 78, 134, 210),  # 핑크
+    QColor(42, 166, 166, 210),  # 청록
+    QColor(166, 124, 46, 210),  # 갈색
+]
+
+
+def _marker_color_for_country(cc: str) -> QColor:
+    """나라코드(cc)마다 항상 같은 색을 돌려준다 — Python 내장 hash()는
+    프로세스마다 시드가 달라 같은 나라도 실행할 때마다 색이 바뀔 수 있어서
+    (해시 랜덤화), 대신 결정적인 crc32를 쓴다."""
+    if not cc:
+        return _MARKER_PALETTE[0]
+    index = zlib.crc32(cc.encode("utf-8")) % len(_MARKER_PALETTE)
+    return _MARKER_PALETTE[index]
 
 # 나라 이름 라벨을 보여줄 최소 화면 크기(px) — 이보다 작게 보이면(세계 전체를
 # 보는 중이라 그 나라가 작게 보이면) 숨긴다. 확대할수록 큰 나라부터, 더
@@ -112,10 +140,11 @@ class _CityMarker(QGraphicsItem):
     # 후보 목록(최대 ±64)보다 여유 있게 잡아서 화면에서 잘려 보이지 않게 한다.
     _MAX_LABEL_DY = 80
 
-    def __init__(self, radius: float, label: str):
+    def __init__(self, radius: float, label: str, color: QColor = _MARKER_PALETTE[0]):
         super().__init__()
         self._radius = radius
         self._label = label
+        self._color = color
         self._label_dy = 0.0
         self.setFlag(QGraphicsItem.ItemIgnoresTransformations)
         self.setZValue(10)
@@ -157,7 +186,7 @@ class _CityMarker(QGraphicsItem):
     def paint(self, painter: QPainter, option, widget=None) -> None:
         painter.setRenderHint(QPainter.Antialiasing)
         painter.setPen(Qt.NoPen)
-        painter.setBrush(_MARKER_COLOR)
+        painter.setBrush(self._color)
         painter.drawEllipse(QPointF(0, 0), self._radius, self._radius)
 
         label_pos = QPointF(self._radius + 4, 4 + self._label_dy)
@@ -216,12 +245,14 @@ class CityMapView(QGraphicsView):
 
     _MIN_SCALE = 1.5   # 세계 전체가 겨우 들어오는 수준
     # 이 지도는 실제 지도 타일이 아니라 국가 윤곽선만 그린 정적 지도라(위
-    # 클래스 독스트링 참고), 시/도보다 더 깊이 확대해봤자 거리·건물 같은
-    # 참고할 지형지물이 하나도 없는 빈 배경만 보여서 오히려 방향을 잃는다
-    # (2026-09-17, 사용자 리포트 — "확대는 제한을 좀 하자 시/도 이상은 더
-    # 확대 못하게 해줘"). 800px 기준 화면 폭에서 약 0.5도(작은 시/도 하나
-    # 크기)는 항상 남도록 잡은 값 — 800/0.5 = 1600.
-    _MAX_SCALE = 1600.0
+    # 클래스 독스트링 참고), 너무 깊이 확대해봤자 거리·건물 같은 참고할
+    # 지형지물이 하나도 없는 빈 배경만 보여서 오히려 방향을 잃는다. 처음엔
+    # 1600(시/도 하나 크기)까지 허용했지만(2026-09-17), 도시 카드를
+    # 선택했을 때(항상 이 캡까지 확대됨 — 점 하나짜리 지점은 늘 최대
+    # 배율에 걸림) "너무 확대된다"는 리포트로 한 번 더 줄였다(2026-09-18)
+    # — "지금 선택한 상태에서 [-] 다섯 번 누른 정도"라는 사용자 기준을
+    # 그대로 식으로 옮김(줌 버튼 한 번이 ×1.2, _zoom_by 참고).
+    _MAX_SCALE = 1600.0 / (1.2**5)  # ≈ 643
 
     def __init__(self, parent=None):
         scene = QGraphicsScene(-180, -90, 360, 180)
@@ -435,29 +466,42 @@ class CityMapView(QGraphicsView):
             return
 
         if mode == "country":
-            self._build_aggregated_markers(group_key=lambda p: p[4], label_for=lambda key: country_name_ko(key), base_radius=6, radius_span=12)
+            self._build_aggregated_markers(
+                group_key=lambda p: p[4],
+                label_for=lambda key: country_name_ko(key),
+                color_for=lambda key: _marker_color_for_country(key),
+                base_radius=6,
+                radius_span=12,
+            )
         elif mode == "province":
-            self._build_aggregated_markers(group_key=lambda p: (p[4], p[5]), label_for=lambda key: key[1], base_radius=5.5, radius_span=11)
+            self._build_aggregated_markers(
+                group_key=lambda p: (p[4], p[5]),
+                label_for=lambda key: key[1],
+                color_for=lambda key: _marker_color_for_country(key[0]),
+                base_radius=5.5,
+                radius_span=11,
+            )
         else:
             self._build_city_markers()
         self._layout_labels()
 
     def _build_city_markers(self) -> None:
         max_count = max(p[2] for p in self._raw_points)
-        for lat, lon, count, label, _cc, _province in self._raw_points:
+        for lat, lon, count, label, cc, _province in self._raw_points:
             radius = 5 + (count / max_count) * 10
-            marker = _CityMarker(radius, f"{label} ({count})")
+            marker = _CityMarker(radius, f"{label} ({count})", color=_marker_color_for_country(cc))
             marker.setPos(lon, -lat)
             self._wire_marker_clicks(marker, [(lat, lon)])
             self.scene().addItem(marker)
             self._markers.append(marker)
 
-    def _build_aggregated_markers(self, *, group_key, label_for, base_radius: float, radius_span: float) -> None:
+    def _build_aggregated_markers(self, *, group_key, label_for, color_for, base_radius: float, radius_span: float) -> None:
         """나라 단위/시·도 단위 마커를 같은 방식으로 만든다 — group_key(점)가
         그룹 식별자(나라 코드, 또는 (나라코드, 시/도) 쌍)를 돌려주고,
-        label_for(식별자)가 화면에 보일 이름을 돌려준다. 위치는 그룹 안
-        도시들의 사진 수 가중 평균(사진이 많은 쪽으로 치우침) — 행정구역의
-        지리적 중심이 아니라 "실제 사진이 몰린 자리"에 찍히게 하기 위함."""
+        label_for(식별자)가 화면에 보일 이름을, color_for(식별자)가 핀 색을
+        돌려준다. 위치는 그룹 안 도시들의 사진 수 가중 평균(사진이 많은
+        쪽으로 치우침) — 행정구역의 지리적 중심이 아니라 "실제 사진이 몰린
+        자리"에 찍히게 하기 위함."""
         groups: dict = {}
         for lat, lon, count, _label, cc, province in self._raw_points:
             key = group_key((lat, lon, count, _label, cc, province))
@@ -469,12 +513,12 @@ class CityMapView(QGraphicsView):
             avg_lat = sum(e[0] * e[2] for e in entries) / total
             avg_lon = sum(e[1] * e[2] for e in entries) / total
             member_points = [(e[0], e[1]) for e in entries]
-            aggregated.append((avg_lat, avg_lon, total, label_for(key), member_points))
+            aggregated.append((avg_lat, avg_lon, total, label_for(key), color_for(key), member_points))
 
         max_count = max(a[2] for a in aggregated)
-        for lat, lon, count, name, member_points in aggregated:
+        for lat, lon, count, name, color, member_points in aggregated:
             radius = base_radius + (count / max_count) * radius_span
-            marker = _CityMarker(radius, f"{name} ({count})")
+            marker = _CityMarker(radius, f"{name} ({count})", color=color)
             marker.setPos(lon, -lat)
             self._wire_marker_clicks(marker, member_points)
             self.scene().addItem(marker)
