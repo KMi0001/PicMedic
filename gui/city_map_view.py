@@ -96,6 +96,13 @@ class _CityMarker(QGraphicsItem):
         self._label_dy = 0.0
         self.setFlag(QGraphicsItem.ItemIgnoresTransformations)
         self.setZValue(10)
+        self.setCursor(Qt.PointingHandCursor)
+        # CityMapView가 마커를 만든 직후 채워준다 — 좌클릭(그 지역으로 확대,
+        # "핀 열기") / 우클릭(전체 보기로 축소, "핀 닫기") 둘 다 이 마커가
+        # 뭘 대표하는지 CityMapView만 알기 때문에, 콜백을 주입받는 방식으로
+        # 뷰 쪽 로직과 분리한다(2026-09-17, 사용자 요청).
+        self.on_left_click = None
+        self.on_right_click = None
 
     def radius(self) -> float:
         return self._radius
@@ -132,6 +139,20 @@ class _CityMarker(QGraphicsItem):
             painter.drawLine(QPointF(0, label_pos.y() - 4), QPointF(self._radius + 2, label_pos.y() - 4))
         painter.setPen(QColor("#222"))
         painter.drawText(label_pos, self._label)
+
+    def mousePressEvent(self, event) -> None:
+        if event.button() == Qt.LeftButton and self.on_left_click is not None:
+            self.on_left_click()
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def contextMenuEvent(self, event) -> None:
+        if self.on_right_click is not None:
+            self.on_right_click(event.screenPos())
+            event.accept()
+            return
+        super().contextMenuEvent(event)
 
 
 class _CountryLabel(QGraphicsItem):
@@ -185,6 +206,25 @@ class CityMapView(QGraphicsView):
         self.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.setFrameShape(QGraphicsView.NoFrame)
         scene.setBackgroundBrush(QColor(_OCEAN_COLOR))
+
+        # 드래그로 팬 하는 동안 scrollContentsBy가 픽셀 단위로 계속 불려서
+        # view_changed도 그만큼 자주(초당 수십 번) 발생한다 — 도시가 수십 개
+        # (실사용 4만 6천 장 규모 리포트)면 _rebuild_markers/_layout_labels가
+        # 매번 그 전부를 다시 계산해서 드래그 중 응답 없음처럼 보였다
+        # (2026-09-17, 사용자 리포트). gui/image_viewer.py::_refit_timer와
+        # 같은 이유로, 실제 재계산은 마지막 이벤트 뒤 잠깐(디바운스) 멈췄을
+        # 때만 한다 — wheelEvent/scrollContentsBy가 직접 view_changed를
+        # emit하지 않고 이 타이머를 재시작하도록 바꿨다.
+        #
+        # 이 타이머는 반드시 아래 국가 경계 scene.addItem() 루프보다 먼저
+        # 만들어야 한다 — addItem이 스크롤 영역을 재계산하며 Qt가 내부적으로
+        # scrollContentsBy를 먼저 부를 수 있어서, 늦게 만들면 그 시점에
+        # "_view_changed_timer가 없다" AttributeError가 난다(2026-09-17,
+        # 핀 클릭 기능 추가 중 테스트로 발견).
+        self._view_changed_timer = QTimer(self)
+        self._view_changed_timer.setSingleShot(True)
+        self._view_changed_timer.setInterval(120)
+        self._view_changed_timer.timeout.connect(self.view_changed.emit)
 
         # (나라 이름, 라벨을 놓을 위경도 지점, 라벨이 대표하는 땅덩어리의
         # 위경도 바운딩박스 — 화면에서 이 박스가 얼마나 큰지로 라벨 표시 여부를 정한다)
@@ -240,19 +280,6 @@ class CityMapView(QGraphicsView):
         self._centered_once = False
         self.view_changed.connect(self._rebuild_markers)
         self.view_changed.connect(self._update_country_label_visibility)
-
-        # 드래그로 팬 하는 동안 scrollContentsBy가 픽셀 단위로 계속 불려서
-        # view_changed도 그만큼 자주(초당 수십 번) 발생한다 — 도시가 수십 개
-        # (실사용 4만 6천 장 규모 리포트)면 _rebuild_markers/_layout_labels가
-        # 매번 그 전부를 다시 계산해서 드래그 중 응답 없음처럼 보였다
-        # (2026-09-17, 사용자 리포트). gui/image_viewer.py::_refit_timer와
-        # 같은 이유로, 실제 재계산은 마지막 이벤트 뒤 잠깐(디바운스) 멈췄을
-        # 때만 한다 — wheelEvent/scrollContentsBy가 직접 view_changed를
-        # emit하지 않고 이 타이머를 재시작하도록 바꿨다(아래 참고).
-        self._view_changed_timer = QTimer(self)
-        self._view_changed_timer.setSingleShot(True)
-        self._view_changed_timer.setInterval(120)
-        self._view_changed_timer.timeout.connect(self.view_changed.emit)
 
     # 한 나라 안에서도 화면에 보이는 도시 마커가 이 개수를 넘으면 시/도
     # 단위로 한 단계 더 뭉친다 — 국내 사진만 수만 장이면 도시가 수십 개
@@ -312,6 +339,7 @@ class CityMapView(QGraphicsView):
             radius = 5 + (count / max_count) * 10
             marker = _CityMarker(radius, f"{label} ({count})")
             marker.setPos(lon, -lat)
+            self._wire_marker_clicks(marker, [(lat, lon)])
             self.scene().addItem(marker)
             self._markers.append(marker)
 
@@ -331,15 +359,35 @@ class CityMapView(QGraphicsView):
             total = sum(e[2] for e in entries)
             avg_lat = sum(e[0] * e[2] for e in entries) / total
             avg_lon = sum(e[1] * e[2] for e in entries) / total
-            aggregated.append((avg_lat, avg_lon, total, label_for(key)))
+            member_points = [(e[0], e[1]) for e in entries]
+            aggregated.append((avg_lat, avg_lon, total, label_for(key), member_points))
 
         max_count = max(a[2] for a in aggregated)
-        for lat, lon, count, name in aggregated:
+        for lat, lon, count, name, member_points in aggregated:
             radius = base_radius + (count / max_count) * radius_span
             marker = _CityMarker(radius, f"{name} ({count})")
             marker.setPos(lon, -lat)
+            self._wire_marker_clicks(marker, member_points)
             self.scene().addItem(marker)
             self._markers.append(marker)
+
+    def _wire_marker_clicks(self, marker: "_CityMarker", member_points: list[tuple[float, float]]) -> None:
+        """좌클릭(그 마커가 대표하는 지점들이 화면에 꽉 차게 확대 — "핀
+        열기") / 우클릭("축소해서 전체 보기" 메뉴 — "핀 닫기") 둘 다 연결한다
+        (2026-09-17, 사용자 요청). 도시 단위 마커는 지점이 하나뿐이라
+        _fit_scene_rect의 최소 확대 범위(min_span)가 대신 적용된다."""
+        extent = self._points_bounds(member_points)
+        marker.on_left_click = lambda extent=extent: self._fit_scene_rect(QRectF(extent))
+        marker.on_right_click = lambda screen_pos: self._show_marker_context_menu(screen_pos)
+
+    def _show_marker_context_menu(self, screen_pos) -> None:
+        from PySide6.QtWidgets import QMenu
+
+        menu = QMenu(self)
+        zoom_out_action = menu.addAction("축소해서 전체 보기")
+        chosen = menu.exec(screen_pos.toPoint() if hasattr(screen_pos, "toPoint") else screen_pos)
+        if chosen is zoom_out_action:
+            self.zoom_out_to_all()
 
     def _layout_labels(self) -> None:
         """줌/팬으로 도시 점들의 화면 위치가 바뀔 때마다, 라벨끼리 겹치지
@@ -408,9 +456,56 @@ class CityMapView(QGraphicsView):
 
     def center_on(self, lat: float, lon: float, span_deg: float = 14.0) -> None:
         rect = QRectF(lon - span_deg, -(lat + span_deg / 2), span_deg * 2, span_deg)
+        self._fit_scene_rect(rect)
+
+    def _fit_scene_rect(self, rect: QRectF) -> None:
+        """주어진 씬 좌표 범위(경도, -위도 기준)가 화면에 꽉 차게 확대/이동한다
+        — center_on(초기 중심 이동)과 핀 클릭("열기")/우클릭("닫기")가 공유하는
+        실제 줌 동작. 범위가 점 하나뿐이라 폭/높이가 0이면 fitInView가 무한
+        배율로 확대하려 들어 _MAX_SCALE을 넘어버리므로, 최소 크기를 보장한다.
+
+        transformationAnchor가 AnchorUnderMouse(휠 줌이 마우스 위치를 고정점
+        삼게 하려고 켜둠)인 채로 fitInView를 부르면, fitInView 내부의 scale()
+        호출도 "지금 마우스 커서 위치"를 고정점으로 잡아버려서 핀을 클릭한
+        위치 쪽으로 확대 결과가 엉뚱하게 쏠린다(2026-09-17, 핀 클릭 기능 추가
+        중 실측으로 발견 — 화면이 목표 지점이 아니라 태평양 한가운데를 보여줌).
+        이 메서드가 하는 프로그램적 이동/확대는 항상 뷰 중앙을 기준으로 삼아야
+        하므로, 그동안만 AnchorViewCenter로 바꿔둔다."""
+        anchor = self.transformationAnchor()
+        self.setTransformationAnchor(QGraphicsView.AnchorViewCenter)
+        min_span = 0.05
+        if rect.width() < min_span:
+            rect.adjust(-(min_span - rect.width()) / 2, 0, (min_span - rect.width()) / 2, 0)
+        if rect.height() < min_span:
+            rect.adjust(0, -(min_span - rect.height()) / 2, 0, (min_span - rect.height()) / 2)
         self.resetTransform()
         self.fitInView(rect, Qt.KeepAspectRatio)
+        # 확대 직후 너무 빡빡하게 붙지 않도록 살짝 더 축소(20% 여백).
+        self.scale(1 / 1.2, 1 / 1.2)
+        self.setTransformationAnchor(anchor)  # 휠 줌 등 평소 동작을 위해 원래대로 복구
         self.view_changed.emit()
+
+    def _points_bounds(self, points) -> QRectF:
+        """points(위도, 경도, ...) 목록의 씬 좌표(경도, -위도) 바운딩박스."""
+        lats = [p[0] for p in points]
+        lons = [p[1] for p in points]
+        return QRectF(min(lons), -max(lats), max(lons) - min(lons), max(lats) - min(lats))
+
+    def zoom_out_to_all(self) -> None:
+        """핀 우클릭 "축소해서 보기" — 특정 지역이 아니라 전체 데이터가 다시
+        다 보이게 되돌린다(팬/줌 히스토리를 따로 안 쌓아서, "한 단계 전으로"
+        대신 "처음부터 전체 보기"로 단순화— 2026-09-17, 사용자 확인)."""
+        if not self._raw_points:
+            return
+        bounds = self._points_bounds(self._raw_points)
+        # 가장자리에 걸친 점이 "화면 밖"으로 판정돼(부동소수점 경계 오차)
+        # 방금 뭉쳐서 봐야 할 점이 빠진 채로 모드가 재계산되는 걸 막기 위해
+        # 여유를 넉넉히 둔다 — _fit_scene_rect 자체의 20% 축소만으론 이
+        # 경계 케이스에 충분하지 않았다(실측으로 확인).
+        margin_x = max(bounds.width() * 0.15, 0.02)
+        margin_y = max(bounds.height() * 0.15, 0.02)
+        bounds.adjust(-margin_x, -margin_y, margin_x, margin_y)
+        self._fit_scene_rect(bounds)
 
     def visible_bounds(self) -> tuple[float, float, float, float]:
         """현재 화면에 보이는 (lat_min, lat_max, lon_min, lon_max)."""
@@ -430,11 +525,22 @@ class CityMapView(QGraphicsView):
         new_scale = self.transform().m11() * factor
         if self._MIN_SCALE <= new_scale <= self._MAX_SCALE:
             self.scale(factor, factor)
-            self._view_changed_timer.start()
+            self._start_view_changed_timer()
 
     def scrollContentsBy(self, dx: int, dy: int) -> None:
         super().scrollContentsBy(dx, dy)
-        self._view_changed_timer.start()
+        self._start_view_changed_timer()
+
+    def _start_view_changed_timer(self) -> None:
+        # QGraphicsScene에 국가 경계를 채우는 동안이나(생성자), 위젯이
+        # 정리되는 동안(소멸자 직전) Qt가 파이썬 쪽 속성이 아직 없거나 이미
+        # 지워진 시점에도 scrollContentsBy를 부를 수 있다 — PySide6가 가상
+        # 메서드 오버라이드를 C++ 쪽 생명주기에 맞춰 부르기 때문(2026-09-17,
+        # 테스트 중 AttributeError로 재현). 이 시점의 view_changed는 의미가
+        # 없으니 조용히 무시한다.
+        timer = getattr(self, "_view_changed_timer", None)
+        if timer is not None:
+            timer.start()
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)

@@ -105,6 +105,70 @@ def test_city_map_aggregates_by_province_when_too_many_cities():
     check("도시 수가 임계값 이하로 줄면 city 모드로 돌아감", view._marker_mode == "city", view._marker_mode)
 
 
+def test_pin_click_opens_and_closes_view():
+    """2026-09-17 사용자 요청(같은 날 후속): "핀별로 열고 닫기 기능 추가".
+    좌클릭(핀 열기)은 그 핀이 대표하는 지점들이 화면에 꽉 차게 확대해야
+    하고, 우클릭 메뉴의 "축소해서 전체 보기"(핀 닫기)는 전체 데이터가 다시
+    보이게 축소해야 한다.
+
+    구현 중 발견한 진짜 버그 회귀 방지: CityMapView의 기본
+    transformationAnchor는 AnchorUnderMouse(휠 줌이 마우스 위치를 고정점
+    삼게 하려고 켜둠)인데, 이 상태로 fitInView를 그냥 부르면 확대 결과가
+    "지금 마우스 커서 위치" 쪽으로 엉뚱하게 쏠린다 — 목표 지점이 아니라
+    태평양 한가운데가 보이는 식으로 재현됐었다. _fit_scene_rect가 이걸
+    AnchorViewCenter로 임시 전환하는지 확인한다."""
+    app = QApplication.instance() or QApplication(sys.argv)
+
+    view = CityMapView()
+    view.resize(800, 600)
+    view.show()
+
+    # 나라 단위(country) 마커가 확실히 뜨도록 2개국으로 구성 — 핀 클릭 동작
+    # 자체는 country/province 어느 단계든 똑같으므로, 조합이 더 간단한
+    # 나라 단위로 검증한다.
+    points = [
+        (37.0, 127.0, 2, "a", "KR", "경기도"),
+        (37.45, 127.18, 2, "b", "KR", "경기도"),
+        (35.68, 139.77, 3, "c", "JP", "Tokyo"),
+    ]
+    view.set_points(points)
+    view.resetTransform()
+    view.fitInView(QRectF(-180, -90, 360, 180), Qt.KeepAspectRatio)
+    view.view_changed.emit()
+    check("나라 2개라 country 모드로 시작함(핀 클릭 검증 전제)", view._marker_mode == "country", view._marker_mode)
+
+    kr_marker = next(m for m in view._markers if "대한민국" in m.label_text())
+    check("대한민국 핀에 좌클릭 콜백이 연결됨", kr_marker.on_left_click is not None)
+    check("대한민국 핀에 우클릭 콜백이 연결됨", kr_marker.on_right_click is not None)
+
+    kr_marker.on_left_click()
+    app.processEvents()
+    visible = view.mapToScene(view.viewport().rect()).boundingRect()
+    # 한국 두 지점(37.0~37.45, 127.0~127.18)이 화면 안에 들어와야 하고,
+    # 일본 지점(35.68, 139.77)처럼 화면 전체 씬(세계 지도) 크기만큼 넓게
+    # 잡혀서는 안 된다 — 마우스 위치로 쏠리는 버그였다면 대개 훨씬 좁거나
+    # (0,0) 근처 등 엉뚱한 곳을 보여준다.
+    check(
+        "핀 클릭(열기) 후 그 핀의 지점들이 화면 범위 안에 들어옴",
+        visible.contains(127.0, -37.0) and visible.contains(127.18, -37.45),
+        visible,
+    )
+    check(
+        "핀 클릭 후 화면이 세계 지도 전체만큼 넓지는 않음(실제로 확대됐음)",
+        visible.width() < 300,
+        visible.width(),
+    )
+
+    view.zoom_out_to_all()
+    app.processEvents()
+    visible_after = view.mapToScene(view.viewport().rect()).boundingRect()
+    check(
+        "축소해서 전체 보기(닫기) 후 모든 지점이 다시 화면 안에 들어옴",
+        all(visible_after.contains(lon, -lat) for lat, lon, *_ in points),
+        visible_after,
+    )
+
+
 def test_city_map_handles_empty_points():
     app = QApplication.instance() or QApplication(sys.argv)
 
@@ -123,5 +187,6 @@ def test_city_map_handles_empty_points():
 if __name__ == "__main__":  # pytest 없이 이 파일 하나만 돌려보고 싶을 때
     test_city_map_aggregates_by_country_when_multiple_visible()
     test_city_map_aggregates_by_province_when_too_many_cities()
+    test_pin_click_opens_and_closes_view()
     test_city_map_handles_empty_points()
     print("OK")
