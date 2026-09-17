@@ -24,6 +24,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from tests.helpers import check
 
+from PySide6.QtCore import QRectF, Qt
 from PySide6.QtWidgets import QApplication, QToolButton, QWidget
 
 from gui.city_organize_screen import CityOrganizeScreen, _ClickableFileRow
@@ -78,6 +79,53 @@ def test_city_card_starts_collapsed():
     check(
         "접어도 위젯은 재사용됨(다시 만들지 않고 그대로 10개)",
         len(card.findChildren(_ClickableFileRow)) == 10,
+    )
+
+
+def test_selecting_city_card_moves_map():
+    """2026-09-18 사용자 요청: "마카오 선택하면 마카오로 지도를 움직였으면
+    좋겠는데" — 도시 카드 헤더를 클릭해서 펼치면(선택하면) 지도가 그 도시
+    위치로 이동해야 한다. 단, _refresh_region_list가 팬/줌마다 카드를
+    통째로 다시 그리며 펼침 상태를 프로그램적으로 복원(setChecked)할 때는
+    지도가 또 움직이면 안 된다 — 안 그러면 카드 하나만 펼쳐져 있어도 사용자가
+    지도를 팬/줌할 때마다 그 도시로 도로 끌려간다. QToolButton.click()은
+    실제 클릭처럼 clicked 신호까지 내지만, setChecked()는 toggled만 내고
+    clicked는 안 낸다는 Qt 차이를 이용해 구분한다."""
+    app = QApplication.instance() or QApplication(sys.argv)
+
+    screen = CityOrganizeScreen()
+    screen.map_view.resize(800, 600)
+    screen.map_view.show()
+    screen.map_view.resetTransform()
+    screen.map_view.fitInView(QRectF(-180, -90, 360, 180), Qt.KeepAspectRatio)
+
+    files = [_info(i) for i in range(3)]  # 서울 좌표(37.5665, 126.9780) 고정
+    card = screen._build_city_card("서울", files)
+    header_btn, _ = _header_and_body(card)
+
+    header_btn.click()  # 실제 클릭 시뮬레이션
+    app.processEvents()
+    visible = screen.map_view.mapToScene(screen.map_view.viewport().rect()).boundingRect()
+    check(
+        "카드를 클릭하면 지도가 그 도시 좌표를 포함하도록 이동함",
+        visible.contains(126.9780, -37.5665),
+        visible,
+    )
+    check("클릭 후 화면이 세계 지도 전체만큼 넓지는 않음(실제로 확대됨)", visible.width() < 300, visible.width())
+
+    # _refresh_region_list가 다시 그릴 때처럼, 같은 라벨로 새 카드를 만들면
+    # _expanded_city_labels에 남아있는 상태를 setChecked로 복원한다.
+    visible_before_restore = visible
+    card2 = screen._build_city_card("서울", files)
+    header_btn2, body2 = _header_and_body(card2)
+    check("같은 라벨의 새 카드는 펼침 상태로 복원됨", header_btn2.isChecked())
+    check("복원된 카드도 본문이 보임", not body2.isHidden())
+    app.processEvents()
+    visible_after_restore = screen.map_view.mapToScene(screen.map_view.viewport().rect()).boundingRect()
+    check(
+        "프로그램적 복원(setChecked)만으로는 지도가 다시 움직이지 않음",
+        visible_after_restore == visible_before_restore,
+        visible_after_restore,
     )
 
 
@@ -175,6 +223,7 @@ def test_city_card_toggle_expands_and_collapses():
 
 if __name__ == "__main__":  # pytest 없이 이 파일 하나만 돌려보고 싶을 때
     test_city_card_starts_collapsed()
+    test_selecting_city_card_moves_map()
     test_city_card_row_count_is_capped()
     test_city_card_toggle_expands_and_collapses()
     print("OK")

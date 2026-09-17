@@ -567,6 +567,16 @@ class CityMapView(QGraphicsView):
         rect = QRectF(lon - span_deg, -(lat + span_deg / 2), span_deg * 2, span_deg)
         self._fit_scene_rect(rect)
 
+    def focus_on_locations(self, locations: list[tuple[float, float]]) -> None:
+        """gui/city_organize_screen.py의 도시 카드 헤더를 눌러 펼칠 때처럼,
+        지도 바깥(목록)에서 "이 지점들 쪽으로 이동해줘"라고 요청할 때 쓰는
+        공개 API — 핀 클릭("열기")이 쓰는 것과 같은 _fit_scene_rect를
+        재사용한다(2026-09-18, 사용자 요청: "마카오 선택하면 마카오로
+        지도를 움직였으면 좋겠는데")."""
+        if not locations:
+            return
+        self._fit_scene_rect(self._points_bounds(locations))
+
     def _fit_scene_rect(self, rect: QRectF) -> None:
         """주어진 씬 좌표 범위(경도, -위도 기준)가 화면에 꽉 차게 확대/이동한다
         — center_on(초기 중심 이동)과 핀 클릭("열기")/우클릭("닫기")가 공유하는

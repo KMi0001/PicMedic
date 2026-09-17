@@ -127,6 +127,13 @@ class CityOrganizeScreen(QWidget):
         self._file_to_label: dict[str, str] = {}  # path -> 소속 도시 라벨
         self._group_exclusions: dict[str, set[str]] = {}
         self._output_root: str = ""
+        # 지도 팬/줌마다(_refresh_region_list) 도시 카드를 통째로 다시
+        # 그리므로, 펼쳐뒀던 카드가 어느 것인지 따로 기억해두지 않으면
+        # 스크롤/줌 한 번에 다시 접혀버린다 — 도시를 선택(펼치기)하면
+        # 지도도 그 위치로 이동하게 만들면서(2026-09-18, 사용자 요청)
+        # 이동 자체가 새 view_changed를 일으켜 재구성을 유발하므로 특히
+        # 중요해졌다.
+        self._expanded_city_labels: set[str] = set()
 
         # 화면 전체를 쓰는 큰 창에서 내용이 창 끝까지 늘어나면 텅 빈 공간이
         # 남아 허전해 보인다(gui/date_organize_screen.py·gui/organize_hub_screen.py와
@@ -284,6 +291,7 @@ class CityOrganizeScreen(QWidget):
         들어와도 이전에 체크 해제해둔 제외 목록은 유지한다(같은 result면)."""
         if result is not getattr(self, "_result", None):
             self._group_exclusions = {}
+            self._expanded_city_labels = set()
         self._result = result
 
         all_groups = result.city_groups() if result and result.files else []
@@ -450,13 +458,34 @@ class CityOrganizeScreen(QWidget):
         built = {"done": False}
 
         def _on_header_toggled(checked: bool) -> None:
-            if checked and not built["done"]:
-                self._populate_city_card_body(body_layout, files, label)
-                built["done"] = True
+            if checked:
+                self._expanded_city_labels.add(label)
+                if not built["done"]:
+                    self._populate_city_card_body(body_layout, files, label)
+                    built["done"] = True
+            else:
+                self._expanded_city_labels.discard(label)
             body.setVisible(checked)
             header_btn.setText(("▾ " if checked else "▸ ") + header_text)
 
+        def _on_header_clicked(checked: bool) -> None:
+            # toggled와 달리 clicked는 실제 사용자 클릭에서만 오고, 지도
+            # 이동을 재구성(_refresh_region_list, 이 카드를 다시 만들며
+            # 이전 펼침 상태를 setChecked로 복원할 때)에서는 안 온다 —
+            # 그래서 복원 중에 지도가 다시 튀는 걸 막는 용도로 이 신호를
+            # 따로 쓴다(2026-09-18, 사용자 요청: "마카오 선택하면 마카오로
+            # 지도를 움직였으면 좋겠는데").
+            if not checked:
+                return
+            locations = [loc for f in files if (loc := f.effective_location())]
+            if locations:
+                self.map_view.focus_on_locations(locations)
+
         header_btn.toggled.connect(_on_header_toggled)
+        header_btn.clicked.connect(_on_header_clicked)
+
+        if label in self._expanded_city_labels:
+            header_btn.setChecked(True)
 
         return card
 
