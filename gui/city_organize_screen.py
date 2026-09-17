@@ -39,6 +39,7 @@ from PySide6.QtWidgets import (
     QScrollArea,
     QSizePolicy,
     QStackedWidget,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -422,25 +423,57 @@ class CityOrganizeScreen(QWidget):
 
         shown_files = files[: self._MAX_FILE_ROWS_PER_CARD]
         for info in shown_files:
-            row_text = info.filename
-            if info.location_inferred_from:
-                row_text += f"  (추정 위치 · {info.location_inferred_from})"
-            row = _ClickableFileRow(row_text)
-            row.setToolTip(info.path)
-            row.clicked.connect(lambda info=info, label=label: self._open_detail(label, info))
-            row.setContextMenuPolicy(Qt.CustomContextMenu)
-            row.customContextMenuRequested.connect(
-                lambda pos, w=row, info=info, label=label: self._on_row_context_menu(w, pos, info, label)
-            )
-            layout.addWidget(row)
+            layout.addWidget(self._build_file_row(info, label))
 
-        remaining = len(files) - len(shown_files)
-        if remaining > 0:
-            more_label = QLabel(f"...외 {remaining:,}장 더 있음 (이 카드는 처음 {self._MAX_FILE_ROWS_PER_CARD}장만 표시)")
-            more_label.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 11px;")
-            layout.addWidget(more_label)
+        remaining_files = files[self._MAX_FILE_ROWS_PER_CARD :]
+        if remaining_files:
+            # 상한 넘는 파일은 접어둔다 — 상한 자체(_MAX_FILE_ROWS_PER_CARD)를
+            # 둔 이유(카드 생성 비용)가 그대로 적용되므로, 실제로 위젯을
+            # 만드는 건 사용자가 "더 보기"를 눌렀을 때 딱 한 번만(2026-09-17,
+            # 사용자 요청 — "목록의 접기펴기는 왜 구현이 안된거야").
+            toggle_btn = QToolButton()
+            toggle_btn.setCheckable(True)
+            toggle_btn.setAutoRaise(True)
+            toggle_btn.setCursor(Qt.PointingHandCursor)
+            toggle_btn.setText(f"▸ 외 {len(remaining_files):,}장 더 보기")
+            toggle_btn.setStyleSheet(
+                f"QToolButton {{ border: none; background: transparent; text-align: left; "
+                f"color: {COLORS['text_secondary']}; font-size: 11px; }}"
+            )
+            layout.addWidget(toggle_btn)
+
+            extra_rows: list[QWidget] = []
+
+            def _on_toggled(checked: bool, btn=toggle_btn) -> None:
+                if checked and not extra_rows:
+                    for info in remaining_files:
+                        row = self._build_file_row(info, label)
+                        layout.addWidget(row)
+                        extra_rows.append(row)
+                    # 방금 끝에 추가한 행들 뒤로 토글 버튼을 다시 옮긴다 —
+                    # "더 보기"는 항상 이 카드의 마지막 줄이어야 한다.
+                    layout.removeWidget(btn)
+                    layout.addWidget(btn)
+                for row in extra_rows:
+                    row.setVisible(checked)
+                btn.setText("▾ 접기" if checked else f"▸ 외 {len(remaining_files):,}장 더 보기")
+
+            toggle_btn.toggled.connect(_on_toggled)
 
         return card
+
+    def _build_file_row(self, info: FileInfo, label: str) -> _ClickableFileRow:
+        row_text = info.filename
+        if info.location_inferred_from:
+            row_text += f"  (추정 위치 · {info.location_inferred_from})"
+        row = _ClickableFileRow(row_text)
+        row.setToolTip(info.path)
+        row.clicked.connect(lambda info=info, label=label: self._open_detail(label, info))
+        row.setContextMenuPolicy(Qt.CustomContextMenu)
+        row.customContextMenuRequested.connect(
+            lambda pos, w=row, info=info, label=label: self._on_row_context_menu(w, pos, info, label)
+        )
+        return row
 
     def _open_detail(self, label: str, info: FileInfo) -> None:
         files = next((files for group_label, files in self._groups if group_label == label), [info])
