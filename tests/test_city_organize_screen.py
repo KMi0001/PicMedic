@@ -51,6 +51,63 @@ def _header_and_body(card) -> tuple[QToolButton, QWidget]:
     return header_btn, body
 
 
+def test_group_centroid_helper():
+    """_refresh_map이 도시 그룹의 지도 좌표로 쓰는 값 — 그룹 안 모든 파일의
+    GPS 평균."""
+    files = [
+        FileInfo(
+            path="a", filename="a", extension=".jpg", status=FileStatus.NORMAL,
+            recoverable=RecoveryPossibility.NOT_RECOVERABLE, latitude=10.0, longitude=20.0,
+        ),
+        FileInfo(
+            path="b", filename="b", extension=".jpg", status=FileStatus.NORMAL,
+            recoverable=RecoveryPossibility.NOT_RECOVERABLE, latitude=20.0, longitude=40.0,
+        ),
+    ]
+    centroid = CityOrganizeScreen._group_centroid(files)
+    check("중심점이 평균 좌표와 일치", centroid == (15.0, 30.0), centroid)
+
+
+def test_refresh_map_uses_group_centroid_not_first_file():
+    """2026-09-18 사용자 리포트: "지도에서 서울을 선택하면 인천으로
+    포커싱되고 있어" — 원인은 그룹의 지도 좌표를 files[0](그룹의 첫 파일)
+    하나로만 정했던 것. 사진 촬영/정렬 순서상 우연히 그 첫 파일의 GPS가
+    그룹 라벨("서울")과 안 맞는 위치(인천 근처)면 핀 자체가 거기 찍혔고,
+    그 핀을 클릭(포커스)하면 그 잘못된 좌표로 확대됐다. 그룹 전체 파일의
+    GPS 평균을 쓰도록 고쳤으니, 튀는 첫 파일 하나가 있어도 핀 위치가
+    나머지 정상 파일들 쪽에 훨씬 가까워야 한다."""
+    app = QApplication.instance() or QApplication(sys.argv)
+
+    screen = CityOrganizeScreen()
+    screen.map_view.resize(800, 600)
+    screen.map_view.show()
+
+    seoul_lat, seoul_lon = 37.5665, 126.9780
+    incheon_like_outlier = FileInfo(
+        path="C:/fake/outlier.jpg", filename="outlier.jpg", extension=".jpg",
+        status=FileStatus.NORMAL, recoverable=RecoveryPossibility.NOT_RECOVERABLE,
+        latitude=37.30, longitude=126.50,  # 서울 그룹의 "첫 파일"이지만 인천 쪽으로 치우친 좌표
+    )
+    # files[0]이 바로 그 튀는 좌표가 되도록 맨 앞에 둔다 — 예전 버그(files[0]만
+    # 씀)였다면 핀이 이 좌표에 찍혔을 것.
+    seoul_files = [incheon_like_outlier] + [_info(i) for i in range(9)]  # 나머지 9장은 정상 서울 좌표
+    screen._groups = [("서울", seoul_files)]
+    screen._files = seoul_files
+    screen._file_to_label = {f.path: "서울" for f in seoul_files}
+
+    screen._refresh_map()
+
+    map_lat, map_lon, count, label, _cc, _province = screen.map_view._raw_points[0]
+    check("지도 점이 서울 그룹 하나만큼 생김", count == 10, count)
+    dist_to_seoul = ((map_lat - seoul_lat) ** 2 + (map_lon - seoul_lon) ** 2) ** 0.5
+    dist_to_outlier = ((map_lat - incheon_like_outlier.latitude) ** 2 + (map_lon - incheon_like_outlier.longitude) ** 2) ** 0.5
+    check(
+        "핀 좌표가 튀는 첫 파일보다 정상 서울 좌표 쪽에 훨씬 가까움(평균이라 9:1로 당겨짐)",
+        dist_to_seoul < dist_to_outlier,
+        (map_lat, map_lon, dist_to_seoul, dist_to_outlier),
+    )
+
+
 def test_city_card_starts_collapsed():
     """카드는 기본적으로 접혀 있어야(헤더만 보임) 하고, 파일 행 위젯은
     펼치기 전까진 아예 만들어지지 않아야 한다 — 상한(_MAX_FILE_ROWS_PER_CARD)을
@@ -222,6 +279,8 @@ def test_city_card_toggle_expands_and_collapses():
 
 
 if __name__ == "__main__":  # pytest 없이 이 파일 하나만 돌려보고 싶을 때
+    test_group_centroid_helper()
+    test_refresh_map_uses_group_centroid_not_first_file()
     test_city_card_starts_collapsed()
     test_selecting_city_card_moves_map()
     test_city_card_row_count_is_capped()

@@ -357,19 +357,31 @@ class CityOrganizeScreen(QWidget):
         from core.geocoder import resolve_country_codes, resolve_province_names
 
         visible_groups = [(label, files) for label, files in self._visible_groups() if files]
-        # 나라 코드/시도명은 지도가 "화면에 나라가 여러 개 보이면 나라 단위,
-        # 한 나라 안에 도시가 너무 많으면 시/도 단위로 뭉쳐 보여주기"
-        # (gui/city_map_view.py)위해 필요하다. 그룹의 대표 좌표(files[0])
-        # 하나로만 판정 — 어차피 한 도시 그룹은 GPS가 서로 가까운 사진들이라
-        # 나라/시도가 섞일 일이 없다.
-        coords = [files[0].effective_location() for _, files in visible_groups]
-        country_codes = resolve_country_codes(coords) if coords else []
-        provinces = resolve_province_names(coords) if coords else []
+        # 그룹의 대표 좌표로 files[0](그룹의 첫 파일)만 썼더니 실제 버그로
+        # 이어졌다 — 서울 그룹인데 하필 첫 파일의 GPS가(사진 촬영 순서상
+        # 우연히) 인천 쪽에 가까우면 지도 핀 자체가 인천 근처에 찍히고,
+        # 그 핀을 클릭(포커스)하면 그 잘못된 좌표로 확대돼 "서울을 선택하면
+        # 인천으로 포커싱된다"는 리포트로 나타났다(2026-09-18). 그룹 전체
+        # 파일의 GPS 평균(중심점)을 쓰면 한두 개의 튀는 좌표에 덜 휘둘린다.
+        centroids = [self._group_centroid(files) for _, files in visible_groups]
+        country_codes = resolve_country_codes(centroids) if centroids else []
+        provinces = resolve_province_names(centroids) if centroids else []
         map_points = [
-            (*files[0].effective_location(), len(files), label, cc, province)
-            for (label, files), cc, province in zip(visible_groups, country_codes, provinces)
+            (*centroid, len(files), label, cc, province)
+            for (label, files), centroid, cc, province in zip(visible_groups, centroids, country_codes, provinces)
         ]
         self.map_view.set_points(map_points)
+
+    @staticmethod
+    def _group_centroid(files: list[FileInfo]) -> tuple[float, float]:
+        """도시 그룹 안 모든 파일의 GPS 평균 — 지도 핀 위치/나라·시도 판정에
+        쓰는 그룹의 대표 좌표. 파일 하나(특히 files[0])만 대표로 쓰면 그
+        파일이 우연히 그룹 라벨과 안 맞는 위치일 때(예: "서울" 그룹의
+        일부 사진이 인천 경계 근처) 핀 자체가 엉뚱한 곳에 찍힌다."""
+        locations = [loc for f in files if (loc := f.effective_location())]
+        avg_lat = sum(lat for lat, _lon in locations) / len(locations)
+        avg_lon = sum(lon for _lat, lon in locations) / len(locations)
+        return (avg_lat, avg_lon)
 
     # --- 내부 로직 -----------------------------------------------------
 
