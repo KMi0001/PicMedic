@@ -348,7 +348,9 @@ class CityMapView(QGraphicsView):
             scene.addItem(label_item)
             self._country_anchors.append((label_item, (lat, lon), best_bbox))
 
-        scene.addPath(land_path, QPen(QColor(_LAND_BORDER_COLOR), 0.05), QColor(_LAND_FILL_COLOR))
+        # 국경선 굵기 — "기본선도 너무 두꺼워서 반 정도로 줄여줄 수 있나"
+        # (2026-09-18) 요청으로 0.05 -> 0.025(절반)로.
+        scene.addPath(land_path, QPen(QColor(_LAND_BORDER_COLOR), 0.025), QColor(_LAND_FILL_COLOR))
         for label_item, _, _ in self._country_anchors:
             label_item.setZValue(1)  # addPath로 새로 그린 육지 위로 라벨이 오게 다시 확인
 
