@@ -78,3 +78,23 @@ def load_country_polygons(topojson_path: str) -> list[tuple[str, list[list[tuple
         name = geometry.get("properties", {}).get("name", "")
         result.append((name, _assemble_rings(geometry, decoded_arcs)))
     return result
+
+
+def load_province_polygons(topojson_path: str) -> list[tuple[str, str, list[list[tuple[float, float]]]]]:
+    """assets/kr_provinces_10m.json(Natural Earth 1:10m Admin-1 States/Provinces
+    — naturalearthdata.com 공식 배포, 퍼블릭 도메인)의 대한민국 시/도 17개를
+    (영문 이름, 한국어 이름, 링 목록)으로 반환한다. gui/city_map_view.py가
+    도 경계선을 그리는 데 쓴다(2026-09-18, 사용자 요청 — "도 단위로는 얇은
+    선이라도 나뉘어 있음 좋을거 같아서"). load_country_polygons과 같은
+    구조(scale=[1,1]/translate=[0,0]로 델타 인코딩=원본 좌표 차이가 되게
+    만들어서 quantization 없이 이 디코더를 그대로 재사용)라 별도 파서가
+    필요 없다."""
+    topo, decoded_arcs = _load_topology(topojson_path)
+    provinces = topo["objects"]["provinces"]
+    result: list[tuple[str, str, list[list[tuple[float, float]]]]] = []
+    for geometry in provinces["geometries"]:
+        props = geometry.get("properties", {})
+        name = props.get("name", "")
+        name_ko = props.get("name_ko", "")
+        result.append((name, name_ko, _assemble_rings(geometry, decoded_arcs)))
+    return result

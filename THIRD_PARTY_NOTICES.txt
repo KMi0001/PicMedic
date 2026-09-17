@@ -64,3 +64,22 @@ License: Creative Commons Attribution 4.0 License (CC-BY 4.0)
 
 This work is based on data from GeoNames (https://www.geonames.org/), made
 available under the Creative Commons Attribution 4.0 License.
+
+
+------------------------------------------------------------------------------
+Natural Earth (데이터, 코드 아님)
+------------------------------------------------------------------------------
+Used for:
+- 도시별 정리 지도("gui/city_map_view.py")의 국가 윤곽선 —
+  assets/world_countries_50m.json(1:50m Admin-0 Countries, topojson/world-atlas
+  https://github.com/topojson/world-atlas 가 TopoJSON으로 재배포한 것을 사용)
+- 같은 지도의 대한민국 시/도 경계선(2026-09-18 추가) —
+  assets/kr_provinces_10m.json(1:10m Admin-1 States/Provinces에서 대한민국만
+  추출 — naturalearthdata.com에서 직접 받은 공식 셰이프파일을 utils/topojson.py가
+  읽을 수 있는 형태로 이 프로젝트에서 변환)
+Source: https://www.naturalearthdata.com/
+License: Public Domain
+전문: https://www.naturalearthdata.com/about/terms-of-use/ — "All versions of
+Natural Earth raster + vector map data found on this website are in the public
+domain. ... use them for personal, educational, and commercial purposes at no
+cost."

@@ -30,14 +30,22 @@ from PySide6.QtWidgets import QGraphicsItem, QGraphicsScene, QGraphicsView, QHBo
 from core.country_names_ko import COUNTRY_NAMES_KO
 from core.geocoder import country_name_ko
 from utils.assets import asset_path
-from utils.topojson import load_country_polygons
+from utils.topojson import load_country_polygons, load_province_polygons
 
 _COUNTRIES_PATH = asset_path("world_countries_50m.json")
+# 대한민국 시/도 17개 경계 — Natural Earth 1:10m Admin-1 States/Provinces
+# (naturalearthdata.com 공식 배포, 퍼블릭 도메인)에서 KR만 추출해 만든
+# 자체 자산(assets/kr_provinces_10m.json 생성 스크립트는 세션 스크래치패드에
+# 있었고, 파일 자체가 산출물). 지금은 대한민국만 있고, 다른 나라 시/도
+# 경계는 아직 없다 — 사용자가 요청한 범위("도 단위로는 얇은 선이라도")가
+# 국내였고, 실사용 데이터도 국내 위주라 우선순위상 이것만 먼저 추가했다.
+_KR_PROVINCES_PATH = asset_path("kr_provinces_10m.json")
 KOREA_CENTER = (36.5, 127.8)  # 초기 지도 중심(대략 대한민국 중앙)
 
 _OCEAN_COLOR = "#DCEEF5"
 _LAND_FILL_COLOR = "#CDE8DC"
 _LAND_BORDER_COLOR = "#9FC6B0"
+_PROVINCE_BORDER_COLOR = QColor(150, 150, 150, 90)
 _COUNTRY_LABEL_COLOR = QColor(90, 120, 105, 200)
 
 # 핀 색상 팔레트 — 예전엔 전부 같은 빨간색이었는데 "핀 색상을 좀 다양하게
@@ -351,8 +359,37 @@ class CityMapView(QGraphicsView):
         # 국경선 굵기 — "기본선도 너무 두꺼워서 반 정도로 줄여줄 수 있나"
         # (2026-09-18) 요청으로 0.05 -> 0.025(절반)로.
         scene.addPath(land_path, QPen(QColor(_LAND_BORDER_COLOR), 0.025), QColor(_LAND_FILL_COLOR))
+
+        # 대한민국 시/도 경계 — "도 단위로는 얇은 선이라도 나뉘어 있음
+        # 좋을거 같아서"(2026-09-18) 요청. 목업(연한 회색, 국경선보다 얇게)을
+        # 사용자가 확인한 뒤 실제 경계 데이터(Natural Earth 1:10m Admin-1,
+        # _KR_PROVINCES_PATH)로 교체했다. 국경선(land_path)보다 나중에 그려야
+        # 육지 채우기 위로 선이 보인다 — 채우기는 안 하고 선만(addPath에
+        # 브러시를 안 줌).
+        try:
+            provinces = load_province_polygons(_KR_PROVINCES_PATH)
+        except Exception as exc:
+            print("시/도 경계 데이터 로드 실패:", exc)
+            provinces = []
+
+        province_path = QPainterPath()
+        for _name, _name_ko, rings in provinces:
+            for ring in rings:
+                if len(ring) < 3:
+                    continue
+                sub = QPainterPath()
+                sub.moveTo(ring[0][0], -ring[0][1])
+                for lon, lat in ring[1:]:
+                    sub.lineTo(lon, -lat)
+                sub.closeSubpath()
+                province_path.addPath(sub)
+
+        province_pen = QPen(_PROVINCE_BORDER_COLOR)
+        province_pen.setWidthF(0.018)
+        scene.addPath(province_path, province_pen)
+
         for label_item, _, _ in self._country_anchors:
-            label_item.setZValue(1)  # addPath로 새로 그린 육지 위로 라벨이 오게 다시 확인
+            label_item.setZValue(1)  # addPath로 새로 그린 육지/시도 경계 위로 라벨이 오게 다시 확인
 
         self._markers: list[_CityMarker] = []
         self._raw_points: list[tuple[float, float, int, str, str]] = []
