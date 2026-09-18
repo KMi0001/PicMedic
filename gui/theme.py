@@ -369,6 +369,62 @@ QMenu::separator {{
     background: {COLORS['border']};
     margin: 4px 8px;
 }}
+
+/* 기본 OS 스크롤바가 두껍고 각져서 카드/둥근 모서리 톤과 안 맞는다는
+   피드백(2026-09-18) — 얇고 둥근 "떠 있는" 핸들 스타일로 통일. 트랙은
+   투명(배경이 그대로 비침), 핸들만 은은하게 보이다가 hover/드래그 시
+   primary색으로 강조된다. */
+QScrollBar:vertical {{
+    background: transparent;
+    width: 10px;
+    margin: 2px;
+}}
+
+QScrollBar::handle:vertical {{
+    background: {COLORS['border']};
+    border-radius: 4px;
+    min-height: 28px;
+}}
+
+QScrollBar::handle:vertical:hover, QScrollBar::handle:vertical:pressed {{
+    background: {COLORS['primary']};
+}}
+
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
+    height: 0px;
+    border: none;
+    background: none;
+}}
+
+QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{
+    background: none;
+}}
+
+QScrollBar:horizontal {{
+    background: transparent;
+    height: 10px;
+    margin: 2px;
+}}
+
+QScrollBar::handle:horizontal {{
+    background: {COLORS['border']};
+    border-radius: 4px;
+    min-width: 28px;
+}}
+
+QScrollBar::handle:horizontal:hover, QScrollBar::handle:horizontal:pressed {{
+    background: {COLORS['primary']};
+}}
+
+QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{
+    width: 0px;
+    border: none;
+    background: none;
+}}
+
+QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {{
+    background: none;
+}}
 """
 
 

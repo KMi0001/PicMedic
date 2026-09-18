@@ -10,8 +10,8 @@ gui/scan_session_window.py의 _info_dialog)을, 세 번째 화면(gui/duplicate_
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, QTimer, QUrl, Signal
-from PySide6.QtGui import QDesktopServices, QPixmap
+from PySide6.QtCore import Qt, QRectF, QTimer, QUrl, Signal
+from PySide6.QtGui import QColor, QDesktopServices, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QDialog,
     QHBoxLayout,
@@ -170,6 +170,39 @@ def progress_icon_pixmap(accent: str, size: int = 22) -> QPixmap:
     return status_icon_pixmap("progress", accent, size)
 
 
+class _SpinnerWidget(QWidget):
+    """진행 팝업 헤더의 회전 스피너 — 유니코드 문자(◐◓◑◒)를 갈아끼우던 예전
+    방식 대신 QPainter로 직접 그린 원형 링을 돌린다("너무 후져 보인다"는
+    피드백, 2026-09-18) — DESIGN.md 아이콘 원칙(이모지/특수문자 대신 항상
+    벡터로 직접 그림)과 맞춘다."""
+
+    def __init__(self, color: str, size: int = 18, parent=None):
+        super().__init__(parent)
+        self._color = QColor(color)
+        self._angle = 0
+        self.setFixedSize(size, size)
+
+    def set_angle(self, angle: int) -> None:
+        self._angle = angle % 360
+        self.update()
+
+    def paintEvent(self, _event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        pen = QPen(self._color)
+        pen.setWidthF(2.2)
+        pen.setCapStyle(Qt.RoundCap)
+        painter.setPen(pen)
+        margin = pen.widthF() / 2 + 1
+        rect = QRectF(margin, margin, self.width() - margin * 2, self.height() - margin * 2)
+        # 원 전체가 아니라 270도짜리 호 하나만 그려서 계속 돌리면 "로딩 중"
+        # 링 느낌이 난다. Qt 각도 단위는 1/16도, 양수가 반시계 방향이라
+        # 시계 방향으로 돌아가 보이게 부호를 뒤집는다.
+        start_angle = -self._angle * 16
+        span_angle = -270 * 16
+        painter.drawArc(rect, start_angle, span_angle)
+
+
 class ProgressDialog(QDialog):
     """오래 걸리는 작업(복구/변환/화질 개선 등) 진행 중 뜨는 모달 팝업. 작업이
     끝날 때까지 화면(설정/뒤로가기 등)을 건드릴 수 없게 막는다 — PRD_MVP우선순위.md
@@ -206,16 +239,14 @@ class ProgressDialog(QDialog):
         # 원형(회전) 스피너 — 2026-09-17, 사용자 리포트: 파일이 아주 많으면
         # (2만 개+) 항목 하나 처리에 걸리는 시간이 늘어나면서 퍼센트 막대가
         # 한동안 안 움직이는 것처럼 보여서 "멈춘 줄 알았다"는 피드백. 진행률
-        # 신호가 뜸하게 와도 이 라벨만은 파일 처리 속도와 무관하게 계속
+        # 신호가 뜸하게 와도 이 위젯만은 파일 처리 속도와 무관하게 계속
         # 회전해서 "죽지 않았다"를 보여준다 — 실제 진행 신호(update_progress)에
         # 기대지 않고 자체 QTimer로 애니메이션한다.
-        self._spinner_label = QLabel("")
-        self._spinner_label.setStyleSheet(f"color: {COLORS['primary']}; font-size: 15px;")
-        header_row.addWidget(self._spinner_label)
-        self._spinner_frames = "◐◓◑◒"
-        self._spinner_frame_idx = 0
+        self._spinner = _SpinnerWidget(COLORS["primary"])
+        header_row.addWidget(self._spinner)
+        self._spinner_angle = 0
         self._spinner_timer = QTimer(self)
-        self._spinner_timer.setInterval(150)
+        self._spinner_timer.setInterval(20)
         self._spinner_timer.timeout.connect(self._advance_spinner)
         self.finished.connect(lambda _result: self._spinner_timer.stop())
         layout.addLayout(header_row)
@@ -239,13 +270,13 @@ class ProgressDialog(QDialog):
         self.status_label.setText("준비 중...")
         self.cancel_btn.setEnabled(True)
         self.cancel_btn.setText("취소")
-        self._spinner_frame_idx = 0
-        self._spinner_label.setText(self._spinner_frames[0])
+        self._spinner_angle = 0
+        self._spinner.set_angle(0)
         self._spinner_timer.start()
 
     def _advance_spinner(self) -> None:
-        self._spinner_frame_idx = (self._spinner_frame_idx + 1) % len(self._spinner_frames)
-        self._spinner_label.setText(self._spinner_frames[self._spinner_frame_idx])
+        self._spinner_angle = (self._spinner_angle + 8) % 360
+        self._spinner.set_angle(self._spinner_angle)
 
     def update_progress(self, current: int, total: int, filename: str):
         pct = int((current / total) * 100) if total else 0
