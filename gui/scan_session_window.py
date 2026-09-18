@@ -93,8 +93,12 @@ class ScanSessionWindow(
         self,
         paths: list[str],
         parent=None,
+        main_window=None,
     ):
         super().__init__(parent)
+        # "홈" 버튼(_go_home)이 이 세션 창을 닫은 뒤 홈 화면을 실제로 앞에
+        # 띄우는 데 쓴다 — Qt 부모 관계가 아니라 그냥 참조만 들고 있는 것.
+        self._main_window = main_window
         # 2026-09-13: gui/home_screen.py의 "검사"와 "정리" 카드를 하나로 합치면서
         # (사용자 요청) 예전에 여기 있던 "정리 카드는 스캔 없이 곧장 허브부터
         # 보여주고, 카드를 실제로 골라야 그때 전체 스캔을 시작한다"는 지연 스캔
@@ -247,8 +251,15 @@ class ScanSessionWindow(
     # --- 화면 전환 핸들러 ------------------------------------------------
 
     def _go_home(self):
-        # "홈" 버튼(구 "다시 검사") — 홈 화면은 MainWindow 쪽에 항상 떠 있으므로
-        # 이 세션 창은 그냥 닫기만 하면 된다.
+        # "홈" 버튼(구 "다시 검사") — 예전엔 "홈 화면은 MainWindow 쪽에 항상 떠
+        # 있으므로 이 세션 창만 닫으면 된다"고 가정했는데, 세션 창이 부모 없는
+        # 독립 창이라 MainWindow가 다른 창 뒤에 가려져 있으면 닫아도 아무것도
+        # 앞으로 안 올라와 "그냥 꺼진 것처럼" 보였다(2026-09-18, 사용자 리포트).
+        # 명시적으로 앞으로 가져온 뒤 닫는다.
+        if self._main_window is not None:
+            self._main_window.show()
+            self._main_window.raise_()
+            self._main_window.activateWindow()
         self.close()
 
     def _start_scan(self, paths: list, resize: bool = True):
@@ -295,6 +306,21 @@ class ScanSessionWindow(
         _info_dialog(self, f"검사 중 예상하지 못한 오류가 발생했습니다.\n\n{message}")
         self.close()
 
+    def _center_on_screen(self) -> None:
+        """검사 결과로 넘어가며 작은 검사 중 창(600x440)을 큰 창(1200x820)
+        으로 키울 때, resize()는 왼쪽 위 모서리는 그대로 두고 오른쪽/아래로만
+        커지므로 화면 중앙에서 벗어나 보였다(2026-09-18, 사용자 리포트 —
+        "검사결과 화면 뜨는 위치가 이상한데"). 커진 뒤 지금 이 창이 떠 있는
+        모니터의 사용 가능 영역(작업 표시줄 등 제외) 기준으로 다시 가운데로
+        옮긴다."""
+        screen = self.screen()
+        if screen is None:
+            return
+        available = screen.availableGeometry()
+        x = available.x() + (available.width() - self.width()) // 2
+        y = available.y() + (available.height() - self.height()) // 2
+        self.move(x, y)
+
     def _on_scan_finished(self, result, cancelled: bool, planned_total: int, remaining_paths: list):
         if self._resume_base_result is not None:
             result = self._resume_base_result.merge(result)
@@ -323,6 +349,7 @@ class ScanSessionWindow(
         # 끝날 때마다 미리 만들어두면(당장 보지도 않는데) 그때마다 응답 없음이
         # 뜬다 — 사용자가 "중복 파일 보기"를 실제로 눌렀을 때만 만든다.
         self.resize(*self._NORMAL_SIZE)
+        self._center_on_screen()
         self.setMinimumSize(*self._MIN_NORMAL_SIZE)
         self.stack.setCurrentWidget(self.result_screen)
 

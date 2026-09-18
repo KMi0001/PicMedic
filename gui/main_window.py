@@ -40,7 +40,7 @@ class MainWindow(QMainWindow):
         # 스타일시트는 ScanSessionWindow가 직접 적용한다(gui/scan_session_window.py
         # 참고). 그 대신 Qt가 자동으로 자식 창을 닫아주지 않으므로, 아래
         # closeEvent()에서 열려있는 세션 창들을 직접 닫아준다.
-        session = ScanSessionWindow(paths, parent=None)
+        session = ScanSessionWindow(paths, parent=None, main_window=self)
         session.closed.connect(self._on_session_closed)
         self._sessions.append(session)
         session.show()
