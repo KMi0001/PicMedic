@@ -164,18 +164,27 @@ def _on_match_context_menu(parent: QWidget, list_widget: QListWidget, pos) -> No
         open_mov_folder_action = menu.addAction("동영상 폴더 열기")
     chosen = menu.exec(list_widget.mapToGlobal(pos))
     if chosen is preview_action:
-        _open_live_photo_preview(parent, match)
+        # 이전/다음으로 목록의 다른 짝도 훑어볼 수 있게(2026-09-18, 사용자
+        # 요청 — "우클릭 미리보기에서도 이전/다음버튼 추가") 클릭한 항목
+        # 하나만이 아니라 목록 전체 + 그 안에서의 위치를 같이 넘긴다.
+        all_matches = [list_widget.item(i).data(Qt.UserRole) for i in range(list_widget.count())]
+        _open_live_photo_preview(parent, all_matches, list_widget.row(item))
     elif chosen is open_folder_action or chosen is open_image_folder_action:
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(match.image_path.parent)))
     elif chosen is open_mov_folder_action:
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(match.mov_path.parent)))
 
 
-def _open_live_photo_preview(parent: QWidget, match: LivePhotoMatch) -> None:
-    """사진(정지 이미지) 쪽만 미리보기로 보여준다 — 짝이 맞는지 눈으로
-    확인하는 용도라, 동영상까지 재생할 필요는 없다고 판단."""
+def _build_live_photo_preview_dialog(
+    parent: QWidget, matches: list[LivePhotoMatch], index: int
+) -> tuple[QDialog, ImageViewer]:
+    """_open_live_photo_preview의 실제 구성 부분 — dialog.exec()(블로킹)을
+    따로 빼서, 테스트가 exec() 없이 다이얼로그/뷰어 상태만 확인할 수 있게
+    한다. 목록에 짝이 여럿이면 다이얼로그를 닫지 않고도 gui/detail_screen.py
+    와 같은 이전/다음 오버레이 버튼(ImageViewer.set_navigation)으로 훑어볼
+    수 있다(2026-09-18, 사용자 요청 — "우클릭 미리보기에서도 이전/다음버튼
+    추가")."""
     dialog = QDialog(parent)
-    dialog.setWindowTitle(match.image_path.name)
     dialog.setWindowModality(Qt.WindowModal)
     dialog.resize(560, 560)
 
@@ -183,14 +192,31 @@ def _open_live_photo_preview(parent: QWidget, match: LivePhotoMatch) -> None:
     layout.setContentsMargins(12, 12, 12, 12)
 
     viewer = ImageViewer(overlay_controls=True)
-    viewer.set_image_path(str(match.image_path))
     layout.addWidget(viewer, stretch=1)
 
-    path_label = QLabel(str(match.image_path))
+    path_label = QLabel()
     path_label.setWordWrap(True)
     path_label.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 11px;")
     layout.addWidget(path_label)
 
+    def _show(i: int) -> None:
+        m = matches[i]
+        dialog.setWindowTitle(m.image_path.name)
+        viewer.set_image_path(str(m.image_path))
+        path_label.setText(str(m.image_path))
+        viewer.set_navigation(
+            (lambda: _show(i - 1)) if i > 0 else None,
+            (lambda: _show(i + 1)) if i < len(matches) - 1 else None,
+        )
+
+    _show(index)
+    return dialog, viewer
+
+
+def _open_live_photo_preview(parent: QWidget, matches: list[LivePhotoMatch], index: int) -> None:
+    """사진(정지 이미지) 쪽만 미리보기로 보여준다 — 짝이 맞는지 눈으로
+    확인하는 용도라, 동영상까지 재생할 필요는 없다고 판단."""
+    dialog, _viewer = _build_live_photo_preview_dialog(parent, matches, index)
     dialog.exec()
 
 
