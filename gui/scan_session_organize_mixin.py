@@ -12,11 +12,37 @@ _organize_worker, result_screen 등)이다. 단독으로 인스턴스화하지 �
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from core.category_finder import CATEGORIES as CATEGORY_FINDER_DEFS
-from core.date_organizer import organize_by_city, organize_by_date, organize_category_finder_results
+from core.date_organizer import (
+    organize_by_city,
+    organize_by_date,
+    organize_category_finder_results,
+    sanitize_folder_name,
+)
 from gui.common_dialogs import confirm_dialog as _confirm_dialog, info_dialog_with_folder as _info_dialog_with_folder
 from gui.common_dialogs import info_dialog as _info_dialog
 from gui.scan_session_workers import _OrganizeWorker
+
+
+def _filename_for_rename_settings(settings):
+    """gui/rename_settings_widget.py::RenameSettingsWidget.settings()를
+    core/date_organizer.py::_run_organize가 쓰는 filename_for(info, index, label)
+    콜백으로 바꾼다. settings가 None이면(=원래 이름 유지) None을 그대로 돌려줘서
+    호출부가 원래 파일명을 쓰게 한다. "자동 입력"은 그룹 라벨(날짜/도시)을
+    기본 이름으로 쓴다 — 도시 라벨은 쉼표가 섞일 수 있어 sanitize_folder_name으로
+    안전한 파일명으로 바꾼다."""
+    if settings is None:
+        return None
+
+    def filename_for(info, index, label):
+        ext = Path(info.filename).suffix
+        base = settings.base_name if settings.mode == "manual" else sanitize_folder_name(label)
+        number = str(settings.start + index).zfill(settings.digits)
+        return f"{base}_{number}{ext}"
+
+    return filename_for
 
 
 class OrganizeExecutionMixin:
@@ -57,8 +83,9 @@ class OrganizeExecutionMixin:
         groups = self.date_organize_screen.groups()
         output_root = self.date_organize_screen.output_root()
         granularity = self.date_organize_screen.granularity()
+        filename_for = _filename_for_rename_settings(self.date_organize_screen.rename_settings())
         run_fn = lambda progress_callback, should_cancel: organize_by_date(
-            groups, mode, output_root, granularity=granularity,
+            groups, mode, output_root, granularity=granularity, filename_for=filename_for,
             progress_callback=progress_callback, should_cancel=should_cancel,
         )
         self._start_organize_worker(run_fn, mode, output_root)
@@ -71,8 +98,9 @@ class OrganizeExecutionMixin:
 
         groups = self.city_organize_screen.groups()
         output_root = self.city_organize_screen.output_root()
+        filename_for = _filename_for_rename_settings(self.city_organize_screen.rename_settings())
         run_fn = lambda progress_callback, should_cancel: organize_by_city(
-            groups, mode, output_root,
+            groups, mode, output_root, filename_for=filename_for,
             progress_callback=progress_callback, should_cancel=should_cancel,
         )
         self._start_organize_worker(run_fn, mode, output_root)
@@ -86,8 +114,9 @@ class OrganizeExecutionMixin:
         category_label = CATEGORY_FINDER_DEFS[screen.category_id].title
         files = screen.matched_files()
         output_root = screen.output_root()
+        filename_for = _filename_for_rename_settings(screen.rename_settings())
         run_fn = lambda progress_callback, should_cancel: organize_category_finder_results(
-            category_label, files, mode, output_root,
+            category_label, files, mode, output_root, filename_for=filename_for,
             progress_callback=progress_callback, should_cancel=should_cancel,
         )
         self._start_organize_worker(run_fn, mode, output_root)

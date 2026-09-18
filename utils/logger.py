@@ -101,6 +101,19 @@ def log_recovery(outcome) -> None:
     )
 
 
+def log_rename(outcome) -> None:
+    """"이름 일괄변경"(core/renamer.py::rename_batch) 파일 하나의 결과를 기록한다."""
+    _write(
+        {
+            "type": "rename",
+            "filename": outcome.original.filename,
+            "new_path": outcome.new_path,
+            "result": "SUCCESS" if outcome.success else "FAILED",
+            "error": outcome.error_message,
+        }
+    )
+
+
 def read_recent_entries(limit: int = 200) -> list[dict[str, Any]]:
     """로그 파일에서 최근 항목을 읽어온다 (KPI 집계·로그 뷰어 등에서 재사용)."""
     try:
@@ -128,6 +141,10 @@ def format_entry_text(entry: dict[str, Any]) -> str:
         if entry.get("target_format"):
             action += f" ({entry['target_format']})"
         lines.append(f"Action: {action}")
+        lines.append(f"Result: {entry.get('result', '')}")
+    elif entry.get("type") == "rename":
+        lines.append(entry.get("filename", ""))
+        lines.append(f"Action: 이름 변경 -> {entry.get('new_path') or '(실패)'}")
         lines.append(f"Result: {entry.get('result', '')}")
     else:
         lines.append(f"Scan: {entry.get('path', '')}")

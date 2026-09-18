@@ -28,14 +28,12 @@ from pathlib import Path
 from PySide6.QtCore import QPointF, QRectF, Qt, QUrl, Signal
 from PySide6.QtGui import QColor, QDesktopServices, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
-    QButtonGroup,
-    QFileDialog,
+    QDialog,
     QFrame,
     QHBoxLayout,
     QLabel,
     QMenu,
     QPushButton,
-    QRadioButton,
     QScrollArea,
     QSizePolicy,
     QStackedWidget,
@@ -46,6 +44,7 @@ from PySide6.QtWidgets import (
 
 from core.date_organizer import NO_CITY_LABEL
 from gui.city_map_view import CityMapView
+from gui.organize_settings_dialog import OrganizeSettingsDialog
 from gui.theme import COLORS
 from models.file_info import FileInfo
 
@@ -230,53 +229,17 @@ class CityOrganizeScreen(QWidget):
 
         self.map_view.view_changed.connect(self._refresh_region_list)
 
-        # --- 하단: 방식 선택 + 저장 위치 + 실행 (gui/date_organize_screen.py와 동일 패턴) ---
-        mode_card = QFrame()
-        mode_card.setObjectName("Card")
-        mode_layout = QVBoxLayout(mode_card)
-        mode_layout.setContentsMargins(18, 14, 18, 14)
-        mode_layout.setSpacing(8)
+        # --- 하단: "정리하기" 버튼 하나 — gui/date_organize_screen.py와 같은
+        # 이유로 정리 방식/파일명/저장 위치는 전부 팝업(OrganizeSettingsDialog)
+        # 으로 옮겼다(2026-09-18).
+        self._organize_dialog = OrganizeSettingsDialog(
+            self,
+            title="도시별 정리 — 정리하기",
+            auto_label="자동 입력 (정리 기준 — 도시별)",
+            mode_note=f'"{NO_CITY_LABEL}" 사진들은 따로 "위치없음" 폴더에 모아요.',
+        )
 
-        mode_header_row = QHBoxLayout()
-        mode_header_row.setSpacing(8)
-        mode_label = QLabel("정리 방식")
-        mode_label.setStyleSheet("font-weight: 700;")
-        mode_header_row.addWidget(mode_label)
-        no_city_note = QLabel(f'"{NO_CITY_LABEL}" 사진들은 따로 "위치없음" 폴더에 모아요.')
-        no_city_note.setWordWrap(True)
-        no_city_note.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 11px;")
-        mode_header_row.addWidget(no_city_note, stretch=1)
-        mode_layout.addLayout(mode_header_row)
-
-        mode_group = QButtonGroup(self)
-        self.copy_radio = QRadioButton("복사 (원본은 그대로 두고 새 폴더에 사본 생성 — 기본값)")
-        self.copy_radio.setChecked(True)
-        mode_group.addButton(self.copy_radio)
-        mode_layout.addWidget(self.copy_radio)
-
-        self.move_radio = QRadioButton("이동 (원본이 새 폴더로 옮겨지고 원래 위치엔 안 남음)")
-        self.move_radio.setStyleSheet(f"color: {COLORS['warning']};")
-        mode_group.addButton(self.move_radio)
-        mode_layout.addWidget(self.move_radio)
-
-        mode_layout.addSpacing(14)
-        output_caption = QLabel("저장 위치")
-        output_caption.setStyleSheet("font-weight: 700;")
-        mode_layout.addWidget(output_caption)
-
-        output_row = QHBoxLayout()
-        change_output_btn = QPushButton("변경")
-        change_output_btn.clicked.connect(self._on_change_output_clicked)
-        output_row.addWidget(change_output_btn)
-        self.output_path_label = QLabel("")
-        self.output_path_label.setWordWrap(True)
-        self.output_path_label.setStyleSheet("font-size: 12px;")
-        output_row.addWidget(self.output_path_label, stretch=1)
-        mode_layout.addLayout(output_row)
-
-        outer.addWidget(mode_card)
-
-        self.organize_btn = QPushButton("이 방식대로 정리하기")
+        self.organize_btn = QPushButton("정리하기")
         self.organize_btn.setObjectName("Primary")
         self.organize_btn.setEnabled(False)
         self.organize_btn.clicked.connect(self._on_organize_clicked)
@@ -316,7 +279,7 @@ class CityOrganizeScreen(QWidget):
 
     def set_output_root(self, path: str) -> None:
         self._output_root = path
-        self.output_path_label.setText(path)
+        self._organize_dialog.set_output_root(path)
 
     def output_root(self) -> str:
         return self._output_root
@@ -340,6 +303,10 @@ class CityOrganizeScreen(QWidget):
         "위치없음" 폴더로 모인다(gui/date_organize_screen.py와 같은 원칙 —
         스캔된 파일 전체가 실행 대상)."""
         return self._visible_groups() + self._no_gps_groups
+
+    def rename_settings(self):
+        """gui/date_organize_screen.py::rename_settings()와 같은 역할."""
+        return self._organize_dialog.rename_settings()
 
     def group_excluded(self, label: str) -> set[str]:
         return set(self._group_exclusions.get(label, ()))
@@ -578,11 +545,8 @@ class CityOrganizeScreen(QWidget):
         elif chosen is open_folder_action:
             QDesktopServices.openUrl(QUrl.fromLocalFile(str(Path(info.path).parent)))
 
-    def _on_change_output_clicked(self):
-        chosen = QFileDialog.getExistingDirectory(self, "저장 위치 선택", self._output_root or "")
-        if chosen:
-            self.set_output_root(chosen)
-
     def _on_organize_clicked(self):
-        mode = "move" if self.move_radio.isChecked() else "copy"
-        self.organize_requested.emit(mode)
+        if self._organize_dialog.exec() != QDialog.Accepted:
+            return
+        self._output_root = self._organize_dialog.output_root()
+        self.organize_requested.emit(self._organize_dialog.mode())

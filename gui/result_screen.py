@@ -32,6 +32,7 @@ from PySide6.QtWidgets import (
 
 from core.category_finder import CATEGORIES as CATEGORY_FINDER_DEFS
 from gui.image_viewer import ImageViewer
+from gui.rename_dialog import open_rename_dialog
 from gui.theme import COLORS, STATUS_COLORS, STATUS_DOT
 from models.file_info import FileStatus, RecoveryPossibility
 from models.scan_result import ScanResult
@@ -530,10 +531,17 @@ class ResultScreen(QWidget):
         content_row.addWidget(self.table, stretch=1)
         outer.addLayout(content_row, stretch=1)
 
-        bottom_row = QHBoxLayout()
+        selection_hint_row = QHBoxLayout()
         self.selection_label = QLabel("선택된 파일 없음")
         self.selection_label.setStyleSheet(f"color: {COLORS['text_secondary']};")
-        bottom_row.addWidget(self.selection_label)
+        selection_hint_row.addWidget(self.selection_label)
+        selection_hint_row.addStretch(1)
+        context_menu_hint = QLabel("목록에서 우클릭을 해서 로컬폴더로 이동하거나 상세보기를 할 수 있습니다.")
+        context_menu_hint.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 11px;")
+        selection_hint_row.addWidget(context_menu_hint)
+        outer.addLayout(selection_hint_row)
+
+        bottom_row = QHBoxLayout()
         bottom_row.addStretch(1)
         # "Medic!"은 확장자 변환(빠른 파일 I/O)만 계속 배치로 묶는다. 화질
         # 개선/얼굴 복원/디블러/디노이즈/사진 진단은 전부 제거되어(2026-09-13)
@@ -545,6 +553,12 @@ class ResultScreen(QWidget):
         # 처음엔 비활성 상태라 기본(회색) 스타일로 시작 — 선택 상태가 바뀔
         # 때마다 _update_selection_label()이 활성 여부에 맞춰 다시 칠한다.
         _set_primary_active(self.recover_selected_btn, False)
+        # "이름일괄변환"은 이 화면의 보조 동작 — 확장자 변환처럼 Primary(채워진
+        # 버튼)로 만들면 둘 다 똑같이 진해서 뭐가 메인 동작인지 헷갈린다.
+        self.rename_selected_btn = QPushButton("이름일괄변환")
+        self.rename_selected_btn.setEnabled(False)
+        self.rename_selected_btn.clicked.connect(self._on_rename_selected)
+        bottom_row.addWidget(self.rename_selected_btn)
         outer.addLayout(bottom_row)
 
         # --- 정리 카드 (2026-09-13, 옛 gui/organize_hub_screen.py를 이 화면에 합침) ---
@@ -933,6 +947,7 @@ class ResultScreen(QWidget):
         can_recover = len(selected) > 0
         self.recover_selected_btn.setEnabled(can_recover)
         _set_primary_active(self.recover_selected_btn, can_recover)
+        self.rename_selected_btn.setEnabled(can_recover)
 
         self._header.set_checked(total_rows > 0 and len(selected) == total_rows)
 
@@ -940,6 +955,13 @@ class ResultScreen(QWidget):
         selected = self._selected_files()
         if selected:
             self.recovery_requested.emit(selected)
+
+    def _on_rename_selected(self):
+        selected = self._selected_files()
+        if not selected:
+            return
+        open_rename_dialog(self, selected)
+        self.refresh_current_result()
 
     def _toggle_viewer(self):
         showing = not self.viewer_panel.isVisible()

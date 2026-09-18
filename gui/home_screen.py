@@ -58,6 +58,7 @@ from gui import theme
 from gui.common_dialogs import info_dialog
 from gui.convert_dialog import run_convert
 from gui.live_photo_dialog import run_live_photo_finder
+from gui.rename_dialog import run_rename
 from gui.theme import COLORS
 from gui.trash_screen import TrashScreen
 from utils import trash
@@ -120,6 +121,78 @@ def _live_photo_icon_pixmap(color: str, size: int = 26) -> QPixmap:
         p.drawLine(QPointF(9 * s, 7 * s), QPointF(9 * s, 17 * s))
         p.drawLine(QPointF(9 * s, 7 * s), QPointF(16 * s, 12 * s))
         p.drawLine(QPointF(9 * s, 17 * s), QPointF(16 * s, 12 * s))
+
+    return _outline_icon(color, size, draw)
+
+
+def _folder_photo_icon_pixmap(color: str, size: int = 44) -> QPixmap:
+    """홈 화면 드롭존(PhotoFolderDropZone) 아이콘 — 폴더 오른쪽 아래에 사진
+    배지가 겹쳐 올라간 모양(2026-09-18, 사용자가 5개 후보 중 선택). 배지
+    자리를 카드 배경색으로 먼저 "지운" 뒤 그 위에 배지를 그려서, 폴더 선이
+    배지 밑으로 자연스럽게 가려지게 한다(겹친 선이 그대로 비치던 초안 피드백
+    반영) — 이 배경색은 PhotoFolderDropZone의 평상시 배경(COLORS['surface'])과
+    맞춰뒀다."""
+    scale = size / 24.0
+    pixmap = QPixmap(size, size)
+    pixmap.fill(Qt.transparent)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.Antialiasing)
+    pen = QPen(QColor(color))
+    pen.setWidthF(1.15 * scale)
+    pen.setCapStyle(Qt.RoundCap)
+    pen.setJoinStyle(Qt.RoundJoin)
+    painter.setPen(pen)
+    painter.setBrush(Qt.NoBrush)
+
+    def p(x, y):
+        return QPointF(x * scale, y * scale)
+
+    def r(x, y, w, h):
+        return QRectF(x * scale, y * scale, w * scale, h * scale)
+
+    # 폴더 외곽선(왼쪽 위 탭 + 몸체)
+    painter.drawLine(p(3, 7), p(3, 18))
+    painter.drawLine(p(3, 18), p(15, 18))
+    painter.drawLine(p(15, 18), p(15, 9))
+    painter.drawLine(p(15, 9), p(9, 9))
+    painter.drawLine(p(9, 9), p(7, 7))
+    painter.drawLine(p(7, 7), p(3, 7))
+
+    # 사진 배지가 덮을 자리를 배경색으로 지운다(배지보다 살짝 크게)
+    badge_x, badge_y, badge_w, badge_h = 11.5, 11.5, 9.5, 7.5
+    pad = 0.9
+    painter.setPen(Qt.NoPen)
+    painter.setBrush(QColor(COLORS["surface"]))
+    painter.drawRoundedRect(r(badge_x - pad, badge_y - pad, badge_w + pad * 2, badge_h + pad * 2), 1.6 * scale, 1.6 * scale)
+
+    # 사진 배지 — 프레임 + 해 + 산
+    painter.setPen(pen)
+    painter.setBrush(Qt.NoBrush)
+    painter.drawRoundedRect(r(badge_x, badge_y, badge_w, badge_h), 1.2 * scale, 1.2 * scale)
+    painter.drawEllipse(r(badge_x + 1, badge_y + 1, badge_w * 0.22, badge_w * 0.22))
+    painter.drawLine(
+        p(badge_x + badge_w * 0.12, badge_y + badge_h * 0.85), p(badge_x + badge_w * 0.5, badge_y + badge_h * 0.3)
+    )
+    painter.drawLine(
+        p(badge_x + badge_w * 0.5, badge_y + badge_h * 0.3), p(badge_x + badge_w * 0.9, badge_y + badge_h * 0.85)
+    )
+
+    painter.end()
+    return pixmap
+
+
+def _rename_icon_pixmap(color: str, size: int = 26) -> QPixmap:
+    """이름 일괄변환 = 이름표(태그) 모양 + 안의 글자 줄 — "이름을 새로 단다"는 의미."""
+
+    def draw(p, s):
+        p.drawLine(QPointF(4 * s, 5 * s), QPointF(15 * s, 5 * s))
+        p.drawLine(QPointF(15 * s, 5 * s), QPointF(20 * s, 12 * s))
+        p.drawLine(QPointF(20 * s, 12 * s), QPointF(15 * s, 19 * s))
+        p.drawLine(QPointF(15 * s, 19 * s), QPointF(4 * s, 19 * s))
+        p.drawLine(QPointF(4 * s, 19 * s), QPointF(4 * s, 5 * s))
+        p.drawEllipse(QRectF(6.5 * s, 10.5 * s, 3 * s, 3 * s))
+        p.drawLine(QPointF(12 * s, 9 * s), QPointF(17 * s, 9 * s))
+        p.drawLine(QPointF(12 * s, 13 * s), QPointF(17 * s, 13 * s))
 
     return _outline_icon(color, size, draw)
 
@@ -306,6 +379,12 @@ class PhotoFolderDropZone(QFrame):
         layout.setAlignment(Qt.AlignCenter)
         layout.setSpacing(6)
 
+        self.icon_label = QLabel()
+        self.icon_label.setAlignment(Qt.AlignCenter)
+        self.icon_label.setStyleSheet("background: transparent;")
+        self.icon_label.setPixmap(_folder_photo_icon_pixmap(COLORS["primary"]))
+        layout.addWidget(self.icon_label)
+
         title = QLabel("사진 · 폴더")
         title.setAlignment(Qt.AlignCenter)
         title.setStyleSheet("font-size: 17px; font-weight: 700; background: transparent;")
@@ -320,6 +399,7 @@ class PhotoFolderDropZone(QFrame):
 
     def refresh_theme(self) -> None:
         self._apply_style(active=False)
+        self.icon_label.setPixmap(_folder_photo_icon_pixmap(COLORS["primary"]))
         self.hint_label.setStyleSheet(
             f"color: {COLORS['text_secondary']}; font-size: 12px; background: transparent;"
         )
@@ -435,6 +515,15 @@ class HomeScreen(QWidget):
         self.live_photo_card.clicked.connect(lambda: self._show_pick_menu(self._on_live_photo_paths_chosen))
         content_layout.addWidget(self.live_photo_card)
 
+        self.rename_card = DropActionCard(
+            _rename_icon_pixmap(COLORS["primary"]),
+            "이름 일괄변환",
+            "사진 여러 장의 파일명을 한 번에 바꿔요 (순번 매기기 등)",
+        )
+        self.rename_card.paths_dropped.connect(self._on_rename_paths_chosen)
+        self.rename_card.clicked.connect(lambda: self._show_pick_menu(self._on_rename_paths_chosen))
+        content_layout.addWidget(self.rename_card)
+
         bottom_row = QHBoxLayout()
         bottom_row.setSpacing(10)
         trash_btn = QPushButton("임시 휴지통")
@@ -466,6 +555,7 @@ class HomeScreen(QWidget):
         self.drop_zone.refresh_theme()
         self.convert_card.refresh_theme(_convert_icon_pixmap(COLORS["primary"]))
         self.live_photo_card.refresh_theme(_live_photo_icon_pixmap(COLORS["primary"]))
+        self.rename_card.refresh_theme(_rename_icon_pixmap(COLORS["primary"]))
         self.privacy_link.setText(
             f'<a href="{PRIVACY_POLICY_URL}" style="color:{COLORS["muted"]};">개인정보처리방침</a>'
         )
@@ -533,6 +623,13 @@ class HomeScreen(QWidget):
         valid = [p for p in paths if Path(p).exists()]
         if valid:
             run_live_photo_finder(self, valid)
+
+    def _on_rename_paths_chosen(self, paths: list[str]):
+        """검사 없이 곧장 "이름 일괄변경" 팝업을 여는 진입점 — gui/rename_dialog.py가
+        폴더를 사진 파일로 펼치는 것부터 이름 바꾸기까지 다 처리한다."""
+        valid = [p for p in paths if Path(p).exists()]
+        if valid:
+            run_rename(self, valid)
 
     def _open_trash(self):
         """세션(ScanSessionWindow) 없이도 임시 휴지통을 바로 볼 수 있게 하는

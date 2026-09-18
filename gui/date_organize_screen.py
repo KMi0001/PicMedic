@@ -18,7 +18,7 @@ from PySide6.QtCore import Qt, QPointF, QRectF, QThread, Signal
 from PySide6.QtGui import QColor, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QButtonGroup,
-    QFileDialog,
+    QDialog,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -31,6 +31,7 @@ from PySide6.QtWidgets import (
 )
 
 from gui.common_dialogs import ProgressDialog
+from gui.organize_settings_dialog import OrganizeSettingsDialog
 from gui.result_screen import SummaryChip
 from gui.theme import COLORS
 from gui.thumbnail import load_thumbnail_qimage
@@ -230,53 +231,18 @@ class DateOrganizeScreen(QWidget):
         self.scroll_area.setWidget(self._list_container)
         outer.addWidget(self.scroll_area, stretch=1)
 
-        # --- 하단: 방식 선택 + 저장 위치 + 실행 ---
-        mode_card = QFrame()
-        mode_card.setObjectName("Card")
-        mode_layout = QVBoxLayout(mode_card)
-        mode_layout.setContentsMargins(18, 14, 18, 14)
-        mode_layout.setSpacing(8)
+        # --- 하단: "정리하기" 버튼 하나 — 정리 방식/파일명/저장 위치는 전부
+        # 팝업(gui/organize_settings_dialog.py)에서 고른다. 예전엔 이 설정이
+        # 화면에 그대로 펼쳐져 있었는데, "파일명" 섹션이 늘어나면서 카드가
+        # 길어져 위 그룹 목록 영역이 좁아진다는 피드백(2026-09-18)으로 옮김.
+        self._organize_dialog = OrganizeSettingsDialog(
+            self,
+            title="날짜별 정리 — 정리하기",
+            auto_label="자동 입력 (정리 기준 — 날짜별)",
+            mode_note=f"\"{NO_DATE_LABEL}\" 사진들은 따로 \"{NO_DATE_LABEL}\" 폴더에 모아요.",
+        )
 
-        mode_header_row = QHBoxLayout()
-        mode_header_row.setSpacing(8)
-        mode_label = QLabel("정리 방식")
-        mode_label.setStyleSheet("font-weight: 700;")
-        mode_header_row.addWidget(mode_label)
-        no_date_note = QLabel(f"\"{NO_DATE_LABEL}\" 사진들은 따로 \"{NO_DATE_LABEL}\" 폴더에 모아요.")
-        no_date_note.setWordWrap(True)
-        no_date_note.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 11px;")
-        mode_header_row.addWidget(no_date_note, stretch=1)
-        mode_layout.addLayout(mode_header_row)
-
-        mode_group = QButtonGroup(self)
-        self.copy_radio = QRadioButton("복사 (원본은 그대로 두고 새 폴더에 사본 생성 — 기본값)")
-        self.copy_radio.setChecked(True)
-        mode_group.addButton(self.copy_radio)
-        mode_layout.addWidget(self.copy_radio)
-
-        self.move_radio = QRadioButton("이동 (원본이 새 폴더로 옮겨지고 원래 위치엔 안 남음)")
-        self.move_radio.setStyleSheet(f"color: {COLORS['warning']};")
-        mode_group.addButton(self.move_radio)
-        mode_layout.addWidget(self.move_radio)
-
-        mode_layout.addSpacing(14)
-        output_caption = QLabel("저장 위치")
-        output_caption.setStyleSheet("font-weight: 700;")
-        mode_layout.addWidget(output_caption)
-
-        output_row = QHBoxLayout()
-        change_output_btn = QPushButton("변경")
-        change_output_btn.clicked.connect(self._on_change_output_clicked)
-        output_row.addWidget(change_output_btn)
-        self.output_path_label = QLabel("")
-        self.output_path_label.setWordWrap(True)
-        self.output_path_label.setStyleSheet("font-size: 12px;")
-        output_row.addWidget(self.output_path_label, stretch=1)
-        mode_layout.addLayout(output_row)
-
-        outer.addWidget(mode_card)
-
-        self.organize_btn = QPushButton("이 방식대로 정리하기")
+        self.organize_btn = QPushButton("정리하기")
         self.organize_btn.setObjectName("Primary")
         self.organize_btn.setEnabled(False)
         self.organize_btn.clicked.connect(self._on_organize_clicked)
@@ -301,7 +267,7 @@ class DateOrganizeScreen(QWidget):
 
     def set_output_root(self, path: str) -> None:
         self._output_root = path
-        self.output_path_label.setText(path)
+        self._organize_dialog.set_output_root(path)
 
     def output_root(self) -> str:
         return self._output_root
@@ -337,6 +303,13 @@ class DateOrganizeScreen(QWidget):
 
     def granularity(self) -> str:
         return "year" if self.year_radio.isChecked() else "month"
+
+    def rename_settings(self):
+        """"정리하기" 팝업(OrganizeSettingsDialog)의 "파일명" 섹션이 계산한
+        설정 — "원래 이름 유지"면 None. gui/scan_session_organize_mixin.py가
+        이 값으로 core/date_organizer.py::organize_by_date에 넘길
+        filename_for를 만든다."""
+        return self._organize_dialog.rename_settings()
 
     # --- 그룹 계산 + 썸네일 미리 불러오기 --------------------------------
 
@@ -491,11 +464,8 @@ class DateOrganizeScreen(QWidget):
 
         return card
 
-    def _on_change_output_clicked(self):
-        chosen = QFileDialog.getExistingDirectory(self, "저장 위치 선택", self._output_root or "")
-        if chosen:
-            self.set_output_root(chosen)
-
     def _on_organize_clicked(self):
-        mode = "move" if self.move_radio.isChecked() else "copy"
-        self.organize_requested.emit(mode)
+        if self._organize_dialog.exec() != QDialog.Accepted:
+            return
+        self._output_root = self._organize_dialog.output_root()
+        self.organize_requested.emit(self._organize_dialog.mode())

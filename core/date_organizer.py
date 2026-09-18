@@ -95,12 +95,17 @@ def _run_organize(
     groups: list[tuple[str, list[FileInfo]]],
     mode: str,  # "copy" | "move"
     dest_dir_for: Callable[[str, list[FileInfo]], Path],
+    filename_for: Optional[Callable[[FileInfo, int, str], str]] = None,
     progress_callback: Optional[Callable[[int, int, str], None]] = None,
     should_cancel: Optional[Callable[[], bool]] = None,
 ) -> list[OrganizeOutcome]:
     """groups를 dest_dir_for(label, files)가 정해주는 폴더로 복사/이동하는
     공통 실행 루프 — organize_by_date()/organize_by_city() 둘 다 이걸 쓰고
-    "그룹당 목적지 폴더를 어떻게 정할지"만 다르게 넘긴다."""
+    "그룹당 목적지 폴더를 어떻게 정할지"만 다르게 넘긴다.
+
+    filename_for(info, index_in_group, label)를 주면(gui/rename_settings_widget.py
+    "파일명" 섹션에서 "새 이름으로 변경"을 켠 경우) 원래 파일명 대신 그 결과를
+    목적지 파일명으로 쓴다 — 그룹(폴더)마다 index가 0부터 다시 시작한다."""
     total = sum(len(files) for _, files in groups)
 
     outcomes: list[OrganizeOutcome] = []
@@ -112,7 +117,7 @@ def _run_organize(
 
         dest_dir = dest_dir_for(label, files)
 
-        for info in files:
+        for index, info in enumerate(files):
             processed += 1
             if should_cancel is not None and should_cancel():
                 return outcomes
@@ -123,7 +128,8 @@ def _run_organize(
             try:
                 dest_dir.mkdir(parents=True, exist_ok=True)
 
-                direct_dest = dest_dir / info.filename
+                filename = filename_for(info, index, label) if filename_for else info.filename
+                direct_dest = dest_dir / filename
                 if _already_organized(direct_dest, info.file_size):
                     # 이미 같은 이름+용량의 파일이 그 자리에 있음 — 다시 복사/
                     # 이동하지 않고 건너뛴다. 이동 모드여도 원본은 그대로 둔다
@@ -135,7 +141,7 @@ def _run_organize(
                     outcomes.append(outcome)
                     continue
 
-                dest = _unique_destination(dest_dir, info.filename)
+                dest = _unique_destination(dest_dir, filename)
                 if mode == "move":
                     shutil.move(info.path, str(dest))
                 else:
@@ -159,6 +165,7 @@ def organize_by_date(
     mode: str,  # "copy" | "move"
     output_root: str | Path,
     granularity: str = "month",  # "month" | "year" — 목적지 폴더 깊이(YYYY/MM vs YYYY)
+    filename_for: Optional[Callable[[FileInfo, int, str], str]] = None,
     progress_callback: Optional[Callable[[int, int, str], None]] = None,
     should_cancel: Optional[Callable[[], bool]] = None,
 ) -> list[OrganizeOutcome]:
@@ -177,13 +184,17 @@ def organize_by_date(
             return output_root / f"{captured.year:04d}"
         return output_root / f"{captured.year:04d}" / f"{captured.month:02d}"
 
-    return _run_organize(groups, mode, dest_dir_for, progress_callback, should_cancel)
+    return _run_organize(
+        groups, mode, dest_dir_for,
+        filename_for=filename_for, progress_callback=progress_callback, should_cancel=should_cancel,
+    )
 
 
 def organize_by_city(
     groups: list[tuple[str, list[FileInfo]]],
     mode: str,  # "copy" | "move"
     output_root: str | Path,
+    filename_for: Optional[Callable[[FileInfo, int, str], str]] = None,
     progress_callback: Optional[Callable[[int, int, str], None]] = None,
     should_cancel: Optional[Callable[[], bool]] = None,
 ) -> list[OrganizeOutcome]:
@@ -197,7 +208,10 @@ def organize_by_city(
             return output_root / NO_CITY_FOLDER_NAME
         return output_root / sanitize_folder_name(label)
 
-    return _run_organize(groups, mode, dest_dir_for, progress_callback, should_cancel)
+    return _run_organize(
+        groups, mode, dest_dir_for,
+        filename_for=filename_for, progress_callback=progress_callback, should_cancel=should_cancel,
+    )
 
 
 def organize_category_finder_results(
@@ -205,6 +219,7 @@ def organize_category_finder_results(
     files: list[FileInfo],
     mode: str,  # "copy" | "move"
     output_root: str | Path,
+    filename_for: Optional[Callable[[FileInfo, int, str], str]] = None,
     progress_callback: Optional[Callable[[int, int, str], None]] = None,
     should_cancel: Optional[Callable[[], bool]] = None,
 ) -> list[OrganizeOutcome]:
@@ -220,4 +235,7 @@ def organize_category_finder_results(
     def dest_dir_for(label: str, files: list[FileInfo]) -> Path:
         return output_root
 
-    return _run_organize(groups, mode, dest_dir_for, progress_callback, should_cancel)
+    return _run_organize(
+        groups, mode, dest_dir_for,
+        filename_for=filename_for, progress_callback=progress_callback, should_cancel=should_cancel,
+    )

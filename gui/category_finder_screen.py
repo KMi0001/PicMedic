@@ -40,12 +40,10 @@ from PySide6.QtWidgets import (
     QWidget,
     QVBoxLayout,
     QHBoxLayout,
-    QButtonGroup,
-    QFileDialog,
+    QDialog,
     QLabel,
     QMenu,
     QPushButton,
-    QRadioButton,
     QFrame,
     QSizePolicy,
     QTableWidget,
@@ -57,6 +55,7 @@ from PySide6.QtWidgets import (
 from core.category_finder import CATEGORIES, detect, is_available
 from gui.common_dialogs import info_dialog, ProgressDialog
 from gui.image_viewer import ImageViewer
+from gui.organize_settings_dialog import OrganizeSettingsDialog
 from gui.result_screen import SummaryChip
 from gui.theme import COLORS
 
@@ -233,48 +232,16 @@ class CategoryFinderScreen(QWidget):
 
         outer.addLayout(content_row, stretch=1)
 
-        # --- 하단: 방식 선택 + 저장 위치 + 실행 — gui/date_organize_screen.py와
-        # 같은 위젯 구성/문구(복사 기본값, 이동은 경고색). 찾은 사진 전부를
-        # 그룹 없이 폴더 하나로 모은다는 점만 다르다.
-        mode_card = QFrame()
-        mode_card.setObjectName("Card")
-        mode_layout = QVBoxLayout(mode_card)
-        mode_layout.setContentsMargins(18, 14, 18, 14)
-        mode_layout.setSpacing(8)
+        # --- 하단: "정리하기" 버튼 하나 — gui/date_organize_screen.py와 같은
+        # 이유로 정리 방식/파일명/저장 위치는 전부 팝업(OrganizeSettingsDialog)
+        # 으로 옮겼다(2026-09-18).
+        self._organize_dialog = OrganizeSettingsDialog(
+            self,
+            title="카테고리 찾기 — 정리하기",
+            auto_label="자동 입력 (정리 기준 — 카테고리)",
+        )
 
-        mode_label = QLabel("정리 방식")
-        mode_label.setStyleSheet("font-weight: 700;")
-        mode_layout.addWidget(mode_label)
-
-        mode_group = QButtonGroup(self)
-        self.copy_radio = QRadioButton("복사 (원본은 그대로 두고 새 폴더에 사본 생성 — 기본값)")
-        self.copy_radio.setChecked(True)
-        mode_group.addButton(self.copy_radio)
-        mode_layout.addWidget(self.copy_radio)
-
-        self.move_radio = QRadioButton("이동 (원본이 새 폴더로 옮겨지고 원래 위치엔 안 남음)")
-        self.move_radio.setStyleSheet(f"color: {COLORS['warning']};")
-        mode_group.addButton(self.move_radio)
-        mode_layout.addWidget(self.move_radio)
-
-        mode_layout.addSpacing(14)
-        output_caption = QLabel("저장 위치")
-        output_caption.setStyleSheet("font-weight: 700;")
-        mode_layout.addWidget(output_caption)
-
-        output_row = QHBoxLayout()
-        change_output_btn = QPushButton("변경")
-        change_output_btn.clicked.connect(self._on_change_output_clicked)
-        output_row.addWidget(change_output_btn)
-        self.output_path_label = QLabel("")
-        self.output_path_label.setWordWrap(True)
-        self.output_path_label.setStyleSheet("font-size: 12px;")
-        output_row.addWidget(self.output_path_label, stretch=1)
-        mode_layout.addLayout(output_row)
-
-        outer.addWidget(mode_card)
-
-        self.organize_btn = QPushButton("이 방식대로 정리하기")
+        self.organize_btn = QPushButton("정리하기")
         self.organize_btn.setObjectName("Primary")
         self.organize_btn.setEnabled(False)
         self.organize_btn.clicked.connect(self._on_organize_clicked)
@@ -331,7 +298,7 @@ class CategoryFinderScreen(QWidget):
 
     def set_output_root(self, path: str) -> None:
         self._output_root = path
-        self.output_path_label.setText(path)
+        self._organize_dialog.set_output_root(path)
 
     def output_root(self) -> str:
         return self._output_root
@@ -341,6 +308,10 @@ class CategoryFinderScreen(QWidget):
         core/date_organizer.py::organize_category_finder_results()에 그대로
         넘긴다."""
         return self._all_files()
+
+    def rename_settings(self):
+        """gui/date_organize_screen.py::rename_settings()와 같은 역할."""
+        return self._organize_dialog.rename_settings()
 
     def _render_matches(self, matches: list) -> None:
         self._matches = matches
@@ -397,11 +368,8 @@ class CategoryFinderScreen(QWidget):
         info, _confidence = self._matches[index.row()]
         self.file_selected.emit(info, self._all_files())
 
-    def _on_change_output_clicked(self) -> None:
-        chosen = QFileDialog.getExistingDirectory(self, "저장 위치 선택", self._output_root or "")
-        if chosen:
-            self.set_output_root(chosen)
-
     def _on_organize_clicked(self) -> None:
-        mode = "move" if self.move_radio.isChecked() else "copy"
-        self.organize_requested.emit(mode)
+        if self._organize_dialog.exec() != QDialog.Accepted:
+            return
+        self._output_root = self._organize_dialog.output_root()
+        self.organize_requested.emit(self._organize_dialog.mode())
