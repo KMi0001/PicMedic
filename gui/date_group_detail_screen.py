@@ -51,6 +51,7 @@ class DateGroupDetailScreen(QWidget):
         super().__init__(parent)
         self._label = ""
         self._files: list = []
+        self._current_info = None  # 지금 뷰어에 보이는 사진 — 이전/다음 버튼 계산용
         self._excluded: set[str] = set()
         self._cells: list[ClickableThumbnail] = []
         self._last_columns = -1
@@ -312,13 +313,46 @@ class DateGroupDetailScreen(QWidget):
             self.exclude_hint_label.setText("")
 
     def _on_thumbnail_clicked(self, info) -> None:
+        self._current_info = info
         self.preview_image.set_image_path(info.path)
 
         self.filename_label.setText(info.filename)
         self._set_info_rows(info)
 
         for cell, file_info in zip(self._cells, self._files):
-            cell.set_active(file_info is info)
+            active = file_info is info
+            cell.set_active(active)
+            if active:
+                # 이전/다음 버튼으로 넘어왔을 때(아래로 스크롤된 셀일 수
+                # 있음) 지금 보고 있는 사진의 썸네일이 화면 밖에 있으면
+                # 안 보이니 스크롤해서 보이게 한다 — 실제로 클릭한 경우엔
+                # 이미 보이는 셀이라 아무 효과 없음.
+                self.scroll_area.ensureWidgetVisible(cell)
+
+        self._update_nav_buttons()
+
+    def _step(self, delta: int) -> bool:
+        """이전/다음 오버레이 버튼(gui/image_viewer.py) — gui/detail_screen.py
+        와 같은 원칙: 끝에 도달하면 넘어가지 않고 멈춘다(순환 없음)."""
+        if not self._files or self._current_info not in self._files:
+            return False
+        idx = self._files.index(self._current_info)
+        new_idx = idx + delta
+        if not (0 <= new_idx < len(self._files)):
+            return False
+        self._on_thumbnail_clicked(self._files[new_idx])
+        return True
+
+    def _update_nav_buttons(self) -> None:
+        has_prev = has_next = False
+        if self._files and self._current_info in self._files:
+            idx = self._files.index(self._current_info)
+            has_prev = idx > 0
+            has_next = idx < len(self._files) - 1
+        self.preview_image.set_navigation(
+            (lambda: self._step(-1)) if has_prev else None,
+            (lambda: self._step(1)) if has_next else None,
+        )
 
     def _set_info_rows(self, info) -> None:
         while self.info_grid.count():
