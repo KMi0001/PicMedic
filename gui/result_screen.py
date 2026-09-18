@@ -489,8 +489,11 @@ class ResultScreen(QWidget):
         self.viewer_panel.setFixedWidth(320)
         viewer_layout = QVBoxLayout(self.viewer_panel)
         viewer_layout.setContentsMargins(4, 4, 4, 4)
+        # 문구를 gui/category_finder_screen.py 인라인 미리보기와 통일
+        # (2026-09-18, 사용자 요청 — "안내 문구 추가"로 "파일을"을
+        # "사진을"로 맞춤).
         self.inline_viewer = ImageViewer(
-            placeholder_text="파일을 선택하면 미리보기가 표시됩니다.", overlay_controls=True
+            placeholder_text="사진을 선택하면 미리보기가 표시됩니다.", overlay_controls=True
         )
         viewer_layout.addWidget(self.inline_viewer)
         # 기본으로 펼쳐둔다 — "검사결과 목록 미리보기 활성상태가 기본"

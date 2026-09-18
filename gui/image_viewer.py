@@ -237,6 +237,14 @@ class ImageViewer(QWidget):
         self._stack.addWidget(self._view)
         self._stack.addWidget(self._placeholder)
         layout.addWidget(self._stack, stretch=1)
+        # QStackedWidget은 기본으로 먼저 addWidget한 것(_view, 빈 화면)을
+        # 보여준다 — set_pixmap(None)을 최소 한 번 부르기 전까진 안내 문구
+        # (placeholder_text)가 전혀 안 보이고 텅 빈 흰 화면만 보였다. 예전엔
+        # gui/result_screen.py 뷰어 패널이 접힌 채 시작해서 이 틈이 안
+        # 보였는데, 패널을 기본으로 펼쳐두면서(2026-09-18) 바로 드러났다
+        # ("검사결과창에도... 안내 문구 추가" 요청의 실제 원인). 사진이
+        # 없는 시작 상태를 set_pixmap(None)과 똑같이 맞춘다.
+        self._stack.setCurrentWidget(self._placeholder)
 
         # 이전/다음 버튼 — overlay_controls 여부와 무관하게 항상 쓸 수 있다
         # (회전/맞추기와 별개 기능). 이 위젯 자체는 "그룹 안 몇 번째 사진인지"를

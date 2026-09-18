@@ -21,6 +21,24 @@ from PySide6.QtWidgets import QApplication
 from gui.image_viewer import ImageViewer
 
 
+def test_placeholder_text_shows_by_default():
+    """2026-09-18 사용자 리포트: "검사결과창에도 '사진을 선택하면
+    미리보기가 표시됩니다.' 안내 문구 추가" — 실제로는 문구 자체는 이미
+    있었는데, QStackedWidget이 기본으로 먼저 addWidget한 _view(빈 화면)를
+    보여줘서 set_pixmap(None)을 최소 한 번 부르기 전까진 안내 문구가 전혀
+    안 보이고 텅 빈 화면만 보였다. gui/result_screen.py 뷰어 패널이
+    접힌 채 시작할 땐 안 드러났는데, 패널을 기본으로 펼쳐두면서(같은 날
+    앞선 요청) 바로 드러난 버그."""
+    app = QApplication.instance() or QApplication(sys.argv)
+
+    viewer = ImageViewer(placeholder_text="사진을 선택하면 미리보기가 표시됩니다.")
+    check(
+        "생성 직후(set_pixmap 호출 전)부터 안내 문구 위젯이 화면에 나와 있음",
+        viewer._stack.currentWidget() is viewer._placeholder,
+    )
+    check("안내 문구 텍스트가 정확함", viewer._placeholder.text() == "사진을 선택하면 미리보기가 표시됩니다.")
+
+
 def test_nav_buttons_hidden_by_default_and_without_image():
     app = QApplication.instance() or QApplication(sys.argv)
 
@@ -78,6 +96,7 @@ def test_nav_buttons_hidden_when_image_cleared():
 
 
 if __name__ == "__main__":  # pytest 없이 이 파일 하나만 돌려보고 싶을 때
+    test_placeholder_text_shows_by_default()
     test_nav_buttons_hidden_by_default_and_without_image()
     test_nav_buttons_visibility_follows_callbacks()
     test_nav_buttons_hidden_when_image_cleared()

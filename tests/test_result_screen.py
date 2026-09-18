@@ -180,6 +180,11 @@ def test_inline_viewer_panel_starts_open():
         result.add(info)
 
         screen = ResultScreen()
+        check(
+            "안내 문구가 '사진을 선택하면 미리보기가 표시됩니다.'로 통일됨(2026-09-18 요청)",
+            screen.inline_viewer._placeholder.text() == "사진을 선택하면 미리보기가 표시됩니다.",
+            screen.inline_viewer._placeholder.text(),
+        )
         # _toggle_viewer가 self.viewer_panel.isVisible()로 현재 상태를
         # 판단하는데, isVisible()은 화면 자체가 show()되지 않으면 조상
         # 체인 때문에 항상 False로 나온다 — 실제 앱에서는 이 화면이 항상
