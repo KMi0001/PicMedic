@@ -30,7 +30,7 @@ from PySide6.QtWidgets import (
     QProgressBar,
 )
 
-from core.category_finder import CATEGORIES as CATEGORY_FINDER_DEFS
+from core.category_finder import CATEGORIES as CATEGORY_FINDER_DEFS, MANUAL_CONFIDENCE
 from gui.image_viewer import ImageViewer
 from gui.rename_dialog import open_rename_dialog
 from gui.theme import COLORS, STATUS_COLORS, STATUS_DOT
@@ -332,6 +332,12 @@ class ResultScreen(QWidget):
         self._category_matches: dict[str, list] | None = None  # None=아직 계산 전, 완료되면 cat_id -> [(FileInfo, confidence), ...]
         self._category_by_path: dict[str, list[str]] = {}  # path -> 매칭된 category_id 목록(표시용)
         self._row_by_path: dict[str, int] = {}  # path -> 표 행 번호(카테고리 컬럼 실시간 갱신용)
+        # 위 _category_matches/_category_by_path는 "AI 결과 + 사용자 수동 이동"을
+        # 합친 최종 값이고, 아래 둘이 그 원본이다 — 다시 계산하거나 저장/불러오기를
+        # 해도 수동 이동이 AI 결과에 덮이지 않게 따로 든다.
+        self._ai_categories: dict[str, list[tuple[str, float]]] = {}  # path -> AI가 매칭한 [(category_id, confidence)]
+        self._category_overrides: dict[str, dict[str, bool]] = {}  # path -> {category_id: True(강제로 넣음)|False(강제로 뺌)}
+        self._info_by_path: dict = {}  # path -> FileInfo (분류 결과 반영 시 선형 탐색을 피하기 위한 색인)
         self._hub_worker: _HubCategoryWorker | None = None
         self._category_scan_total = 0
         self._category_scan_done = 0
@@ -624,7 +630,12 @@ class ResultScreen(QWidget):
         planned_total: int | None = None,
         remaining_paths: list | None = None,
         scan_paths: list | None = None,
+        saved_categories: dict | None = None,
+        saved_overrides: dict | None = None,
     ):
+        """saved_categories/saved_overrides: 저장된 작업에서 불러온 AI 분류 결과와
+        수동 이동 내역(core/session_store.py) — 있으면 그 사진들은 다시 AI 분류를
+        하지 않고 그대로 쓴다."""
         self.result = result
         path_text = _format_scan_path(scan_paths or [])
         self.scan_path_label.setText(path_text)
@@ -644,7 +655,7 @@ class ResultScreen(QWidget):
         # 카테고리 찾기 백그라운드 계산도 여기서 같이 시작한다(옛 정리 허브의
         # set_result와 같은 타이밍) — _populate_table보다 먼저 시작해야 아직
         # 계산 전인 셀이 "-"가 아니라 "분석 중"으로 바로 보인다.
-        self._start_category_scan()
+        self._start_category_scan(saved_categories, saved_overrides)
 
         if cancelled:
             planned = planned_total or result.total
@@ -1099,14 +1110,22 @@ class ResultScreen(QWidget):
             self._hub_worker.wait()
             self._hub_worker = None
 
-    def _start_category_scan(self) -> None:
+    def _start_category_scan(self, saved_categories: dict | None = None, saved_overrides: dict | None = None) -> None:
         """검사가 끝나는 즉시 전체 사진 x 5개 카테고리를 백그라운드에서
         계산해 카드 배지와 표의 "카테고리" 컬럼을 채운다 — 이 화면 자체는
         막지 않으므로 필터/체크박스/확장자 변환은 계산이 끝나기 전에 써도
-        그대로 동작한다."""
+        그대로 동작한다.
+
+        saved_categories(저장된 작업에서 불러온 AI 분류 결과)에 이미 있는
+        사진은 다시 분류하지 않고 그 결과를 바로 쓴다 — 나머지(새로 생겼거나
+        내용이 바뀐 사진)만 워커가 분류한다. saved_overrides는 사용자가
+        직접 옮긴 카테고리 내역으로, AI 결과 위에 덧씌워진다."""
         self._stop_category_scan()
         self._category_matches = None
         self._category_by_path = {}
+        self._ai_categories = {}
+        self._category_overrides = {}
+        self._info_by_path = {}
         self.category_progress_bar.hide()
         self.category_progress_label.setText("")
         self._header.set_sort_locked_column(None)  # 새로 시작하니 일단 풀고, 실제로 돌 때만 다시 잠금
@@ -1114,34 +1133,81 @@ class ResultScreen(QWidget):
         from core.category_finder import is_available
 
         files = list(self.result.files) if self.result and self.result.files else []
+        self._info_by_path = {info.path: info for info in files}
+        # 지금 결과에 없는 사진(삭제됨 등)의 수동 이동 내역은 버린다.
+        self._category_overrides = {
+            path: dict(per) for path, per in (saved_overrides or {}).items() if path in self._info_by_path
+        }
+        saved_categories = saved_categories or {}
         if not is_available() or not files:
+            # 이 기기에서 AI 분류를 못 돌려도, 저장본에서 불러온 분류 결과는 다음
+            # 저장 때 잃어버리지 않게 들고 있는다.
+            self._ai_categories = {
+                path: list(matches) for path, matches in saved_categories.items() if path in self._info_by_path
+            }
             for card in self.category_finder_cards.values():
                 self._set_card_count(card, None)
             return
 
         self._category_matches = {cat_id: [] for cat_id in CATEGORY_FINDER_DEFS}
-        for card in self.category_finder_cards.values():
-            self._set_card_count(card, "분석 중")
 
         readable_files = [info for info in files if info.readable]
-        if readable_files:
-            # 분류가 진행되는 동안 이 컬럼으로 정렬하면 사진이 새로 분류될
-            # 때마다 Qt가 자동 재정렬해서 행이 계속 튀고 배지가 어긋난다
-            # (CheckAllHeaderView.mousePressEvent 주석 참고) — 그래서 분류가
-            # 끝날 때까지 이 컬럼 클릭 자체를 막는다(2026-09-17, 사용자 제안).
-            self._header.set_sort_locked_column(_CATEGORY_COLUMN)
-        self._category_scan_total = len(readable_files)
-        self._category_scan_done = 0
-        if self._category_scan_total:
-            self.category_progress_bar.setRange(0, self._category_scan_total)
-            self.category_progress_bar.setValue(0)
-            self.category_progress_bar.show()
-            self.category_progress_label.setText(f"카테고리 분석 중 0/{self._category_scan_total}")
+        to_classify = []
+        for info in readable_files:
+            raw = saved_categories.get(info.path)
+            if raw is None:
+                to_classify.append(info)
+                continue
+            # 저장된 결과를 한꺼번에 반영한다(사진마다 카드/셀을 갱신하지 않는다 —
+            # 3만 장이면 그 갱신이 수만 번이라 그것만으로 화면이 멎는다).
+            self._ai_categories[info.path] = list(raw)
+            effective = self._effective_categories(info.path)
+            self._category_by_path[info.path] = [cat_id for cat_id, _c in effective]
+            for cat_id, confidence in effective:
+                self._category_matches[cat_id].append((info, confidence))
 
-        self._hub_worker = _HubCategoryWorker(readable_files, self)
+        self._category_scan_total = len(readable_files)
+        self._category_scan_done = len(readable_files) - len(to_classify)
+
+        if not to_classify:
+            self._on_category_scan_finished()
+            return
+
+        for cat_id, card in self.category_finder_cards.items():
+            count = len(self._category_matches[cat_id])
+            self._set_card_count(card, f"{count}장" if self._category_scan_done else "분석 중")
+
+        # 분류가 진행되는 동안 이 컬럼으로 정렬하면 사진이 새로 분류될
+        # 때마다 Qt가 자동 재정렬해서 행이 계속 튀고 배지가 어긋난다
+        # (CheckAllHeaderView.mousePressEvent 주석 참고) — 그래서 분류가
+        # 끝날 때까지 이 컬럼 클릭 자체를 막는다(2026-09-17, 사용자 제안).
+        self._header.set_sort_locked_column(_CATEGORY_COLUMN)
+        self.category_progress_bar.setRange(0, self._category_scan_total)
+        self.category_progress_bar.setValue(self._category_scan_done)
+        self.category_progress_bar.show()
+        self.category_progress_label.setText(
+            f"카테고리 분석 중 {self._category_scan_done}/{self._category_scan_total}"
+        )
+
+        self._hub_worker = _HubCategoryWorker(to_classify, self)
         self._hub_worker.file_classified.connect(self._on_file_classified)
         self._hub_worker.finished_all.connect(self._on_category_scan_finished)
         self._hub_worker.start()
+
+    def _effective_categories(self, path: str) -> list[tuple[str, float]]:
+        """AI 분류 결과에 사용자의 수동 이동(_category_overrides)을 덧씌운 이 사진의
+        최종 (category_id, confidence) 목록. 수동으로 넣은 카테고리는 확신도 자리에
+        MANUAL_CONFIDENCE가 들어간다."""
+        raw = self._ai_categories.get(path, [])
+        overrides = self._category_overrides.get(path)
+        if not overrides:
+            return [(c, conf) for c, conf in raw if c in CATEGORY_FINDER_DEFS]
+        result = [(c, conf) for c, conf in raw if c in CATEGORY_FINDER_DEFS and overrides.get(c) is not False]
+        present = {c for c, _conf in result}
+        for cat_id, forced in overrides.items():
+            if forced and cat_id in CATEGORY_FINDER_DEFS and cat_id not in present:
+                result.append((cat_id, MANUAL_CONFIDENCE))
+        return result
 
     def _on_file_classified(self, path: str, matched: list) -> None:
         if self._category_matches is None:
@@ -1153,10 +1219,17 @@ class ResultScreen(QWidget):
             f"카테고리 분석 중 {self._category_scan_done}/{self._category_scan_total}"
         )
 
-        matched_ids = [cat_id for cat_id, _confidence in matched]
-        self._category_by_path[path] = matched_ids
-        info = next((f for f in self.result.files if f.path == path), None) if self.result else None
-        for cat_id, confidence in matched:
+        self._ai_categories[path] = [(cat_id, confidence) for cat_id, confidence in matched]
+        if path in self._category_by_path:
+            # 분류되기 전에 사용자가 이 사진을 수동으로 옮겨서 이미 목록에 들어가
+            # 있다 — 중복으로 또 넣지 않도록 지우고 아래에서 최종 값으로 다시 넣는다.
+            for matches in self._category_matches.values():
+                matches[:] = [pair for pair in matches if pair[0].path != path]
+
+        effective = self._effective_categories(path)
+        self._category_by_path[path] = [cat_id for cat_id, _confidence in effective]
+        info = self._info_by_path.get(path)
+        for cat_id, confidence in effective:
             self._category_matches.setdefault(cat_id, [])
             if info is not None:
                 self._category_matches[cat_id].append((info, confidence))
@@ -1167,6 +1240,67 @@ class ResultScreen(QWidget):
         row = self._row_by_path.get(path)
         if row is not None:
             self._set_category_cell(row, path)
+
+    def apply_category_move(self, paths: list[str], from_cat: str, to_cat: str | None) -> None:
+        """카테고리 화면에서 사용자가 사진을 다른 카테고리로 옮기거나(to_cat) "카테고리
+        없음"(to_cat=None, 이 카테고리에서만 제외)으로 뺐을 때 — 수동 이동 내역을
+        기록하고 카드 개수/표의 카테고리 컬럼/카테고리별 목록에 반영한다. 기록은
+        AI 결과와 따로 남으므로 다시 분류하거나 저장·불러오기를 해도 유지된다."""
+        for path in paths:
+            per = self._category_overrides.setdefault(path, {})
+            per[from_cat] = False
+            if to_cat:
+                per[to_cat] = True
+
+        # 표가 카테고리 컬럼으로 정렬돼 있으면 셀 글자를 바꾸는 순간 Qt가 행을
+        # 재정렬해서 뒤이은 사진의 행 번호(_row_by_path)가 어긋나므로, 갱신하는
+        # 동안 정렬을 끄고 끝난 뒤 한 번만 다시 맞춘다.
+        was_sorting = self.table.isSortingEnabled()
+        sorted_by_category = was_sorting and self.table.horizontalHeader().sortIndicatorSection() == _CATEGORY_COLUMN
+        self.table.setSortingEnabled(False)
+        try:
+            for path in paths:
+                ids = [cat_id for cat_id in self._category_by_path.get(path, []) if cat_id != from_cat]
+                if to_cat and to_cat not in ids:
+                    ids.append(to_cat)
+                self._category_by_path[path] = ids
+                row = self._row_by_path.get(path)
+                if row is not None:
+                    self._set_category_cell(row, path)
+        finally:
+            self.table.setSortingEnabled(was_sorting)
+        if sorted_by_category:
+            self._on_sort_changed()
+
+        if self._category_matches is None:
+            return
+        moved = set(paths)
+        self._category_matches[from_cat] = [
+            pair for pair in self._category_matches.get(from_cat, []) if pair[0].path not in moved
+        ]
+        if to_cat:
+            target = self._category_matches.setdefault(to_cat, [])
+            already = {info.path for info, _confidence in target}
+            additions = [
+                (self._info_by_path[path], MANUAL_CONFIDENCE)
+                for path in paths
+                if path in self._info_by_path and path not in already
+            ]
+            target[:0] = additions  # 수동으로 넣은 사진은 맨 위(확신도 내림차순과 같은 규칙)
+        for cat_id in {from_cat, to_cat} - {None}:
+            count = len(self._category_matches[cat_id])
+            self._set_card_count(
+                self.category_finder_cards[cat_id],
+                f"{count}장" if (count or self._hub_worker is not None) else "없음",
+            )
+
+    def category_snapshot(self) -> tuple[dict, dict]:
+        """작업 저장(core/session_store.py)용 — (AI 분류 결과, 수동 이동 내역) 복사본.
+        창이 닫히는 시점에 백그라운드 저장 스레드로 넘기는 값이라 얕은 복사로 끊는다."""
+        return (
+            {path: list(matches) for path, matches in self._ai_categories.items()},
+            {path: dict(per) for path, per in self._category_overrides.items()},
+        )
 
     def _on_category_scan_finished(self) -> None:
         self._hub_worker = None

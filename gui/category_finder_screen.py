@@ -52,7 +52,7 @@ from PySide6.QtWidgets import (
     QAbstractItemView,
 )
 
-from core.category_finder import CATEGORIES, detect, is_available
+from core.category_finder import CATEGORIES, MANUAL_CONFIDENCE, detect, is_available
 from gui.common_dialogs import info_dialog, ProgressDialog
 from gui.image_viewer import ImageViewer
 from gui.organize_settings_dialog import OrganizeSettingsDialog
@@ -130,6 +130,10 @@ class CategoryFinderScreen(QWidget):
     back_requested = Signal()
     file_selected = Signal(object, list)  # gui/duplicate_screen.py와 같은 (FileInfo, group) 규약
     organize_requested = Signal(str)  # "copy" | "move" — "이 방식대로 정리하기" 클릭 시점의 방식
+    # 사용자가 사진을 다른 카테고리로 옮겼을 때 (옮긴 사진 경로들, 이 화면의 카테고리 id,
+    # 옮겨간 카테고리 id — None이면 "카테고리 없음"=이 카테고리에서만 제외).
+    # 수동 이동 내역의 기록/저장은 gui/result_screen.py::apply_category_move가 한다.
+    category_moved = Signal(list, str, object)
 
     def __init__(self, category_id: str, parent=None):
         super().__init__(parent)
@@ -182,6 +186,14 @@ class CategoryFinderScreen(QWidget):
         hint.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 12px;")
         outer.addWidget(hint)
 
+        # 옮기기 직후 "어디로 갔는지" 알려주는 한 줄 — 옮긴 사진은 이 목록에서
+        # 바로 사라지므로 아무 표시도 없으면 사진이 없어진 것처럼 보인다.
+        self.move_notice = QLabel("")
+        self.move_notice.setWordWrap(True)
+        self.move_notice.setStyleSheet(f"color: {COLORS['primary']}; font-size: 12px;")
+        self.move_notice.setVisible(False)
+        outer.addWidget(self.move_notice)
+
         self.empty_label = QLabel(self._category.empty_text)
         self.empty_label.setStyleSheet(f"color: {COLORS['text_secondary']}; padding: 24px;")
         self.empty_label.setAlignment(Qt.AlignCenter)
@@ -219,7 +231,10 @@ class CategoryFinderScreen(QWidget):
         # 인라인 미리보기를 추가하며 NoSelection -> SingleSelection으로
         # 바꿨다 — 행 클릭이 미리보기를 갱신하려면 선택 상태 자체가 있어야
         # 한다(선택 신호는 itemSelectionChanged로 받음, 아래 connect 참고).
-        self.table.setSelectionMode(QAbstractItemView.SingleSelection)
+        # 다른 카테고리로 옮기기(우클릭)를 여러 장 한 번에 할 수 있도록 Ctrl/Shift
+        # 다중 선택을 허용한다. 인라인 미리보기는 현재 행(currentRow) 기준이라
+        # 그대로 동작한다.
+        self.table.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.table.verticalHeader().setVisible(False)
         # gui/duplicate_screen.py와 같은 이유(2026-09-08) — col이 Stretch라
         # 표 자체의 가로 스크롤은 필요 없고, 켜두면 오른쪽 칸이 숨어 보일 수 있다.
@@ -256,7 +271,8 @@ class CategoryFinderScreen(QWidget):
         (2026-09-13) — 워커·진행률 팝업 없이 즉시 뜬다. 허브의 계산이 아직
         안 끝났으면 gui/scan_session_category_finder_mixin.py가 이 메서드
         대신 set_result()로 폴백해서 이 화면이 직접 계산하게 한다."""
-        self._render_matches(matches)
+        self.move_notice.setVisible(False)
+        self._render_matches(list(matches))
 
     def set_result(self, result) -> None:
         """검사 결과를 받아 백그라운드로 이 카테고리 사진을 찾고 화면을 새로
@@ -313,7 +329,7 @@ class CategoryFinderScreen(QWidget):
         """gui/date_organize_screen.py::rename_settings()와 같은 역할."""
         return self._organize_dialog.rename_settings()
 
-    def _render_matches(self, matches: list) -> None:
+    def _render_matches(self, matches: list, notify_empty: bool = True) -> None:
         self._matches = matches
         self.found_chip.set_value(len(matches))
 
@@ -321,6 +337,11 @@ class CategoryFinderScreen(QWidget):
         self.empty_label.setVisible(not has_any)
         self.table.setVisible(has_any)
         self.organize_btn.setEnabled(has_any)
+        if not has_any and notify_empty:
+            # 2026-09-19, 사용자 요청 — 카테고리 사진이 없을 때 화면 안내문구
+            # (empty_label)만으로는 눈에 잘 안 띄어서, 결과가 없다는 걸 바로
+            # 알 수 있게 팝업도 함께 띄운다.
+            info_dialog(self, f"{self._category.title} 파일이 없습니다.")
 
         self.table.setRowCount(0)
         self.table.setRowCount(len(matches))
@@ -329,7 +350,8 @@ class CategoryFinderScreen(QWidget):
             self.table.setItem(row, 0, name_item)
             folder_item = QTableWidgetItem(str(Path(info.path).parent))
             self.table.setItem(row, 1, folder_item)
-            confidence_item = QTableWidgetItem(f"{confidence * 100:.0f}%")
+            confidence_text = "수동" if confidence >= MANUAL_CONFIDENCE else f"{confidence * 100:.0f}%"
+            confidence_item = QTableWidgetItem(confidence_text)
             confidence_item.setTextAlignment(Qt.AlignCenter)
             self.table.setItem(row, 2, confidence_item)
         # setRowCount(0)이 기존 선택을 지우므로, 인라인 미리보기도 같이
@@ -353,14 +375,56 @@ class CategoryFinderScreen(QWidget):
             return
         info, _confidence = self._matches[index.row()]
 
+        # 우클릭한 행이 선택 안에 있으면 선택된 행 전체를, 밖에 있으면 그 행 하나만
+        # 옮기기 대상으로 삼는다(탐색기와 같은 규칙).
+        selected_rows = sorted({i.row() for i in self.table.selectionModel().selectedRows()})
+        target_rows = selected_rows if index.row() in selected_rows else [index.row()]
+        target_rows = [r for r in target_rows if r < len(self._matches)]
+
         menu = QMenu(self)
         preview_action = menu.addAction("미리보기")
         open_folder_action = menu.addAction("로컬 폴더 위치 열기")
+        menu.addSeparator()
+        move_title = (
+            f"다른 카테고리로 옮기기 ({len(target_rows)}장)" if len(target_rows) > 1 else "다른 카테고리로 옮기기"
+        )
+        move_menu = menu.addMenu(move_title)
+        move_actions = {
+            move_menu.addAction(category.title): cat_id
+            for cat_id, category in CATEGORIES.items()
+            if cat_id != self.category_id
+        }
+        move_menu.addSeparator()
+        none_action = move_menu.addAction("카테고리 없음 (이 카테고리에서 제외)")
+
         chosen = menu.exec(self.table.viewport().mapToGlobal(pos))
         if chosen is preview_action:
             self.file_selected.emit(info, self._all_files())
         elif chosen is open_folder_action:
             QDesktopServices.openUrl(QUrl.fromLocalFile(str(Path(info.path).parent)))
+        elif chosen is none_action:
+            self._move_rows(target_rows, None)
+        elif chosen in move_actions:
+            self._move_rows(target_rows, move_actions[chosen])
+
+    def _move_rows(self, rows: list[int], to_category_id: str | None) -> None:
+        """선택한 행들을 이 카테고리 목록에서 빼고(to_category_id가 있으면 그 카테고리로
+        옮기고) 결과 화면에 알린다."""
+        if not rows:
+            return
+        moved_infos = [self._matches[r][0] for r in rows]
+        moved_paths = {info.path for info in moved_infos}
+        first_row = min(rows)
+
+        remaining = [pair for pair in self._matches if pair[0].path not in moved_paths]
+        self._render_matches(remaining, notify_empty=False)
+        if remaining:
+            self.table.selectRow(min(first_row, len(remaining) - 1))
+
+        destination = CATEGORIES[to_category_id].title if to_category_id else "카테고리 없음"
+        self.move_notice.setText(f"{len(moved_infos)}장을 '{destination}'(으)로 옮겼어요.")
+        self.move_notice.setVisible(True)
+        self.category_moved.emit([info.path for info in moved_infos], self.category_id, to_category_id)
 
     def _on_row_double_clicked(self, index) -> None:
         if not index.isValid() or index.row() >= len(self._matches):

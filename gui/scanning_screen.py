@@ -19,7 +19,8 @@ from PySide6.QtWidgets import (
     QFrame,
 )
 
-from core.scanner import scan_paths
+from core.scanner import scan_paths, scan_paths_incremental
+from core.session_store import load_session
 from gui.theme import COLORS
 
 
@@ -29,9 +30,14 @@ class ScanWorker(QThread):
     heavy_format_detected = Signal()            # HEIC/HEIF 발견 시 1회만(core/scanner.py 참고)
     failed = Signal(str)                        # 예상 못한 예외 (아래 run() 참고)
 
-    def __init__(self, paths: list[str], parent=None):
+    def __init__(self, paths: list[str], use_saved_session: bool = False, parent=None):
         super().__init__(parent)
         self.paths = paths
+        self.use_saved_session = use_saved_session
+        # 저장된 작업을 불러와 검사했으면 run()이 채워 둔다 — 창(gui/scan_session_window.py)이
+        # 끝난 뒤 읽어서 카테고리 분류 결과를 복원하고 변경 요약을 띄우는 데 쓴다.
+        self.saved_session = None  # core.session_store.SavedSession | None
+        self.restore_stats = None  # core.scanner.RestoreStats | None
         self._cancel_requested = False
 
     def cancel(self):
@@ -43,13 +49,28 @@ class ScanWorker(QThread):
         # 없음"으로 보임). gui/single_ai_action.py::_Worker와 같은 패턴으로,
         # 실패도 반드시 신호 하나로 끝나게 한다. (2026-09-11 리뷰)
         try:
-            result, remaining_paths = scan_paths(
-                self.paths,
-                recursive=True,
-                progress_callback=lambda cur, total, name: self.progress.emit(cur, total, name),
-                should_cancel=lambda: self._cancel_requested,
-                on_heavy_format=self.heavy_format_detected.emit,
-            )
+            saved = load_session(self.paths) if self.use_saved_session else None
+            if saved is not None:
+                result, remaining_paths, stats = scan_paths_incremental(
+                    self.paths,
+                    saved.files,
+                    recursive=True,
+                    progress_callback=lambda cur, total, name: self.progress.emit(cur, total, name),
+                    should_cancel=lambda: self._cancel_requested,
+                    on_heavy_format=self.heavy_format_detected.emit,
+                )
+                saved.remap_paths(stats.moved)
+                saved.drop_categories(stats.changed_paths)
+                self.saved_session = saved
+                self.restore_stats = stats
+            else:
+                result, remaining_paths = scan_paths(
+                    self.paths,
+                    recursive=True,
+                    progress_callback=lambda cur, total, name: self.progress.emit(cur, total, name),
+                    should_cancel=lambda: self._cancel_requested,
+                    on_heavy_format=self.heavy_format_detected.emit,
+                )
         except Exception as exc:  # noqa: BLE001 - 백그라운드 스레드 예외를 신호로 넘기기 위함
             self.failed.emit(str(exc))
             return
@@ -124,8 +145,13 @@ class ScanningScreen(QWidget):
         self._timer.setInterval(1000)
         self._timer.timeout.connect(self._update_elapsed)
 
-    def start_scan(self, paths: list[str]):
-        self.title_label.setText("사진 검사 중...")
+    def start_scan(self, paths: list[str], use_saved_session: bool = False):
+        # use_saved_session: 같은 폴더의 저장된 작업이 있으면 불러와서 바뀐
+        # 사진만 검사한다(core/session_store.py). 진행률은 "새로 분석할 사진"
+        # 기준이라 저장본이 있으면 전체 사진 수보다 훨씬 작은 수로 보인다.
+        self.title_label.setText(
+            "이전 작업을 확인하고 바뀐 사진만 검사 중..." if use_saved_session else "사진 검사 중..."
+        )
         self.progress_bar.setValue(0)
         self.count_label.setText("0 / 0")
         self.current_file_label.setText("현재 검사: -")
@@ -138,7 +164,7 @@ class ScanningScreen(QWidget):
         self._start_time = time.time()
         self._timer.start()
 
-        self.worker = ScanWorker(paths)
+        self.worker = ScanWorker(paths, use_saved_session=use_saved_session)
         self.worker.progress.connect(self._on_progress)
         self.worker.finished_scan.connect(self._on_finished)
         self.worker.failed.connect(self._on_failed)
@@ -169,7 +195,10 @@ class ScanningScreen(QWidget):
         self._timer.stop()
         if not cancelled:
             self.progress_bar.setValue(100)
-        self.scan_finished.emit(result, cancelled, self._planned_total, remaining_paths)
+        # 진행률의 total은 "이번에 새로 분석할 사진 수"라서(저장된 작업을 불러온
+        # 경우 재사용한 사진은 빠져 있다) 전체 계획 수는 결과에서 다시 구한다.
+        planned_total = result.total + len(remaining_paths)
+        self.scan_finished.emit(result, cancelled, planned_total, remaining_paths)
 
     def _on_failed(self, message: str):
         self._timer.stop()

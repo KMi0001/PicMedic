@@ -8,7 +8,9 @@ ScanResult로 집계한다. GUI에서 진행률을 보여줄 수 있도록 콜�
 
 from __future__ import annotations
 
+import dataclasses
 import os
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Iterable, Optional
 
@@ -236,6 +238,113 @@ def scan_paths(
 
     remaining_paths = [str(p) for p in files[result.total:]]
     return result, remaining_paths
+
+
+@dataclass
+class RestoreStats:
+    """scan_paths_incremental이 저장된 작업과 지금 폴더를 비교한 결과 요약."""
+
+    reused: int = 0  # 그대로라서 재사용한 사진
+    added: int = 0  # 새로 생겨 분석한 사진
+    changed: int = 0  # 내용(크기/수정시각)이 바뀌어 다시 분석한 사진
+    removed: int = 0  # 저장본에는 있었지만 지금은 없는 사진
+    moved: dict[str, str] = field(default_factory=dict)  # 옛 경로 -> 새 경로 (다른 폴더로 옮겨진 것으로 판단한 사진)
+    changed_paths: set[str] = field(default_factory=set)  # changed에 해당하는 경로(카테고리 재분류 대상)
+
+    @property
+    def has_changes(self) -> bool:
+        return bool(self.added or self.changed or self.removed or self.moved)
+
+
+def scan_paths_incremental(
+    roots: Iterable[str | Path],
+    known: list[FileInfo],
+    recursive: bool = True,
+    progress_callback: Optional[ProgressCallback] = None,
+    should_cancel: Optional[Callable[[], bool]] = None,
+    on_heavy_format: Optional[Callable[[], None]] = None,
+) -> tuple[ScanResult, list[str], RestoreStats]:
+    """scan_paths와 같지만, 이전에 저장한 검사 결과(known)와 비교해서 무거운
+    분석(해시+디코딩)을 변경된 사진에만 한다(2026-09-20 — core/session_store.py).
+
+    사진마다 판단:
+    - 경로가 같고 크기·수정시각도 같으면 -> 그대로 재사용
+    - 경로는 같은데 크기나 수정시각이 다르면 -> 바뀐 파일, 다시 분석
+    - 저장본에 없는 경로 -> 새 파일. 단, 저장본에는 있는데 지금은 없는 파일과
+      (파일명, 크기, 수정시각)이 같으면 사용자가 다른 폴더로 옮긴 같은 사진으로
+      보고 재사용한다(경로만 새것으로). 파일 내용 해시까지 비교하지 않는 건
+      3만 장을 다시 읽어야 해서 재사용의 의미가 없어지기 때문 — 우연히 이름·
+      크기·수정시각이 모두 같은 다른 사진일 가능성은 사실상 무시한다.
+    - 저장본에만 있는 경로(짝이 안 맞는 것) -> 삭제된 것으로 보고 뺀다
+
+    반환 remaining_paths는 scan_paths와 같은 의미(취소로 아직 분석 못 한 파일들) —
+    재사용한 사진은 이미 결과에 들어 있으니 분석 대상 중에서만 나온다."""
+    roots = list(roots)
+    files = _gather_candidate_files(roots, recursive=recursive, should_cancel=should_cancel)
+
+    known_by_path = {os.path.normcase(info.path): info for info in known}
+    stats = RestoreStats()
+    reused: list[FileInfo] = []
+    to_analyze: list[Path] = []
+    new_paths: list[Path] = []  # 저장본에 없던 경로 — 아래에서 "옮겨진 사진"인지 한 번 더 본다
+    seen: set[str] = set()
+
+    for path in files:
+        key = os.path.normcase(str(path))
+        seen.add(key)
+        old = known_by_path.get(key)
+        if old is None:
+            new_paths.append(path)
+            continue
+        try:
+            st = path.stat()
+        except OSError:
+            to_analyze.append(path)
+            stats.changed += 1
+            stats.changed_paths.add(old.path)
+            continue
+        if old.mtime_ns and old.mtime_ns == st.st_mtime_ns and old.file_size == st.st_size:
+            reused.append(old)
+        else:
+            to_analyze.append(path)
+            stats.changed += 1
+            stats.changed_paths.add(old.path)
+
+    missing = [info for key, info in known_by_path.items() if key not in seen]
+    missing_by_signature: dict[tuple[str, int, int], list[FileInfo]] = {}
+    for info in missing:
+        if info.mtime_ns:
+            missing_by_signature.setdefault((info.filename, info.file_size, info.mtime_ns), []).append(info)
+
+    for path in new_paths:
+        try:
+            st = path.stat()
+            candidates = missing_by_signature.get((path.name, st.st_size, st.st_mtime_ns))
+        except OSError:
+            candidates = None
+        if candidates:
+            old = candidates.pop()
+            moved = dataclasses.replace(old, path=str(path))
+            reused.append(moved)
+            stats.moved[old.path] = moved.path
+        else:
+            to_analyze.append(path)
+            stats.added += 1
+
+    stats.reused = len(reused) - len(stats.moved)
+    stats.removed = len(missing) - len(stats.moved)
+
+    result = ScanResult()
+    for info in reused:
+        result.add(info)
+    analyzed = _scan_files(
+        to_analyze, progress_callback=progress_callback, should_cancel=should_cancel, on_heavy_format=on_heavy_format
+    )
+    result = result.merge(analyzed)
+    logger.log_scan(", ".join(str(r) for r in roots), result)
+
+    remaining_paths = [str(p) for p in to_analyze[analyzed.total:]]
+    return result, remaining_paths, stats
 
 
 def list_image_files(

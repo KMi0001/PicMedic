@@ -30,6 +30,7 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QWidget, QVBoxLayout
 
 from core.category_finder import CATEGORIES as CATEGORY_FINDER_DEFS
+from core.session_store import save_session_in_background
 from gui.common_dialogs import info_dialog as _info_dialog, ProgressDialog
 from gui.scanning_screen import ScanningScreen
 from gui.result_screen import ResultScreen
@@ -159,6 +160,9 @@ class ScanSessionWindow(
         self._resume_base_planned_total = 0          # 이어서 검사 중이면: 원래 전체 계획 파일 수
         self._pending_remaining_paths: list[str] | None = None  # 현재 결과 화면에서 '이어서 검사' 가능한 나머지 파일
         self._pending_planned_total = 0
+        # 이어서 검사 중이면: 이전까지의 카테고리 분류 결과/수동 이동 내역(끝나고
+        # 결과 화면이 새로 세팅될 때 처음부터 다시 분류하지 않도록 넘겨준다)
+        self._resume_category_state: tuple[dict, dict] | None = None
         self._detail_return_screen = self.result_screen  # 상세보기 뒤로가기 시 돌아갈 화면(연 곳에 따라 다름)
         self._trash_return_screen = self.result_screen  # 임시휴지통 뒤로가기 시 돌아갈 화면(연 곳에 따라 다름)
         self._group_detail_return_screen = self.date_organize_screen  # 그룹 상세 뒤로가기 시 돌아갈 화면(날짜별/도시별)
@@ -195,6 +199,8 @@ class ScanSessionWindow(
             screen.organize_requested.connect(
                 lambda mode, screen=screen: self._on_category_finder_organize_requested(screen, mode)
             )
+            # 다른 카테고리로 옮기기 -> 검사 결과 화면이 수동 이동 내역을 기록/반영
+            screen.category_moved.connect(self.result_screen.apply_category_move)
 
         # 중복 사진 -> 검사 결과 화면 / 임시 휴지통 / 상세보기(사진 미리보기)
         self.duplicate_screen.back_requested.connect(self._back_from_duplicates)
@@ -270,7 +276,9 @@ class ScanSessionWindow(
         if resize:
             self.resize(*self._SCANNING_SIZE)
         self.stack.setCurrentWidget(self.scanning_screen)
-        self.scanning_screen.start_scan(paths)
+        # 같은 폴더를 이전에 검사해서 자동 저장된 작업이 있으면 그걸 바탕으로 바뀐
+        # 사진만 검사한다(core/session_store.py, 저장은 closeEvent에서).
+        self.scanning_screen.start_scan(paths, use_saved_session=True)
 
     def _default_organize_output_dir(self) -> Path:
         """gui/date_organize_screen.py::_open_date_organize·_open_city_organize와
@@ -285,6 +293,7 @@ class ScanSessionWindow(
             return
         self._resume_base_result = self.result_screen.result
         self._resume_base_planned_total = self._pending_planned_total
+        self._resume_category_state = self.result_screen.category_snapshot()
         self._current_scan_paths = self._pending_remaining_paths
         self.resize(*self._SCANNING_SIZE)
         self.stack.setCurrentWidget(self.scanning_screen)
@@ -296,6 +305,7 @@ class ScanSessionWindow(
         안내하고 창을 닫는다."""
         self._resume_base_result = None
         self._resume_base_planned_total = 0
+        self._resume_category_state = None
 
         # 워커 스레드가 완전히 끝나기 전에 close()를 부르면 아래 closeEvent가
         # isRunning()을 보고 닫기를 막아버려서, 오히려 멈춘 검사 화면에 갇힌다.
@@ -322,11 +332,22 @@ class ScanSessionWindow(
         self.move(x, y)
 
     def _on_scan_finished(self, result, cancelled: bool, planned_total: int, remaining_paths: list):
+        # 저장된 작업을 불러와 검사했다면 그 카테고리 분류 결과/수동 이동 내역과
+        # 변경 요약이 워커에 남아 있다(gui/scanning_screen.py::ScanWorker.run).
+        worker = getattr(self.scanning_screen, "worker", None)
+        saved = getattr(worker, "saved_session", None)
+        restore_stats = getattr(worker, "restore_stats", None)
+        saved_categories = saved.categories if saved is not None else None
+        saved_overrides = saved.overrides if saved is not None else None
+
         if self._resume_base_result is not None:
             result = self._resume_base_result.merge(result)
             planned_total = self._resume_base_planned_total or planned_total
             self._resume_base_result = None
             self._resume_base_planned_total = 0
+            if self._resume_category_state is not None:
+                saved_categories, saved_overrides = self._resume_category_state
+        self._resume_category_state = None
 
         if result.total == 0:
             if not cancelled:
@@ -343,6 +364,8 @@ class ScanSessionWindow(
             planned_total=planned_total,
             remaining_paths=remaining_paths,
             scan_paths=self._scan_origin_paths,
+            saved_categories=saved_categories,
+            saved_overrides=saved_overrides,
         )
 
         # 중복 화면은 그룹이 수백 개면 카드를 그만큼 만들어야 해서 스캔 하나
@@ -353,7 +376,35 @@ class ScanSessionWindow(
         self.setMinimumSize(*self._MIN_NORMAL_SIZE)
         self.stack.setCurrentWidget(self.result_screen)
 
+        if restore_stats is not None:
+            self._show_restore_summary(restore_stats)
+
+    def _show_restore_summary(self, stats) -> None:
+        """저장된 작업을 불러왔을 때, 지금 폴더와 비교해 뭐가 달라졌는지 알려준다."""
+        lines = ["이전 작업을 불러왔어요.", "", f"• 그대로 사용한 사진: {stats.reused:,}장"]
+        if stats.added:
+            lines.append(f"• 새로 생겨서 검사한 사진: {stats.added:,}장")
+        if stats.changed:
+            lines.append(f"• 내용이 바뀌어 다시 검사한 사진: {stats.changed:,}장")
+        if stats.moved:
+            lines.append(f"• 다른 폴더로 옮겨진 것으로 확인한 사진: {len(stats.moved):,}장")
+        if stats.removed:
+            lines.append(f"• 삭제되어 목록에서 뺀 사진: {stats.removed:,}장")
+        _info_dialog(self, "\n".join(lines))
+
     # --- 창 종료 ---------------------------------------------------------
+
+    def _save_session(self) -> None:
+        """창을 닫을 때 이 폴더의 작업(검사 결과 + AI 카테고리 분류 + 수동 이동 내역)을
+        자동 저장한다 — 같은 폴더를 다음에 검사하면 core/session_store.py 저장본을
+        불러와 바뀐 사진만 검사한다. 사진이 수만 장이면 저장에 시간이 걸려서
+        창 닫기를 막지 않도록 백그라운드 스레드에 맡긴다(닫히는 창의 스냅샷이라
+        그 뒤에 값이 바뀔 일은 없다)."""
+        result = self.result_screen.result
+        if result is None or not result.files or not self._scan_origin_paths:
+            return
+        categories, overrides = self.result_screen.category_snapshot()
+        save_session_in_background(list(self._scan_origin_paths), list(result.files), categories, overrides)
 
     def closeEvent(self, event):
         # 검사/복구/날짜별 정리처럼 "취소하면 안 되는" 진행 중 작업은 실제로
@@ -374,6 +425,7 @@ class ScanSessionWindow(
         # 작업이라 위 작업들과 달리 끝날 때까지 창 닫기를 막지 않는다 — 대신
         # 취소하고 짧게 기다려서 스레드가 도는 중에 창이 없어지는 걸 막는다.
         self.result_screen._stop_category_scan()
+        self._save_session()
 
         # 썸네일 미리보기 로딩은(휴지통/날짜 그룹 상세) 다시 만들면 그만인
         # 순수 화면용 데이터라 막을 필요는 없고, 그냥 안전하게 멈추기만 한다

@@ -328,7 +328,9 @@ def analyze_file(path: str | Path) -> FileInfo:
         info.error_message = "파일을 찾을 수 없습니다."
         return info
 
-    info.file_size = path.stat().st_size
+    stat = path.stat()
+    info.file_size = stat.st_size
+    info.mtime_ns = stat.st_mtime_ns
     info.content_hash = _compute_file_hash(path)
 
     detected_format = detector.detect_format(path)

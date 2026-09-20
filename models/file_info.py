@@ -44,6 +44,7 @@ class FileInfo:
     detected_format: Optional[str] = None    # 실제로 감지된 형식 (예: "HEIC")
     mime_type: Optional[str] = None
     file_size: int = 0                       # bytes
+    mtime_ns: int = 0                        # 분석 시점의 파일 수정시각(st_mtime_ns) — 저장된 작업 불러오기(core/session_store.py)가 "그 뒤로 안 바뀐 파일"을 알아보는 용도. 0이면 모름
     content_hash: Optional[str] = None       # 파일 내용 SHA-256 (Phase 2 '정확 중복' 탐지용)
     perceptual_hash: Optional[str] = None    # 이미지 지문(pHash, Phase 2 '유사 중복' 탐지용)
 
