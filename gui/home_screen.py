@@ -57,6 +57,7 @@ from core.scanner import SCANNABLE_EXTENSIONS
 from gui import theme
 from gui.common_dialogs import info_dialog
 from gui.convert_dialog import run_convert
+from gui.help_dialog import show_help
 from gui.live_photo_dialog import run_live_photo_finder
 from gui.rename_dialog import run_rename
 from gui.theme import COLORS
@@ -260,6 +261,43 @@ class ThemeToggle(QAbstractButton):
             int(c1.green() + (c2.green() - c1.green()) * t),
             int(c1.blue() + (c2.blue() - c1.blue()) * t),
         )
+
+
+class HelpButton(QAbstractButton):
+    """헤더의 "사용 안내" 버튼 — 원 테두리 안에 "?"를 그린다. 색은 매 paintEvent마다
+    COLORS에서 읽으므로 ThemeToggle처럼 다크모드 토글 후 따로 refresh가 필요 없다."""
+
+    _SIZE = 26
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setCursor(Qt.PointingHandCursor)
+        self.setFixedSize(self._SIZE, self._SIZE)
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        hovered = self.underMouse()
+        color = QColor(COLORS["primary"] if hovered else COLORS["muted"])
+        pen = QPen(color)
+        pen.setWidthF(1.6)
+        painter.setPen(pen)
+        painter.setBrush(Qt.NoBrush)
+        painter.drawEllipse(QRectF(1.5, 1.5, self._SIZE - 3, self._SIZE - 3))
+        font = painter.font()
+        font.setBold(True)
+        font.setPixelSize(15)
+        painter.setFont(font)
+        painter.drawText(self.rect(), Qt.AlignCenter, "?")
+        painter.end()
+
+    def enterEvent(self, event):
+        self.update()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self.update()
+        super().leaveEvent(event)
 
 
 class DropActionCard(QFrame):
@@ -478,6 +516,12 @@ class HomeScreen(QWidget):
         header_row.addLayout(brand_text)
         header_row.setAlignment(brand_text, Qt.AlignVCenter)
         header_row.addStretch(1)
+
+        self.help_btn = HelpButton()
+        self.help_btn.setToolTip("사용 안내")
+        self.help_btn.clicked.connect(lambda: show_help(self))
+        header_row.addWidget(self.help_btn, alignment=Qt.AlignVCenter)
+        header_row.addSpacing(8)
 
         self.theme_toggle = ThemeToggle()
         self.theme_toggle.setChecked(theme.is_dark_mode())
