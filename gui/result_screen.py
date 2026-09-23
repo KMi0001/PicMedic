@@ -299,6 +299,20 @@ class SummaryChip(QFrame):
         self.value_label.setText(text)
 
 
+class SizeChip(SummaryChip):
+    """용량(바이트)을 "1.2 GB"처럼 보여주는 요약 카드 — gui/duplicate_screen.py·
+    gui/similar_screen.py의 "중복 용량" 칩. 개수 칩(CHIP_WIDTH)보다 글자가 길어서
+    폭을 조금 넓히고 글씨를 한 단계 줄였다."""
+
+    def __init__(self, label: str, color: str, parent=None):
+        super().__init__(label, color, parent)
+        self.setFixedWidth(CHIP_WIDTH + 32)
+        self.value_label.setStyleSheet(f"font-size: 17px; font-weight: 700; color: {color};")
+
+    def set_bytes(self, num_bytes: int) -> None:
+        self.value_label.setText(format_file_size(num_bytes))
+
+
 def _set_primary_active(button: QPushButton, active: bool) -> None:
     """버튼을 지금 누를 수 있는(active) 상태면 메인 색상(objectName="Primary")
     으로, 아니면 기본 스타일로 보이게 한다 — QSS는 objectName 기반이라

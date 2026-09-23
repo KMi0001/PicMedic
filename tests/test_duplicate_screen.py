@@ -125,3 +125,30 @@ def test_manual_card_path_click_selects_radio():
 
     check("경로 클릭 후 그 파일의 라디오가 선택됨", target_radio.isChecked() is True)
     check("건너뛰기 선택 해제됨", entry.skip_radio.isChecked() is False)
+
+
+def test_size_chip_shows_duplicate_bytes():
+    """2026-09-23: "중복 용량" 칩 — 그룹마다 한 장만 남긴다고 쳤을 때 겹치는
+    용량(사본 크기 합)을 보여준다. 정리 후 확보 용량이 아니라 "지금 겹쳐 있는"
+    용량이라는 사실 표시용."""
+    from utils.file_utils import reclaimable_bytes
+
+    app = QApplication.instance() or QApplication(sys.argv)
+
+    a = _info(r"C:\fake\a\IMG_0001.jpg")
+    b = _info(r"C:\fake\b\IMG_0001.jpg")
+    c = _info(r"C:\fake\c\IMG_0001.jpg")
+    for info in (a, b, c):
+        info.file_size = 2 * 1024 * 1024
+    check("3장 중 2장이 사본 → 4MB", reclaimable_bytes([[a, b, c]]) == 4 * 1024 * 1024)
+    check("1장짜리 그룹은 0", reclaimable_bytes([[a]]) == 0)
+    x, y = _info(r"C:\fake\x.jpg"), _info(r"C:\fake\y.jpg")
+    x.file_size, y.file_size = 300, 100
+    check("크기가 다르면 가장 큰 1장을 남긴다고 계산", reclaimable_bytes([[x, y]]) == 100)
+
+    result = ScanResult()
+    for info in (a, b, c):
+        result.add(info)
+    screen = DuplicateScreen()
+    screen.set_result(result)
+    check("칩에 사본 용량 표시", screen.size_chip.value_label.text() == "4.0 MB", screen.size_chip.value_label.text())

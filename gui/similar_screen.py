@@ -37,10 +37,11 @@ from PySide6.QtWidgets import (
 )
 
 from gui.common_dialogs import confirm_dialog, info_dialog, ProgressDialog
-from gui.result_screen import SummaryChip
+from gui.result_screen import SizeChip, SummaryChip
 from gui.theme import COLORS
 from gui.thumbnail import ClickableThumbnail, load_thumbnail_qimage
 from gui.trash_worker import TrashMoveWorker
+from utils.file_utils import format_file_size, reclaimable_bytes
 
 THUMB_SIZE = 150
 DEFAULT_THRESHOLD = 10
@@ -270,8 +271,15 @@ class SimilarScreen(QWidget):
         chips_row.setSpacing(10)
         self.group_chip = SummaryChip("유사 그룹", COLORS["warning"])
         self.file_chip = SummaryChip("사진", COLORS["warning"])
+        # 그룹마다 가장 큰 사진 하나만 남긴다고 쳤을 때의 최대치 — 유사 판정은
+        # 추정이라 "최대"를 붙이고, 정리를 권하는 문구 없이 숫자만 보여준다.
+        self.size_chip = SizeChip("겹치는 용량(최대)", COLORS["warning"])
+        self.size_chip.setToolTip(
+            "그룹마다 가장 큰 사진 한 장만 남긴다고 쳤을 때의 최대치예요.\n정리해도 임시 휴지통으로 옮겨질 뿐이라 디스크 용량은 그대로예요."
+        )
         chips_row.addWidget(self.group_chip)
         chips_row.addWidget(self.file_chip)
+        chips_row.addWidget(self.size_chip)
         chips_row.addStretch(1)
         outer.addLayout(chips_row)
 
@@ -392,6 +400,7 @@ class SimilarScreen(QWidget):
 
         self.group_chip.set_value(group_count)
         self.file_chip.set_value(file_count)
+        self.size_chip.set_bytes(reclaimable_bytes([e.group for e in self._entries]))
         self.list_stack.setCurrentWidget(self.scroll_area if has_any else self.empty_label)
         self.cleanup_btn.setEnabled(has_any)
 
@@ -529,13 +538,14 @@ class SimilarScreen(QWidget):
             entry_refs.append(entry)
 
         total_to_remove = sum(len(infos) for _, infos, _ in to_process)
+        move_bytes = sum(info.file_size for _, infos, _ in to_process for info in infos)
         if not total_to_remove:
             info_dialog(self, "정리할 파일을 선택하지 않았어요.\n지울 파일을 먼저 체크해주세요.")
             return
 
         confirmed = confirm_dialog(
             self,
-            f"선택한 {total_to_remove}개 파일을 임시 휴지통으로 옮길게요.\n\n"
+            f"선택한 {total_to_remove}개 파일({format_file_size(move_bytes)})을 임시 휴지통으로 옮길게요.\n\n"
             "완전히 삭제되는 게 아니라서 나중에 원래 위치로 복원할 수 있어요.",
             confirm_text="이동",
             cancel_text="취소",

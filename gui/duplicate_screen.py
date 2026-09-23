@@ -59,10 +59,10 @@ from PySide6.QtWidgets import (
 
 from core.duplicate_resolver import explain_file, suggest_keep, suggest_keep_folder
 from gui.common_dialogs import confirm_dialog, info_dialog, ProgressDialog
-from gui.result_screen import CheckAllHeaderView, SummaryChip
+from gui.result_screen import CheckAllHeaderView, SizeChip, SummaryChip
 from gui.theme import COLORS
 from gui.trash_worker import TrashMoveWorker
-from utils.file_utils import format_file_size
+from utils.file_utils import format_file_size, reclaimable_bytes
 
 SKIP_LABEL = "이 조합은 정리하지 않음(건너뛰기)"
 
@@ -259,9 +259,16 @@ class DuplicateScreen(QWidget):
         self.group_chip = SummaryChip("중복 그룹", COLORS["warning"])
         self.file_chip = SummaryChip("중복 파일", COLORS["warning"])
         self.cluster_chip = SummaryChip("폴더 조합", COLORS["primary"])
+        # 사본들이 차지하는 용량 — 정리를 권하는 문구 없이 사실만 보여준다
+        # (utils/file_utils.py::reclaimable_bytes 참고).
+        self.size_chip = SizeChip("중복 용량", COLORS["warning"])
+        self.size_chip.setToolTip(
+            "같은 사진의 사본들이 차지하는 용량이에요(한 장씩만 남긴다고 쳤을 때).\n정리해도 임시 휴지통으로 옮겨질 뿐이라 디스크 용량은 그대로예요."
+        )
         chips_row.addWidget(self.group_chip)
         chips_row.addWidget(self.file_chip)
         chips_row.addWidget(self.cluster_chip)
+        chips_row.addWidget(self.size_chip)
         chips_row.addStretch(1)
         outer.addLayout(chips_row)
 
@@ -416,6 +423,7 @@ class DuplicateScreen(QWidget):
         self.group_chip.set_value(group_count)
         self.file_chip.set_value(file_count)
         self.cluster_chip.set_value(len(self._cluster_entries))
+        self.size_chip.set_bytes(reclaimable_bytes(self._pending_groups()))
         self.list_stack.setCurrentWidget(self.scroll_area if has_any else self.empty_label)
         self.cleanup_btn.setEnabled(has_any)
 
@@ -434,6 +442,13 @@ class DuplicateScreen(QWidget):
             self._manual_section.setText(
                 f"개별로 확인 필요 · {len(self._manual_entries)}개 그룹 (추천 확신 없음)"
             )
+
+    def _pending_groups(self) -> list[list]:
+        return (
+            [g for e in self._cluster_entries for g in e.group_list]
+            + [group for group, _, _ in self._auto_rows]
+            + [e.group for e in self._manual_entries]
+        )
 
     def _build_cluster_table(
         self, folders: list[Path], group_list: list[list]
@@ -1025,6 +1040,7 @@ class DuplicateScreen(QWidget):
                 entry_refs.append(("manual", entry))
 
         total_to_remove = sum(len(infos) for _, infos, _ in to_process)
+        move_bytes = sum(info.file_size for _, infos, _ in to_process for info in infos)
         if not total_to_remove:
             # 전부 "건너뛰기"거나 정리할 그룹이 아예 없음 — 할 일 없음
             info_dialog(self, "정리할 파일을 선택하지 않았어요.\n남길 파일(또는 폴더)을 먼저 골라주세요.")
@@ -1032,7 +1048,7 @@ class DuplicateScreen(QWidget):
 
         confirmed = confirm_dialog(
             self,
-            f"선택한 {total_to_remove}개 파일을 임시 휴지통으로 옮길게요.\n\n"
+            f"선택한 {total_to_remove}개 파일({format_file_size(move_bytes)})을 임시 휴지통으로 옮길게요.\n\n"
             "완전히 삭제되는 게 아니라서 나중에 원래 위치로 복원할 수 있어요.",
             confirm_text="이동",
             cancel_text="취소",

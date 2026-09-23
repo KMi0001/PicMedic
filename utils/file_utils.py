@@ -32,6 +32,19 @@ def format_file_size(num_bytes: int) -> str:
     return f"{size:.1f} TB"
 
 
+def reclaimable_bytes(groups) -> int:
+    """중복/유사 그룹마다 가장 큰 파일 하나만 남긴다고 쳤을 때 줄어드는 용량의
+    합(최대치). 그룹은 FileInfo 목록. "지금 확보됐다"가 아니라 "이만큼 겹쳐
+    있다"는 정보용 — 정리해도 임시휴지통으로 옮길 뿐이라 디스크 용량은 그
+    폴더를 직접 비우기 전까진 그대로다(2026-09-23, 사용자 결정: 앱이 휴지통
+    비우기로 유도하지 않도록 숫자는 사실만 보여준다)."""
+    return sum(
+        sum(info.file_size for info in group) - max(info.file_size for info in group)
+        for group in groups
+        if len(group) > 1
+    )
+
+
 def unique_recovered_path(
     output_dir: Path, base_filename: str, new_extension: str, suffix: str = DEFAULT_SUFFIX
 ) -> Path:
