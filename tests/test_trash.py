@@ -11,7 +11,9 @@ from utils import trash
 
 def test_trash():
     with tempfile.TemporaryDirectory() as tmp:
-        tmp = Path(tmp)
+        # macOS의 임시 폴더(/var/...)는 /private/var/...의 심볼릭 링크라, resolve()한
+        # 원래 경로를 기록하는 move_to_trash와 비교가 어긋난다 — 처음부터 실제 경로로 쓴다.
+        tmp = Path(tmp).resolve()
 
         source_dir = tmp / "sources"
         source_dir.mkdir()
