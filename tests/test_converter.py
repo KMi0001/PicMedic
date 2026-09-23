@@ -179,7 +179,7 @@ def test_converter():
             [o.label for o in outcomes19],
         )
 
-        # 20~23) replace_original=True("원본 삭제" 옵션) — RESTORATION_QUALITY_PLAN.md
+        # 20~23) replace_original=True("원본 교체" 옵션) — RESTORATION_QUALITY_PLAN.md
         # 5-5 "원본은 절대 건드리지 않는다" 약속의 예외 경로 커버리지 회귀 테스트.
         replace_dir = tmp / "replace_original_case"
         replace_dir.mkdir()

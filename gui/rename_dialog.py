@@ -2,7 +2,7 @@
 gui/rename_dialog.py
 
 "이름 일괄변경" — 검사 결과 화면(여러 파일 선택 후 버튼)과 홈 화면("이름
-일괄변환" 카드) 두 진입점이 공유하는 팝업. 선택된 파일들의 이름을 "기본이름_순번"
+일괄변경" 카드) 두 진입점이 공유하는 팝업. 선택된 파일들의 이름을 "기본이름_순번"
 규칙으로 한 번에 바꾼다(원래 있던 폴더 그 자리에서 rename — core/renamer.py).
 
 gui/convert_dialog.py::run_convert와 같은 패턴: 홈 화면 진입은 검사 없이 곧장
@@ -304,7 +304,7 @@ def _show_rename_result(parent: QWidget, outcomes) -> None:
 
 
 def run_rename(parent: QWidget, paths: list[str]) -> None:
-    """홈 화면 "이름 일괄변환" 카드 진입점 — 검사 없이 paths(파일/폴더 혼합
+    """홈 화면 "이름 일괄변경" 카드 진입점 — 검사 없이 paths(파일/폴더 혼합
     가능)를 사진 파일로 펼친 뒤 곧장 이름변경 팝업을 연다."""
     progress_dialog = ProgressDialog(parent)
     worker = _ListImagesWorker(paths, parent)

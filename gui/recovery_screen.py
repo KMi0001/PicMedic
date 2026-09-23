@@ -253,10 +253,10 @@ class RecoveryScreen(QWidget):
         self.format_combo.currentTextChanged.connect(self._on_mode_changed)
         self._on_mode_changed()
 
-        # 2026-09-10, 사용자 요청 — "저장 위치 지정(원본 보존)"과 "원본 삭제(대체)"는
+        # 2026-09-10, 사용자 요청 — "저장 위치 지정(원본 보존)"과 "원본 교체"는
         # 서로 배타적인 선택지라 체크박스+비활성화 대신 라디오 버튼 두 개로 고르게
         # 한다("저장 위치"는 원본 보존을 골랐을 때만 의미가 있어서 그 아래 둠).
-        # 기본은 항상 "원본 보존"이고, "원본 삭제"를 골랐을 때만 원본을 그 폴더의
+        # 기본은 항상 "원본 보존"이고, "원본 교체"를 골랐을 때만 원본을 그 폴더의
         # 임시휴지통으로 옮기고 결과물이 원본이 있던 자리를 대신한다
         # (core/converter.py::_recover_file_replacing_original).
         self.output_mode_label = QLabel("저장 방식")
@@ -267,7 +267,7 @@ class RecoveryScreen(QWidget):
         self.keep_original_radio = QRadioButton("원본 보존 — 별도 폴더에 새 파일로 저장 (기본값)")
         self.keep_original_radio.setChecked(True)
         self.replace_original_radio = QRadioButton(
-            "원본 삭제 — 원본을 임시휴지통으로 옮기고, 결과물이 그 자리를 대신하게 하기"
+            "원본 교체 — 결과물이 원본 자리를 대신하고, 원본은 임시휴지통으로 이동 (되돌리기 가능)"
         )
         self.output_mode_group.addButton(self.keep_original_radio)
         self.output_mode_group.addButton(self.replace_original_radio)
@@ -294,7 +294,7 @@ class RecoveryScreen(QWidget):
         card_layout.addWidget(self.suffix_edit)
 
         self.keep_original_note = QLabel(
-            "원본 파일은 항상 그대로 보존되며, 복구 결과는 별도 폴더에 새 파일로 저장됩니다."
+            "원본 파일은 그대로 보존되며, 복구 결과는 별도 폴더에 새 파일로 저장됩니다."
         )
         self.keep_original_note.setWordWrap(True)
         self.keep_original_note.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 11px;")
@@ -353,7 +353,7 @@ class RecoveryScreen(QWidget):
             self.convert_radio.setChecked(True)
 
         self.format_combo.setCurrentText(DEFAULT_CONVERT_FORMAT)
-        # 매번 안전한 기본값("원본 보존")에서 시작 — 이전 파일들에서 "원본 삭제"를
+        # 매번 안전한 기본값("원본 보존")에서 시작 — 이전 파일들에서 "원본 교체"를
         # 골라뒀던 채로 이번 파일들에 실수로 적용되는 일이 없게 한다.
         self.keep_original_radio.setChecked(True)
 
@@ -371,7 +371,7 @@ class RecoveryScreen(QWidget):
     # --- 내부 로직 -----------------------------------------------------
 
     def _on_output_mode_changed(self):
-        # "원본 삭제"를 고르면 "저장 위치"/"파일명에 추가할 문구"는 안 쓰인다 —
+        # "원본 교체"를 고르면 "저장 위치"/"파일명에 추가할 문구"는 안 쓰인다 —
         # 결과가 항상 원본이 있던 그 폴더에, 원본 이름 그대로(확장자만 결과에
         # 맞게) 저장되기 때문(core/converter.py::_recover_file_replacing_original).
         # 회색으로 비활성화만 하면 "왜 안 써도 되는 칸이 계속 보이지?" 헷갈릴 수
@@ -390,7 +390,7 @@ class RecoveryScreen(QWidget):
             )
         else:
             self.keep_original_note.setText(
-                "원본 파일은 항상 그대로 보존되며, 복구 결과는 별도 폴더에 새 파일로 저장됩니다."
+                "원본 파일은 그대로 보존되며, 복구 결과는 별도 폴더에 새 파일로 저장됩니다."
             )
 
     def _on_mode_changed(self):
@@ -503,7 +503,7 @@ class RecoveryScreen(QWidget):
         # 보통은 core/converter.py가 항상 별도 폴더에만 쓰므로 여기서 지우는 건 취소
         # 시점까지 만들어진 결과물 사본뿐 — 원본 파일은 영향받지 않는다. 개별 파일
         # 삭제 실패(권한 등)는 배치 취소 자체를 막을 이유가 없어 조용히 넘어간다.
-        # "원본 삭제" 옵션이 켜져 있던 항목(replaced_original_trash_path가 있음)은
+        # "원본 교체" 옵션이 켜져 있던 항목(replaced_original_trash_path가 있음)은
         # 원본이 이미 임시휴지통으로 옮겨간 상태라, 결과물만 지우면 그 폴더에서
         # 사진이 통째로 사라져 버린다 — 그런 항목은 결과물을 지우면서 원본도
         # 같이 제자리로 되돌린다(취소=완전히 되돌리기).

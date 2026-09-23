@@ -566,7 +566,7 @@ class DuplicateScreen(QWidget):
                     file_item.setData(Qt.UserRole, (info, group))
                     table.setItem(row, 1, file_item)
 
-                    del_status_item = QTableWidgetItem("삭제")
+                    del_status_item = QTableWidgetItem("휴지통")
                     table.setItem(row, 2, del_status_item)
 
                     group_item = QTableWidgetItem(f"그룹 {idx}")
@@ -820,7 +820,7 @@ class DuplicateScreen(QWidget):
                     file_item.setData(Qt.UserRole, (info, group))
                     table.setItem(row, 1, file_item)
 
-                    del_status_item = QTableWidgetItem("삭제")
+                    del_status_item = QTableWidgetItem("휴지통")
                     table.setItem(row, 2, del_status_item)
 
                     per_file_reason = explain_file(info, group)

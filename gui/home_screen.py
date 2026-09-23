@@ -183,7 +183,7 @@ def _folder_photo_icon_pixmap(color: str, size: int = 44) -> QPixmap:
 
 
 def _rename_icon_pixmap(color: str, size: int = 26) -> QPixmap:
-    """이름 일괄변환 = 이름표(태그) 모양 + 안의 글자 줄 — "이름을 새로 단다"는 의미."""
+    """이름 일괄변경 = 이름표(태그) 모양 + 안의 글자 줄 — "이름을 새로 단다"는 의미."""
 
     def draw(p, s):
         p.drawLine(QPointF(4 * s, 5 * s), QPointF(15 * s, 5 * s))
@@ -531,7 +531,10 @@ class HomeScreen(QWidget):
 
         content_layout.addLayout(header_row)
 
-        self.hint_label = QLabel("사진이나 폴더를 끌어놓으면 검사하고 정리까지 도와드려요.")
+        self.hint_label = QLabel(
+            "사진이나 폴더를 끌어놓으세요. 안 열리는 사진은 고치고, 쌓인 사진은 정리해요.\n"
+            "AI 분류까지 전부 내 컴퓨터 안에서 처리하고, 지운 사진도 언제든 되돌릴 수 있어요."
+        )
         self.hint_label.setWordWrap(True)
         self.hint_label.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 12px;")
         content_layout.addWidget(self.hint_label)
@@ -544,7 +547,7 @@ class HomeScreen(QWidget):
         self.convert_card = DropActionCard(
             _convert_icon_pixmap(COLORS["primary"]),
             "변환",
-            "사진 형식을 다른 형식으로 바꿔요 (여러 장도 가능)",
+            "아이폰 HEIC도 JPG로 한 번에 — 여러 장도 바로 바꿔요",
         )
         self.convert_card.paths_dropped.connect(self._on_convert_paths_chosen)
         self.convert_card.clicked.connect(lambda: self._show_pick_menu(self._on_convert_paths_chosen))
@@ -553,7 +556,7 @@ class HomeScreen(QWidget):
         self.live_photo_card = DropActionCard(
             _live_photo_icon_pixmap(COLORS["primary"]),
             "라이브 포토",
-            "짝 동영상이 남아있는 라이브 포토를 찾아서 내보내거나 모아줘요",
+            "아이폰 라이브 포토의 짝 동영상을 찾아 영상으로 꺼내거나 한곳에 모아요",
         )
         self.live_photo_card.paths_dropped.connect(self._on_live_photo_paths_chosen)
         self.live_photo_card.clicked.connect(lambda: self._show_pick_menu(self._on_live_photo_paths_chosen))
@@ -561,8 +564,8 @@ class HomeScreen(QWidget):
 
         self.rename_card = DropActionCard(
             _rename_icon_pixmap(COLORS["primary"]),
-            "이름 일괄변환",
-            "사진 여러 장의 파일명을 한 번에 바꿔요 (순번 매기기 등)",
+            "이름 일괄변경",
+            "사진 여러 장의 파일명을 '이름_순번'으로 한 번에 정리해요",
         )
         self.rename_card.paths_dropped.connect(self._on_rename_paths_chosen)
         self.rename_card.clicked.connect(lambda: self._show_pick_menu(self._on_rename_paths_chosen))

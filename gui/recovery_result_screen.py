@@ -115,7 +115,7 @@ class RecoveryResultScreen(QWidget):
         self.partial_chip.set_value(partial)
         self.skipped_chip.set_value(skipped)
         self.fail_chip.set_value(fail)
-        # output_dir이 빈 문자열인 건 "원본 삭제(대체)" 옵션을 쓴 경우뿐이다
+        # output_dir이 빈 문자열인 건 "원본 교체" 옵션을 쓴 경우뿐이다
         # (gui/recovery_screen.py::_start_recovery) — 파일마다 원래 있던
         # 폴더로 갔으므로 하나의 "저장 위치"로 보여줄 게 없다.
         if output_dir:

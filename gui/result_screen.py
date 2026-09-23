@@ -559,9 +559,9 @@ class ResultScreen(QWidget):
         # 처음엔 비활성 상태라 기본(회색) 스타일로 시작 — 선택 상태가 바뀔
         # 때마다 _update_selection_label()이 활성 여부에 맞춰 다시 칠한다.
         _set_primary_active(self.recover_selected_btn, False)
-        # "이름일괄변환"은 이 화면의 보조 동작 — 확장자 변환처럼 Primary(채워진
+        # "이름 일괄변경"은 이 화면의 보조 동작 — 확장자 변환처럼 Primary(채워진
         # 버튼)로 만들면 둘 다 똑같이 진해서 뭐가 메인 동작인지 헷갈린다.
-        self.rename_selected_btn = QPushButton("이름일괄변환")
+        self.rename_selected_btn = QPushButton("이름 일괄변경")
         self.rename_selected_btn.setEnabled(False)
         self.rename_selected_btn.clicked.connect(self._on_rename_selected)
         bottom_row.addWidget(self.rename_selected_btn)
