@@ -1,0 +1,104 @@
+name: Build Windows App
+
+# build-macos.yml의 Windows 짝(2026-09-28, 인수인계 정리 때 추가). 그전엔
+# Windows 빌드가 개발자 PC에서 `pyinstaller PicMedic.spec`을 손으로 돌리는
+# 것뿐이라, 다른 사람/AI가 이어받으면 배포본을 재현할 방법이 문서 말고는
+# 없었다. 단계는 build-macos.yml과 같다(자산 받기 → BUILD_INFO 기록 → 테스트
+# → 빌드 → zip). PicMedic.spec이 onedir이라 dist/PicMedic/ 폴더 전체를 묶는다.
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - "claude/**"
+    paths:
+      - "**.py"
+      - "PicMedic.spec"
+      - "requirements.txt"
+      - "THIRD_PARTY_NOTICES.txt"
+      - "assets/**"
+      - ".github/workflows/build-windows.yml"
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-dev.txt
+          pip install pyinstaller
+
+      - name: Cache AI model assets
+        uses: actions/cache@v4
+        with:
+          path: assets/photo_category
+          key: ai-assets-${{ runner.os }}-${{ hashFiles('scripts/fetch_photo_category_assets.py', 'scripts/export_clip_onnx_assets.py') }}
+
+      - name: Fetch AI model assets (best effort)
+        # build-macos.yml과 같은 이유로 실패해도 계속 — 빠진 건 BUILD_INFO.txt에 남는다.
+        continue-on-error: true
+        env:
+          PYTHONIOENCODING: utf-8
+        run: |
+          echo "::group::fetch_photo_category_assets.py + export_clip_onnx_assets.py"
+          if python scripts/fetch_photo_category_assets.py; then
+            if python scripts/export_clip_onnx_assets.py; then
+              # 변환 원본(354MB)은 런타임에 필요 없다 — 지우지 않으면 번들에 딸려 들어간다.
+              rm -f assets/photo_category/ViT-B-32.pt
+            else
+              echo "!! CLIP ONNX 변환 실패 (계속 진행)"
+            fi
+          else
+            echo "!! CLIP 원본 체크포인트 받기 실패 (계속 진행)"
+          fi
+          echo "::endgroup::"
+
+      - name: Record what actually made it into the bundle
+        run: |
+          {
+            echo "PicMedic Windows 빌드"
+            echo "커밋: ${{ github.sha }}"
+            echo "빌드 시각: $(date -u '+%Y-%m-%d %H:%M UTC')"
+            echo ""
+            echo "포함된 AI 기능 (자산이 실제로 받아진 것만 동작합니다):"
+            check_file() { if [ -f "$1" ]; then echo "  [O] $2"; else echo "  [X] $2 — 자산 없음, 이 빌드에서 동작하지 않음"; fi; }
+            check_file "assets/photo_category/clip_visual_int8.onnx" "AI 카테고리(카테고리 찾기)"
+            echo ""
+            echo "배포 시 PicMedic 폴더 전체를 함께 옮겨야 합니다(PicMedic.exe만 떼면 실행 안 됨)."
+            echo "진단/복구/정리 기능은 AI 자산과 무관하게 항상 포함됩니다."
+          } | tee BUILD_INFO.txt
+
+      - name: Run tests
+        env:
+          QT_QPA_PLATFORM: offscreen
+          PYTHONIOENCODING: utf-8
+        run: python -m pytest -v
+
+      - name: Build with PyInstaller (onedir)
+        run: pyinstaller --noconfirm PicMedic.spec
+
+      - name: Zip dist/PicMedic folder
+        shell: pwsh
+        run: |
+          Copy-Item BUILD_INFO.txt dist/
+          Compress-Archive -Path dist/PicMedic -DestinationPath dist/PicMedic-Windows.zip -Force
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PicMedic-Windows
+          path: |
+            dist/PicMedic-Windows.zip
+            dist/BUILD_INFO.txt
+          retention-days: 14

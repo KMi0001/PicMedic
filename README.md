@@ -2,9 +2,13 @@
 
 PRD 기준 **핵심 로직**(파일 형식 탐지/이미지 유효성 검사/복구)과
 **PySide6 GUI 6개 화면**(Home → Scanning → Scan Result → File Detail → Recovery → Recovery Result)을
-모두 구현했습니다.
+모두 구현했습니다. 이후 정리 기능(중복/유사/날짜별/도시별/AI 카테고리), 라이브 포토, 이름 일괄변환,
+임시 휴지통, 검사 결과 자동 저장이 추가됐습니다.
 
-## 구조
+> **처음 맡는 사람/AI는 [HANDOFF.md](HANDOFF.md)부터** — 최신 코드 지도, 패키징 절차,
+> 배포 전 남은 작업, 작업 관례가 정리돼 있습니다. 아래 "구조"는 초기(Phase 1) 기준 요약입니다.
+
+## 구조 (Phase 1 기준 — 전체 목록은 HANDOFF.md 3장)
 
 ```
 PicMedic/
@@ -109,7 +113,9 @@ pyinstaller --noconfirm --windowed --onefile --name PicMedic --icon assets/icon.
   `PicMedic.spec`은 **onedir 방식**이라 결과물이 `dist/PicMedic/PicMedic.exe` +
   그 옆의 여러 파일/폴더(전체를 통째로 배포해야 함)입니다. AI 복원 자산까지 전부
   담아 훨씬 크고, onefile의 "실행할 때마다 압축 해제" 문제(콜드 스타트 실측 80초)를
-  피하려고 2026-09-11에 onedir로 바꿨습니다 — RESTORATION_QUALITY_PLAN.md 5-1 참고.
+  피하려고 2026-09-11에 onedir로 바꿨습니다 — Notion "복원 기능 퀄리티업 계획" 5-1 참고.
+- Windows도 macOS처럼 `.github/workflows/build-windows.yml`이 GitHub Actions에서 빌드해
+  `PicMedic-Windows` 아티팩트(zip + `BUILD_INFO.txt`)로 올려줍니다(2026-09-28 추가).
   배포 시 `dist/PicMedic/` 폴더 전체를 zip으로 묶거나 설치 프로그램(MSIX 등)으로
   감싸세요, exe 파일 하나만 떼어가면 실행되지 않습니다.
 - `--collect-all pillow_heif`가 반드시 필요합니다 (HEIC/HEIF 디코딩용 네이티브 DLL을 exe 안에 포함시키기 위함, 빠지면 HEIC 관련 기능이 조용히 실패함)
@@ -165,8 +171,12 @@ pyinstaller --noconfirm PicMedic-mac.spec
 
 ## 기획서 / 다음 단계
 
-- [PicMedic_PRD_v2.md](PicMedic_PRD_v2.md) — 실제 구현 내용을 반영한 기획서 개정판 (원본 PRD 구조 유지 + 변경점 표시 + 개선 제안 37장)
-- [PRD_MVP우선순위.md](PRD_MVP우선순위.md) — 우선순위(P0~P3)별 세부 구현 체크리스트
+기획 문서는 2026-09-17에 Notion으로 옮겨졌습니다(저장소의 .md 원본은 삭제) — 노션
+워크스페이스에서 "PicMedic 기획문서" 검색.
 
-남은 항목: PRD 23장 예외 메시지 문구 정합화, 검색/정렬 범위 확장, 중복 사진 탐지 등 Phase 2 기능. 자세한 내용은 위 두 문서 참고.
+- PRD v2 — 실제 구현 내용을 반영한 기획서 개정판 (원본 PRD 구조 유지 + 변경점 표시 + 개선 제안 37장)
+- PRD MVP 우선순위 — 우선순위(P0~P3)별 세부 구현 체크리스트 (코드 주석의 "갭 #N"이 여기 번호)
+
+남은 항목: PRD 23장 예외 메시지 문구 정합화, 검색/정렬 범위 확장 등. 배포 전 남은 작업(코드 서명,
+버전 정리, 라이선스 검토)은 [HANDOFF.md](HANDOFF.md) 4-5 참고.
 

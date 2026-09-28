@@ -25,13 +25,15 @@ PySide6가 UI 차이를 흡수하므로, 필요한 경우에만 `sys.platform` �
 
 ## 빌드
 
-- Windows: `pyinstaller PicMedic.spec` (또는 README.md의 전체 커맨드)
+- Windows: `pyinstaller PicMedic.spec` (또는 README.md의 전체 커맨드). GitHub Actions
+  `.github/workflows/build-windows.yml`로도 빌드해 아티팩트로 받을 수 있음.
 - macOS: `pyinstaller PicMedic-mac.spec` (`.icns` 아이콘 + `.app` 번들 생성용 별도 spec).
   크로스 컴파일 불가 — 반드시 macOS에서 빌드. macOS 하드웨어가 없을 때는
   `.github/workflows/build-macos.yml`(GitHub Actions macOS 러너)로 빌드해 아티팩트로 받을 수 있음.
 
 ## 참고 문서
 
+- [HANDOFF.md](HANDOFF.md) — 인수인계 문서(코드 지도, 패키징 절차, 배포 전 남은 작업, 작업 관례). 처음 맡으면 먼저 읽기
 - [README.md](README.md) — 설치/실행/테스트/빌드 방법
 - [DESIGN.md](DESIGN.md) — 색상/아이콘/팝업 등 UI 디자인 가이드 (새 화면·컴포넌트 추가 시 참고)
 - **기획/PRD 문서는 2026-09-17부터 Notion으로 이전됨** (저장소의 .md 원본은 삭제됨) — PRD v2,

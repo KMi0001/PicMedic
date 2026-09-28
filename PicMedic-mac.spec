@@ -4,7 +4,8 @@
 #   pyinstaller PicMedic-mac.spec
 from PyInstaller.utils.hooks import collect_all
 
-datas = [('assets', 'assets')]
+# THIRD_PARTY_NOTICES.txt는 배포본에 라이선스 고지를 싣기 위해 포함(2026-09-28, PicMedic.spec과 동일).
+datas = [('assets', 'assets'), ('THIRD_PARTY_NOTICES.txt', '.')]
 binaries = []
 hiddenimports = []
 tmp_ret = collect_all('pillow_heif')

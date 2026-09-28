@@ -30,6 +30,7 @@ on:
       - "**.py"
       - "PicMedic-mac.spec"
       - "requirements.txt"
+      - "THIRD_PARTY_NOTICES.txt"
       - "assets/**"
       - ".github/workflows/build-macos.yml"
 

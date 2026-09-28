@@ -6,7 +6,9 @@
 # 원래부터 같은 COLLECT 구조였다(macOS는 이 문제 자체가 없었음).
 from PyInstaller.utils.hooks import collect_all
 
-datas = [('assets', 'assets')]
+# THIRD_PARTY_NOTICES.txt는 배포본에 라이선스 고지(GeoNames CC-BY 저작자 표시 등)를
+# 함께 싣기 위해 번들 루트에 넣는다(2026-09-28).
+datas = [('assets', 'assets'), ('THIRD_PARTY_NOTICES.txt', '.')]
 binaries = []
 hiddenimports = []
 tmp_ret = collect_all('pillow_heif')
