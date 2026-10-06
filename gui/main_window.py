@@ -8,6 +8,8 @@ gui/main_window.py
 
 from __future__ import annotations
 
+from gui.i18n import message as tr, set_ui
+
 from PySide6.QtWidgets import QMainWindow
 
 from gui.theme import COLORS, get_stylesheet
@@ -19,7 +21,7 @@ from gui.scan_session_window import ScanSessionWindow, _info_dialog
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("PicMedic — 사진 진단 · 복구 · 정리")
+        set_ui(self, 'windowTitle', tr('PicMedic — 사진 진단 · 복구 · 정리'))
         self.resize(760, 600)
         self.setStyleSheet(get_stylesheet())
         apply_titlebar_theme(self, COLORS["bg"], COLORS["text"])
@@ -56,8 +58,7 @@ class MainWindow(QMainWindow):
         if self._has_active_work():
             _info_dialog(
                 self,
-                "진행 중인 검사/복구가 있어 지금은 홈 화면을 닫을 수 없어요.\n"
-                "완료되거나 중단한 뒤 다시 시도해주세요.",
+                tr('진행 중인 검사/복구가 있어 지금은 홈 화면을 닫을 수 없어요.\n완료되거나 중단한 뒤 다시 시도해주세요.'),
             )
             event.ignore()
             return

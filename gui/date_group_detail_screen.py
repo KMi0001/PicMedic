@@ -15,6 +15,8 @@ gui/date_organize_screen.py의 그룹 카드를 누르면 여는 화면. 위쪽�
 
 from __future__ import annotations
 
+from gui.i18n import message as tr, localized_widget, set_ui
+
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
@@ -77,11 +79,11 @@ class DateGroupDetailScreen(QWidget):
 
         title_row = QHBoxLayout()
         title_row.setSpacing(10)
-        self.title_label = QLabel("")
+        self.title_label = localized_widget(QLabel, "")
         self.title_label.setObjectName("Title")
         title_row.addWidget(self.title_label)
         title_row.addStretch(1)
-        back_btn = QPushButton("← 목록으로")
+        back_btn = localized_widget(QPushButton, tr('← 목록으로'))
         back_btn.clicked.connect(self.back_requested.emit)
         title_row.addWidget(back_btn)
         outer.addLayout(title_row)
@@ -100,7 +102,7 @@ class DateGroupDetailScreen(QWidget):
         # 통일 — 회전/맞추기 버튼을 별도 줄 대신 사진 위에 반투명하게 얹는다
         # (2026-09-08, 사용자 요청 — "미리보기/뷰어는 다 검사결과 목록 미리보기처럼").
         self.preview_image = ImageViewer(
-            placeholder_text="미리보기를 생성할 수 없습니다.", overlay_controls=True
+            placeholder_text=tr('미리보기를 생성할 수 없습니다.'), overlay_controls=True
         )
         self.preview_image.setMinimumSize(260, 260)
         self.preview_image.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
@@ -118,7 +120,7 @@ class DateGroupDetailScreen(QWidget):
         info_col.setSpacing(10)
         info_col.setAlignment(Qt.AlignTop)
 
-        self.filename_label = QLabel("")
+        self.filename_label = localized_widget(QLabel, "")
         self.filename_label.setWordWrap(True)
         self.filename_label.setStyleSheet("font-size: 16px; font-weight: 700;")
         info_col.addWidget(self.filename_label)
@@ -133,16 +135,16 @@ class DateGroupDetailScreen(QWidget):
         outer.addWidget(preview_card)
 
         list_row = QHBoxLayout()
-        list_label = QLabel("이 그룹의 사진")
+        list_label = localized_widget(QLabel, tr('이 그룹의 사진'))
         list_label.setStyleSheet("font-weight: 700;")
         list_row.addWidget(list_label)
         list_row.addStretch(1)
-        self.exclude_hint_label = QLabel("")
+        self.exclude_hint_label = localized_widget(QLabel, "")
         self.exclude_hint_label.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 11.5px;")
         list_row.addWidget(self.exclude_hint_label)
         outer.addLayout(list_row)
 
-        self.checkbox_hint = QLabel("체크를 해제하면 이 사진은 \"정리하기\" 대상에서 빠져요.")
+        self.checkbox_hint = localized_widget(QLabel, tr('체크를 해제하면 이 사진은 "정리하기" 대상에서 빠져요.'))
         self.checkbox_hint.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 11px;")
         outer.addWidget(self.checkbox_hint)
 
@@ -301,22 +303,22 @@ class DateGroupDetailScreen(QWidget):
         total = len(self._files)
         excluded = len(self._excluded)
         if excluded:
-            count_text = f"{total - excluded}장/{total}장 (제외 {excluded}장)"
+            count_text = tr('{0}장/{1}장 (제외 {2}장)', total - excluded, total, excluded)
         else:
-            count_text = f"{total}장"
-        self.title_label.setText(f"{self._label} · {count_text}")
+            count_text = tr('{0}장', total)
+        set_ui(self.title_label, 'text', tr("{0} · {1}", tr(self._label), count_text))
 
     def _update_exclude_hint(self) -> None:
         if self._excluded:
-            self.exclude_hint_label.setText(f"{len(self._excluded)}장 제외됨")
+            set_ui(self.exclude_hint_label, 'text', tr('{0}장 제외됨', len(self._excluded)))
         else:
-            self.exclude_hint_label.setText("")
+            set_ui(self.exclude_hint_label, 'text', "")
 
     def _on_thumbnail_clicked(self, info) -> None:
         self._current_info = info
         self.preview_image.set_image_path(info.path)
 
-        self.filename_label.setText(info.filename)
+        set_ui(self.filename_label, 'text', info.filename)
         self._set_info_rows(info)
 
         for cell, file_info in zip(self._cells, self._files):
@@ -362,20 +364,20 @@ class DateGroupDetailScreen(QWidget):
 
         rows = []
         if info.width and info.height:
-            rows.append(("해상도", f"{info.width} × {info.height}"))
-        rows.append(("파일 크기", format_file_size(info.file_size)))
+            rows.append((tr('해상도'), f"{info.width} × {info.height}"))
+        rows.append((tr('파일 크기'), format_file_size(info.file_size)))
         if info.captured_at:
-            rows.append(("촬영일", info.captured_at.strftime("%Y-%m-%d")))
+            rows.append((tr('촬영일'), info.captured_at.strftime("%Y-%m-%d")))
         # PHASE2_사진정리_기획.md "기기 정보" — 이 화면은 훑어보기 전용이라
         # 다른 행들처럼 값이 없으면 그냥 행 자체를 생략한다(gui/detail_screen.py
         # 처럼 "알 수 없음"을 강제로 보여주지 않음 — 이 화면의 기존 원칙 그대로).
         camera_text = " ".join(part for part in (info.camera_make, info.camera_model) if part)
         if camera_text:
-            rows.append(("촬영 기기", camera_text))
+            rows.append((tr('촬영 기기'), camera_text))
 
         for row, (label, value) in enumerate(rows):
-            label_widget = QLabel(label)
+            label_widget = localized_widget(QLabel, label)
             label_widget.setStyleSheet(f"color: {COLORS['text_secondary']};")
-            value_widget = QLabel(value)
+            value_widget = localized_widget(QLabel, value)
             self.info_grid.addWidget(label_widget, row, 0)
             self.info_grid.addWidget(value_widget, row, 1)

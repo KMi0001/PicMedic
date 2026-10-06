@@ -36,6 +36,9 @@ ScanSessionWindow를 새로 만들 때마다(스캔을 새로 할 때마다!) �
 
 from __future__ import annotations
 
+from gui.i18n import map_message, system_message, message as tr, localized_widget, set_ui
+
+
 import html
 from pathlib import Path
 
@@ -129,7 +132,7 @@ def _insert_soft_breaks(text: str) -> str:
 
 
 def _wrap_anywhere_label(text: str, style: str = "") -> QLabel:
-    label = QLabel(_insert_soft_breaks(text))
+    label = localized_widget(QLabel, map_message(text, _insert_soft_breaks))
     label.setWordWrap(True)
     if style:
         label.setStyleSheet(style)
@@ -176,34 +179,30 @@ class TrashScreen(QWidget):
 
         title_row = QHBoxLayout()
         title_row.setSpacing(10)
-        title_icon = QLabel()
+        title_icon = localized_widget(QLabel)
         title_icon.setPixmap(_trash_icon_pixmap(COLORS["primary"]))
         title_row.addWidget(title_icon)
-        title = QLabel("임시 휴지통")
+        title = localized_widget(QLabel, tr('임시 휴지통'))
         title.setObjectName("Title")
         title_row.addWidget(title)
         title_row.addStretch(1)
-        back_btn = QPushButton("← 뒤로")
+        back_btn = localized_widget(QPushButton, tr('← 뒤로'))
         back_btn.clicked.connect(self.back_requested.emit)
         title_row.addWidget(back_btn)
         outer.addLayout(title_row)
 
-        self.count_chip = SummaryChip("보관된 파일", COLORS["muted"])
+        self.count_chip = SummaryChip(tr('보관된 파일'), COLORS["muted"])
         chips_row = QHBoxLayout()
         chips_row.addWidget(self.count_chip)
         chips_row.addStretch(1)
         outer.addLayout(chips_row)
 
-        hint = QLabel(
-            "완전히 삭제된 게 아니라 이 폴더로 옮겨진 것뿐이에요. "
-            "그룹마다 남긴 파일과 이동된 파일을 나란히 보여드리니, 잘못 옮겨진 게 있으면 "
-            "그 파일의 \"복원\"을 바로 눌러주세요. 필요 없으면 폴더를 열어서 직접 정리해주세요."
-        )
+        hint = localized_widget(QLabel, tr('완전히 삭제된 게 아니라 이 폴더로 옮겨진 것뿐이에요. 그룹마다 남긴 파일과 이동된 파일을 나란히 보여드리니, 잘못 옮겨진 게 있으면 그 파일의 "복원"을 바로 눌러주세요. 필요 없으면 폴더를 열어서 직접 정리해주세요.'))
         hint.setWordWrap(True)
         hint.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 12px;")
         outer.addWidget(hint)
 
-        self.empty_label = QLabel("임시 휴지통이 비어 있습니다.")
+        self.empty_label = localized_widget(QLabel, tr('임시 휴지통이 비어 있습니다.'))
         self.empty_label.setStyleSheet(f"color: {COLORS['text_secondary']}; padding: 24px;")
         self.empty_label.setAlignment(Qt.AlignCenter)
         outer.addWidget(self.empty_label)
@@ -224,7 +223,7 @@ class TrashScreen(QWidget):
 
         btn_row = QHBoxLayout()
         btn_row.setSpacing(10)
-        self.open_folder_btn = QPushButton("임시 휴지통 폴더 열기")
+        self.open_folder_btn = localized_widget(QPushButton, tr('임시 휴지통 폴더 열기'))
         self.open_folder_btn.setEnabled(False)
         self.open_folder_btn.clicked.connect(self._open_folder)
         btn_row.addWidget(self.open_folder_btn)
@@ -330,7 +329,7 @@ class TrashScreen(QWidget):
                 label.setPixmap(pixmap)
                 label.setStyleSheet("")
             else:
-                label.setText("?")
+                set_ui(label, 'text', "?")
 
     def _build_group_card(self, group_id: str, moved_files: list[Path]) -> QFrame:
         card = QFrame()
@@ -344,7 +343,7 @@ class TrashScreen(QWidget):
         # reason에는 폴더 경로가 그대로 박혀 있을 수 있어(예: "'C:\...\긴폴더명'
         # 폴더를 남기기로...") _wrap_anywhere_label을 쓴다 — 자세한 이유는
         # 그 함수 docstring 참고.
-        header = _wrap_anywhere_label(reason or "정리 그룹", style="font-weight: 700;")
+        header = _wrap_anywhere_label(system_message(reason) if reason else tr('정리 그룹'), style="font-weight: 700;")
         layout.addWidget(header)
 
         kept_path = first_entry.get("kept_path")
@@ -363,7 +362,7 @@ class TrashScreen(QWidget):
         layout.setContentsMargins(18, 14, 18, 14)
         layout.setSpacing(8)
 
-        header = QLabel("사유 기록 없음 (이 기능이 생기기 전에 옮겨진 파일)")
+        header = localized_widget(QLabel, tr('사유 기록 없음 (이 기능이 생기기 전에 옮겨진 파일)'))
         header.setWordWrap(True)
         header.setStyleSheet(f"font-weight: 700; color: {COLORS['text_secondary']};")
         layout.addWidget(header)
@@ -377,7 +376,7 @@ class TrashScreen(QWidget):
         row = QHBoxLayout()
         row.setSpacing(10)
 
-        thumb = QLabel()
+        thumb = localized_widget(QLabel)
         thumb.setFixedSize(_THUMB_SIZE, _THUMB_SIZE)
         thumb.setAlignment(Qt.AlignCenter)
         path_str = str(path)
@@ -386,16 +385,16 @@ class TrashScreen(QWidget):
             if cached is not None:
                 thumb.setPixmap(QPixmap.fromImage(cached))
             else:
-                thumb.setText("?")
+                set_ui(thumb, 'text', "?")
                 thumb.setStyleSheet(f"color: {COLORS['text_secondary']}; border: 1px solid {COLORS['border']};")
         elif path.exists():
             # 아직 캐시에 없으면 자리만 잡아두고, _on_thumbnail_ready가 도착하는
             # 대로 채운다 — refresh()가 이 파일을 백그라운드 로딩 대상에 넣었음.
-            thumb.setText("···")
+            set_ui(thumb, 'text', "···")
             thumb.setStyleSheet(f"color: {COLORS['text_secondary']}; border: 1px solid {COLORS['border']};")
             self._pending_labels.setdefault(path_str, []).append(thumb)
         else:
-            thumb.setText("?")
+            set_ui(thumb, 'text', "?")
             thumb.setStyleSheet(f"color: {COLORS['text_secondary']}; border: 1px solid {COLORS['border']};")
         row.addWidget(thumb)
 
@@ -407,17 +406,17 @@ class TrashScreen(QWidget):
         info_col.addWidget(name_label)
 
         if kept:
-            badge = QLabel("유지됨 · 원래 위치에 그대로 있어요")
+            badge = localized_widget(QLabel, tr('유지됨 · 원래 위치에 그대로 있어요'))
             badge.setStyleSheet(f"color: {COLORS['primary']}; font-size: 11px;")
         else:
             size = format_file_size(path.stat().st_size) if path.exists() else "-"
-            badge = QLabel(f"이동됨 · {size}")
+            badge = localized_widget(QLabel, tr('이동됨 · {0}', size))
             badge.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 11px;")
         info_col.addWidget(badge)
         row.addLayout(info_col, stretch=1)
 
         if not kept:
-            restore_btn = QPushButton("복원")
+            restore_btn = localized_widget(QPushButton, tr('복원'))
             restore_btn.clicked.connect(lambda checked=False, p=path: self._on_restore_one(p))
             row.addWidget(restore_btn)
 
@@ -427,7 +426,7 @@ class TrashScreen(QWidget):
         try:
             trash.restore_from_trash(path)
         except (ValueError, OSError) as exc:
-            info_dialog(self, f"복원하지 못했습니다: {path.name} ({exc})")
+            info_dialog(self, tr('복원하지 못했습니다: {0} ({1})', path.name, exc))
             return
         self.refresh()
 

@@ -13,6 +13,8 @@ core/live_photo_finder.py로 사진<->MOV 짝을 찾은 뒤, 찾은 목록에서
 
 from __future__ import annotations
 
+from gui.i18n import system_message, file_dialog, message as tr, localized_widget, set_ui, add_action
+
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QThread, QUrl, Signal
@@ -81,8 +83,7 @@ def run_live_photo_finder(parent: QWidget, paths: list[str]) -> None:
         if not matches:
             info_dialog(
                 parent,
-                "라이브 포토를 찾지 못했어요.\n"
-                "사진과 짝 동영상(.MOV)이 검사 범위 안에 함께 있어야 찾을 수 있어요.",
+                tr('라이브 포토를 찾지 못했어요.\n사진과 짝 동영상(.MOV)이 검사 범위 안에 함께 있어야 찾을 수 있어요.'),
             )
             return
         _open_result_dialog(parent, paths, matches)
@@ -90,15 +91,15 @@ def run_live_photo_finder(parent: QWidget, paths: list[str]) -> None:
     def on_failed(message: str):
         progress_dialog.accept()
         worker.wait()
-        info_dialog(parent, f"라이브 포토를 찾는 중 예상하지 못한 오류가 발생했어요.\n\n{message}")
+        info_dialog(parent, tr('라이브 포토를 찾는 중 예상하지 못한 오류가 발생했어요.\n\n{0}', system_message(message)))
 
     progress_dialog.cancel_requested.connect(worker.cancel)
     worker.progress.connect(progress_dialog.update_progress)
     worker.finished_matches.connect(on_finished)
     worker.failed.connect(on_failed)
 
-    progress_dialog.start("라이브 포토 찾는 중")
-    progress_dialog.status_label.setText("사진과 동영상을 대조하는 중...")
+    progress_dialog.start(tr('라이브 포토 찾는 중'))
+    set_ui(progress_dialog.status_label, 'text', tr('사진과 동영상을 대조하는 중...'))
     worker.start()
     progress_dialog.exec()
 
@@ -126,20 +127,20 @@ def _build_match_row(m: LivePhotoMatch) -> QWidget:
     layout.setContentsMargins(6, 4, 6, 4)
     layout.setSpacing(2)
 
-    title = QLabel(f"{m.image_path.name}  ↔  {m.mov_path.name}")
+    title = localized_widget(QLabel, f"{m.image_path.name}  ↔  {m.mov_path.name}")
     title.setStyleSheet("font-size: 12.5px;")
     layout.addWidget(title)
 
     path_style = f"color: {COLORS['text_secondary']}; font-size: 11px;"
     if m.image_path.parent == m.mov_path.parent:
-        path_label = QLabel(str(m.image_path.parent))
+        path_label = localized_widget(QLabel, str(m.image_path.parent))
         path_label.setStyleSheet(path_style)
         layout.addWidget(path_label)
     else:
-        image_path_label = QLabel(f"사진: {m.image_path.parent}")
+        image_path_label = localized_widget(QLabel, tr('사진: {0}', m.image_path.parent))
         image_path_label.setStyleSheet(path_style)
         layout.addWidget(image_path_label)
-        mov_path_label = QLabel(f"동영상: {m.mov_path.parent}")
+        mov_path_label = localized_widget(QLabel, tr('동영상: {0}', m.mov_path.parent))
         mov_path_label.setStyleSheet(path_style)
         layout.addWidget(mov_path_label)
 
@@ -154,14 +155,14 @@ def _on_match_context_menu(parent: QWidget, list_widget: QListWidget, pos) -> No
     same_folder = match.image_path.parent == match.mov_path.parent
 
     menu = QMenu(list_widget)
-    preview_action = menu.addAction("미리보기")
+    preview_action = add_action(menu, tr('미리보기'))
     if same_folder:
-        open_folder_action = menu.addAction("로컬 폴더 위치 열기")
+        open_folder_action = add_action(menu, tr('로컬 폴더 위치 열기'))
         open_image_folder_action = open_mov_folder_action = None
     else:
         open_folder_action = None
-        open_image_folder_action = menu.addAction("사진 폴더 열기")
-        open_mov_folder_action = menu.addAction("동영상 폴더 열기")
+        open_image_folder_action = add_action(menu, tr('사진 폴더 열기'))
+        open_mov_folder_action = add_action(menu, tr('동영상 폴더 열기'))
     chosen = menu.exec(list_widget.mapToGlobal(pos))
     if chosen is preview_action:
         # 이전/다음으로 목록의 다른 짝도 훑어볼 수 있게(2026-09-18, 사용자
@@ -194,16 +195,16 @@ def _build_live_photo_preview_dialog(
     viewer = ImageViewer(overlay_controls=True)
     layout.addWidget(viewer, stretch=1)
 
-    path_label = QLabel()
+    path_label = localized_widget(QLabel)
     path_label.setWordWrap(True)
     path_label.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 11px;")
     layout.addWidget(path_label)
 
     def _show(i: int) -> None:
         m = matches[i]
-        dialog.setWindowTitle(m.image_path.name)
+        set_ui(dialog, 'windowTitle', m.image_path.name)
         viewer.set_image_path(str(m.image_path))
-        path_label.setText(str(m.image_path))
+        set_ui(path_label, 'text', str(m.image_path))
         viewer.set_navigation(
             (lambda: _show(i - 1)) if i > 0 else None,
             (lambda: _show(i + 1)) if i < len(matches) - 1 else None,
@@ -222,7 +223,7 @@ def _open_live_photo_preview(parent: QWidget, matches: list[LivePhotoMatch], ind
 
 def _open_result_dialog(parent: QWidget, origin_paths: list[str], matches: list[LivePhotoMatch]) -> None:
     dialog = QDialog(parent)
-    dialog.setWindowTitle("PicMedic — 라이브 포토")
+    set_ui(dialog, 'windowTitle', tr('PicMedic — 라이브 포토'))
     dialog.setWindowModality(Qt.WindowModal)
     dialog.resize(520, 480)
 
@@ -230,14 +231,11 @@ def _open_result_dialog(parent: QWidget, origin_paths: list[str], matches: list[
     layout.setContentsMargins(20, 20, 20, 20)
     layout.setSpacing(12)
 
-    header = QLabel(f"라이브 포토 {len(matches)}개를 찾았어요")
+    header = localized_widget(QLabel, tr('라이브 포토 {0}개를 찾았어요', len(matches)))
     header.setStyleSheet("font-weight: 700; font-size: 16px;")
     layout.addWidget(header)
 
-    hint = QLabel(
-        "사진과 짝 동영상이 같은 식별자를 공유하는 걸 확인해서 찾은 목록이에요 — "
-        "100% 정확하지는 않을 수 있어요."
-    )
+    hint = localized_widget(QLabel, tr('사진과 짝 동영상이 같은 식별자를 공유하는 걸 확인해서 찾은 목록이에요 — 100% 정확하지는 않을 수 있어요.'))
     hint.setWordWrap(True)
     hint.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 11.5px;")
     layout.addWidget(hint)
@@ -257,14 +255,14 @@ def _open_result_dialog(parent: QWidget, origin_paths: list[str], matches: list[
     output_root = _default_output_root(origin_paths)
 
     btn_row = QHBoxLayout()
-    export_btn = QPushButton("동영상으로 내보내기")
-    organize_btn = QPushButton("이 사진들만 정리하기")
+    export_btn = localized_widget(QPushButton, tr('동영상으로 내보내기'))
+    organize_btn = localized_widget(QPushButton, tr('이 사진들만 정리하기'))
     organize_btn.setObjectName("Primary")
     btn_row.addWidget(export_btn)
     btn_row.addWidget(organize_btn)
     layout.addLayout(btn_row)
 
-    close_btn = QPushButton("닫기")
+    close_btn = localized_widget(QPushButton, tr('닫기'))
     close_btn.clicked.connect(dialog.reject)
     layout.addWidget(close_btn)
 
@@ -280,7 +278,7 @@ def _pick_output_dir(parent: QWidget, default_parent: Path) -> Path | None:
     시작하되, 다른 폴더를 골라도 되고 다이얼로그 안의 "새 폴더" 만들기도
     그대로 쓸 수 있다."""
     start_dir = default_parent if default_parent.is_dir() else Path.home()
-    chosen = QFileDialog.getExistingDirectory(parent, "저장할 폴더 선택", str(start_dir))
+    chosen = file_dialog(QFileDialog.getExistingDirectory, parent, tr('저장할 폴더 선택'), str(start_dir))
     if not chosen:
         return None
     return Path(chosen)
@@ -296,7 +294,7 @@ def _pick_and_export(parent: QWidget, matches: list[LivePhotoMatch], output_root
             matches, output_dir, progress_callback=progress_callback, should_cancel=should_cancel
         ),
         str(output_dir),
-        "동영상 내보내는 중",
+        tr('동영상 내보내는 중'),
     )
 
 
@@ -310,7 +308,7 @@ def _pick_and_organize(parent: QWidget, matches: list[LivePhotoMatch], output_ro
             matches, output_dir, mode="copy", progress_callback=progress_callback, should_cancel=should_cancel
         ),
         str(output_dir),
-        "정리하는 중",
+        tr('정리하는 중'),
     )
 
 
@@ -323,15 +321,15 @@ def _run_batch(parent: QWidget, run_fn, output_dir: str, title: str) -> None:
         worker.wait()
         success = sum(1 for o in outcomes if o.success)
         fail = sum(1 for o in outcomes if not o.success)
-        message = f"{success}개 완료했어요."
+        message = tr('{0}개 완료했어요.', success)
         if fail:
-            message += f"\n{fail}개는 실패했어요(다른 프로그램에서 쓰는 중이거나 저장 공간 부족 등)."
+            message += tr('\n{0}개는 실패했어요(다른 프로그램에서 쓰는 중이거나 저장 공간 부족 등).', fail)
         info_dialog_with_folder(parent, message, output_dir)
 
     def on_failed(message: str):
         progress_dialog.accept()
         worker.wait()
-        info_dialog(parent, f"예상하지 못한 오류가 발생했어요.\n\n{message}")
+        info_dialog(parent, tr('예상하지 못한 오류가 발생했어요.\n\n{0}', system_message(message)))
 
     progress_dialog.cancel_requested.connect(worker.cancel)
     worker.progress.connect(progress_dialog.update_progress)

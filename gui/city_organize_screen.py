@@ -23,6 +23,8 @@ experiments/city_organize_prototype에서 지도/줌 부분을 먼저 검증함.
 
 from __future__ import annotations
 
+from gui.i18n import place_message, message as tr, localized_widget, set_ui, add_action
+
 from pathlib import Path
 
 from PySide6.QtCore import QPointF, QRectF, Qt, QUrl, Signal
@@ -156,23 +158,19 @@ class CityOrganizeScreen(QWidget):
 
         title_row = QHBoxLayout()
         title_row.setSpacing(10)
-        title_icon = QLabel()
+        title_icon = localized_widget(QLabel)
         title_icon.setPixmap(_pin_icon_pixmap(COLORS["primary"]))
         title_row.addWidget(title_icon)
-        title = QLabel("도시별")
+        title = localized_widget(QLabel, tr('도시별'))
         title.setObjectName("Title")
         title_row.addWidget(title)
         title_row.addStretch(1)
-        back_btn = QPushButton("← 뒤로")
+        back_btn = localized_widget(QPushButton, tr('← 뒤로'))
         back_btn.clicked.connect(self.back_requested.emit)
         title_row.addWidget(back_btn)
         outer.addLayout(title_row)
 
-        hint = QLabel(
-            "미리보기예요 — 아직 아무 파일도 옮기지 않았어요. GPS 위치가 있는 사진과, GPS는 없지만 "
-            "촬영 시각·비슷한 사진으로 위치를 추정한 사진이 지도에 찍혀요(대략적인 위치, 추정 위치는 "
-            "목록에 따로 표시). 휠로 확대/축소, 드래그로 이동하면 아래 목록이 그 범위 사진으로 바뀌어요."
-        )
+        hint = localized_widget(QLabel, tr('미리보기예요 — 아직 아무 파일도 옮기지 않았어요. GPS 위치가 있는 사진과, GPS는 없지만 촬영 시각·비슷한 사진으로 위치를 추정한 사진이 지도에 찍혀요(대략적인 위치, 추정 위치는 목록에 따로 표시). 휠로 확대/축소, 드래그로 이동하면 아래 목록이 그 범위 사진으로 바뀌어요.'))
         hint.setWordWrap(True)
         hint.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 12px;")
         outer.addWidget(hint)
@@ -195,7 +193,7 @@ class CityOrganizeScreen(QWidget):
 
         list_col = QVBoxLayout()
         list_col.setSpacing(8)
-        region_label = QLabel("이 범위 안의 사진")
+        region_label = localized_widget(QLabel, tr('이 범위 안의 사진'))
         region_label.setStyleSheet("font-weight: 700;")
         list_col.addWidget(region_label)
 
@@ -211,14 +209,14 @@ class CityOrganizeScreen(QWidget):
         self.region_scroll.setWidget(self._region_container)
         list_col.addWidget(self.region_scroll, stretch=1)
 
-        self.region_empty_label = QLabel("이 범위에 GPS 사진이 없어요 — 지도를 움직여보세요.")
+        self.region_empty_label = localized_widget(QLabel, tr('이 범위에 GPS 사진이 없어요 — 지도를 움직여보세요.'))
         self.region_empty_label.setWordWrap(True)
         self.region_empty_label.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 12px; padding: 12px 0;")
         list_col.addWidget(self.region_empty_label)
 
         map_list_row.addLayout(list_col, stretch=2)
 
-        self.empty_label = QLabel("GPS 위치 정보가 있는 사진이 없습니다.")
+        self.empty_label = localized_widget(QLabel, tr('GPS 위치 정보가 있는 사진이 없습니다.'))
         self.empty_label.setStyleSheet(f"color: {COLORS['text_secondary']}; padding: 24px;")
         self.empty_label.setAlignment(Qt.AlignCenter)
 
@@ -234,12 +232,12 @@ class CityOrganizeScreen(QWidget):
         # 으로 옮겼다(2026-09-18).
         self._organize_dialog = OrganizeSettingsDialog(
             self,
-            title="도시별 정리 — 정리하기",
-            auto_label="자동 입력 (정리 기준 — 도시별)",
-            mode_note=f'"{NO_CITY_LABEL}" 사진들은 따로 "위치없음" 폴더에 모아요.',
+            title=tr('도시별 정리 — 정리하기'),
+            auto_label=tr('자동 입력 (정리 기준 — 도시별)'),
+            mode_note=tr('"{0}" 사진들은 따로 "위치없음" 폴더에 모아요.', NO_CITY_LABEL),
         )
 
-        self.organize_btn = QPushButton("정리하기")
+        self.organize_btn = localized_widget(QPushButton, tr('정리하기'))
         self.organize_btn.setObjectName("Primary")
         self.organize_btn.setEnabled(False)
         self.organize_btn.clicked.connect(self._on_organize_clicked)
@@ -402,9 +400,9 @@ class CityOrganizeScreen(QWidget):
         layout.setSpacing(4)
 
         inferred_count = sum(1 for f in files if f.location_inferred_from)
-        header_text = f"{label} · {len(files)}장"
+        header_text = tr('{0} · {1}장', place_message(label), len(files))
         if inferred_count:
-            header_text += f" (그중 {inferred_count}장은 추정 위치)"
+            header_text += tr(' (그중 {0}장은 추정 위치)', inferred_count)
 
         # 카드 자체를 기본으로 접어둔다 — 지도에 보이는 도시가 여러 개면
         # 카드마다 파일 목록이 다 펼쳐진 채로 쌓여서 화면을 감당 안 될
@@ -417,7 +415,7 @@ class CityOrganizeScreen(QWidget):
         header_btn.setCheckable(True)
         header_btn.setAutoRaise(True)
         header_btn.setCursor(Qt.PointingHandCursor)
-        header_btn.setText(f"▸ {header_text}")
+        set_ui(header_btn, 'text', tr("▸ {0}", header_text))
         header_btn.setStyleSheet("QToolButton { border: none; background: transparent; "
                                   "text-align: left; font-weight: 700; }")
         layout.addWidget(header_btn)
@@ -446,7 +444,7 @@ class CityOrganizeScreen(QWidget):
             else:
                 self._expanded_city_labels.discard(label)
             body.setVisible(checked)
-            header_btn.setText(("▾ " if checked else "▸ ") + header_text)
+            set_ui(header_btn, 'text', ("▾ " if checked else "▸ ") + header_text)
 
         def _on_header_clicked(checked: bool) -> None:
             # toggled와 달리 clicked는 실제 사용자 클릭에서만 오고, 지도
@@ -493,7 +491,7 @@ class CityOrganizeScreen(QWidget):
             toggle_btn.setCheckable(True)
             toggle_btn.setAutoRaise(True)
             toggle_btn.setCursor(Qt.PointingHandCursor)
-            toggle_btn.setText(f"▸ 외 {len(remaining_files):,}장 더 보기")
+            set_ui(toggle_btn, 'text', tr('▸ 외 {0}장 더 보기', f'{len(remaining_files):,}'))
             toggle_btn.setStyleSheet(
                 f"QToolButton {{ border: none; background: transparent; text-align: left; "
                 f"color: {COLORS['text_secondary']}; font-size: 11px; }}"
@@ -514,16 +512,16 @@ class CityOrganizeScreen(QWidget):
                     layout.addWidget(btn)
                 for row in extra_rows:
                     row.setVisible(checked)
-                btn.setText("▾ 접기" if checked else f"▸ 외 {len(remaining_files):,}장 더 보기")
+                set_ui(btn, 'text', tr('▾ 접기') if checked else tr('▸ 외 {0}장 더 보기', f'{len(remaining_files):,}'))
 
             toggle_btn.toggled.connect(_on_toggled)
 
     def _build_file_row(self, info: FileInfo, label: str) -> _ClickableFileRow:
         row_text = info.filename
         if info.location_inferred_from:
-            row_text += f"  (추정 위치 · {info.location_inferred_from})"
+            row_text += tr('  (추정 위치 · {0})', tr(info.location_inferred_from))
         row = _ClickableFileRow(row_text)
-        row.setToolTip(info.path)
+        set_ui(row, 'toolTip', info.path)
         row.clicked.connect(lambda info=info, label=label: self._open_detail(label, info))
         row.setContextMenuPolicy(Qt.CustomContextMenu)
         row.customContextMenuRequested.connect(
@@ -537,8 +535,8 @@ class CityOrganizeScreen(QWidget):
 
     def _on_row_context_menu(self, widget: QWidget, pos, info: FileInfo, label: str) -> None:
         menu = QMenu(self)
-        detail_action = menu.addAction("상세보기")
-        open_folder_action = menu.addAction("로컬 폴더 위치 열기")
+        detail_action = add_action(menu, tr('상세보기'))
+        open_folder_action = add_action(menu, tr('로컬 폴더 위치 열기'))
         chosen = menu.exec(widget.mapToGlobal(pos))
         if chosen is detail_action:
             self._open_detail(label, info)

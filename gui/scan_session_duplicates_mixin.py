@@ -10,6 +10,9 @@ self.xxx는 ScanSessionWindow.__init__/OrganizeExecutionMixin이 준비한
 
 from __future__ import annotations
 
+from gui.i18n import message as tr
+
+
 from gui.common_dialogs import info_dialog as _info_dialog
 
 
@@ -32,7 +35,7 @@ class DuplicatesSimilarMixin:
         # 허브로 랜딩해서 여기서 스캔을 미뤄야 했음), result가 항상 채워져 있다.
         result = self.result_screen.result
         if not result or not result.duplicate_groups():
-            _info_dialog(self, "중복된 파일이 없습니다.")
+            _info_dialog(self, tr('중복된 파일이 없습니다.'))
             return
         self.duplicate_screen.set_result(result)
         self.stack.setCurrentWidget(self.duplicate_screen)
@@ -40,7 +43,7 @@ class DuplicatesSimilarMixin:
     def _open_similar(self):
         result = self.result_screen.result
         if not result or not result.files:
-            _info_dialog(self, "정리할 사진이 없습니다.")
+            _info_dialog(self, tr('정리할 사진이 없습니다.'))
             return
         # similar_groups() 계산 자체가 느릴 수 있어(퍼셉추얼 해시 쌍 비교)
         # 여기서 미리 확인하지 않고, SimilarScreen이 백그라운드로 계산하는

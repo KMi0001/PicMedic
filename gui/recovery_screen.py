@@ -6,6 +6,8 @@ PRD 20장 "Screen 05 — Recovery" 구현.
 
 from __future__ import annotations
 
+from gui.i18n import system_message, file_dialog, message as tr, localized_widget, set_ui, add_items
+
 from collections import Counter
 from pathlib import Path
 
@@ -37,13 +39,13 @@ from utils.file_utils import DEFAULT_SUFFIX
 
 # 상태 카드 순서 + 라벨. NORMAL부터 심각도 순으로, "지원 안 함" 계열은 뒤에 묶는다.
 STATUS_CHIP_LABELS: dict[FileStatus, str] = {
-    FileStatus.NORMAL: "정상",
-    FileStatus.MISMATCH: "형식 불일치",
-    FileStatus.PARTIAL_CORRUPTION: "부분 손상",
-    FileStatus.CORRUPTED: "손상",
-    FileStatus.UNSUPPORTED: "지원 안 함",
-    FileStatus.NOT_AN_IMAGE: "이미지 아님",
-    FileStatus.UNKNOWN: "알 수 없음",
+    FileStatus.NORMAL: tr('정상'),
+    FileStatus.MISMATCH: tr('형식 불일치'),
+    FileStatus.PARTIAL_CORRUPTION: tr('부분 손상'),
+    FileStatus.CORRUPTED: tr('손상'),
+    FileStatus.UNSUPPORTED: tr('지원 안 함'),
+    FileStatus.NOT_AN_IMAGE: tr('이미지 아님'),
+    FileStatus.UNKNOWN: tr('알 수 없음'),
 }
 
 # HEADER_STYLE: 카드 안의 섹션 제목(복구 방식/저장 위치/파일명에 추가할 문구)을
@@ -55,7 +57,7 @@ SECTION_HEADER_STYLE = (
 
 
 QUALITY_PRESETS = {"고화질": 95, "보통": 85, "저용량": 65}
-DEFAULT_QUALITY_PRESET = "보통"
+DEFAULT_QUALITY_PRESET = tr('보통')
 # 이 형식들만 Pillow 저장 시 quality를 실제로 쓴다 (core/converter.py::convert_to_format 참고)
 QUALITY_APPLICABLE_FORMATS = {"JPEG", "WEBP"}
 
@@ -185,14 +187,14 @@ class RecoveryScreen(QWidget):
         # 액션 버튼("← 뒤로")은 같은 줄 오른쪽 끝.
         title_row = QHBoxLayout()
         title_row.setSpacing(10)
-        title_icon = QLabel()
+        title_icon = localized_widget(QLabel)
         title_icon.setPixmap(_convert_icon_pixmap(COLORS["primary"]))
         title_row.addWidget(title_icon)
-        self.title_label = QLabel("사진 복구")
+        self.title_label = localized_widget(QLabel, tr('사진 복구'))
         self.title_label.setObjectName("Title")
         title_row.addWidget(self.title_label)
         title_row.addStretch(1)
-        back_btn = QPushButton("← 뒤로")
+        back_btn = localized_widget(QPushButton, tr('← 뒤로'))
         back_btn.clicked.connect(self.back_requested.emit)
         title_row.addWidget(back_btn)
         outer.addLayout(title_row)
@@ -201,7 +203,7 @@ class RecoveryScreen(QWidget):
         # 그대로 재사용해 같은 카드형 스타일로 보여준다. 실제로 존재하는 상태만 노출한다.
         chips_row = QHBoxLayout()
         chips_row.setSpacing(10)
-        self.chip_total = SummaryChip("선택 파일", COLORS["text"])
+        self.chip_total = SummaryChip(tr('선택 파일'), COLORS["text"])
         chips_row.addWidget(self.chip_total)
         self.status_chips: dict[FileStatus, SummaryChip] = {}
         for status, label in STATUS_CHIP_LABELS.items():
@@ -218,13 +220,13 @@ class RecoveryScreen(QWidget):
         card_layout.setContentsMargins(24, 24, 24, 24)
         card_layout.setSpacing(14)
 
-        self.mode_label = QLabel("복구 방식")
+        self.mode_label = localized_widget(QLabel, tr('복구 방식'))
         self.mode_label.setStyleSheet(SECTION_HEADER_STYLE)
         card_layout.addWidget(self.mode_label)
 
         self.mode_group = QButtonGroup(self)
-        self.restore_radio = QRadioButton("확장자 복원")
-        self.convert_radio = QRadioButton("형식 변환")
+        self.restore_radio = localized_widget(QRadioButton, tr('확장자 복원'))
+        self.convert_radio = localized_widget(QRadioButton, tr('형식 변환'))
         self.convert_radio.setChecked(True)
         self.mode_group.addButton(self.restore_radio)
         self.mode_group.addButton(self.convert_radio)
@@ -233,16 +235,16 @@ class RecoveryScreen(QWidget):
         convert_row = QHBoxLayout()
         convert_row.addWidget(self.convert_radio)
         self.format_combo = QComboBox()
-        self.format_combo.addItems(CONVERT_TARGET_FORMATS)
+        add_items(self.format_combo, CONVERT_TARGET_FORMATS)
         self.format_combo.setCurrentText(DEFAULT_CONVERT_FORMAT)
         convert_row.addWidget(self.format_combo)
 
-        self.quality_label = QLabel("화질")
+        self.quality_label = localized_widget(QLabel, tr('화질'))
         self.quality_label.setStyleSheet(f"color: {COLORS['text_secondary']};")
         convert_row.addWidget(self.quality_label)
         self.quality_combo = QComboBox()
-        self.quality_combo.addItems(QUALITY_PRESETS.keys())
-        self.quality_combo.setCurrentText(DEFAULT_QUALITY_PRESET)
+        add_items(self.quality_combo, [tr(label) for label in QUALITY_PRESETS])
+        self.quality_combo.setCurrentIndex(self.quality_combo.findData(str(DEFAULT_QUALITY_PRESET)))
         convert_row.addWidget(self.quality_combo)
 
         convert_row.addStretch(1)
@@ -259,43 +261,39 @@ class RecoveryScreen(QWidget):
         # 기본은 항상 "원본 보존"이고, "원본 삭제"를 골랐을 때만 원본을 그 폴더의
         # 임시휴지통으로 옮기고 결과물이 원본이 있던 자리를 대신한다
         # (core/converter.py::_recover_file_replacing_original).
-        self.output_mode_label = QLabel("저장 방식")
+        self.output_mode_label = localized_widget(QLabel, tr('저장 방식'))
         self.output_mode_label.setStyleSheet(SECTION_HEADER_STYLE)
         card_layout.addWidget(self.output_mode_label)
 
         self.output_mode_group = QButtonGroup(self)
-        self.keep_original_radio = QRadioButton("원본 보존 — 별도 폴더에 새 파일로 저장 (기본값)")
+        self.keep_original_radio = localized_widget(QRadioButton, tr('원본 보존 — 별도 폴더에 새 파일로 저장 (기본값)'))
         self.keep_original_radio.setChecked(True)
-        self.replace_original_radio = QRadioButton(
-            "원본 삭제 — 원본을 임시휴지통으로 옮기고, 결과물이 그 자리를 대신하게 하기"
-        )
+        self.replace_original_radio = localized_widget(QRadioButton, tr('원본 삭제 — 원본을 임시휴지통으로 옮기고, 결과물이 그 자리를 대신하게 하기'))
         self.output_mode_group.addButton(self.keep_original_radio)
         self.output_mode_group.addButton(self.replace_original_radio)
         card_layout.addWidget(self.keep_original_radio)
         card_layout.addWidget(self.replace_original_radio)
 
-        self.output_label = QLabel("저장 위치")
+        self.output_label = localized_widget(QLabel, tr('저장 위치'))
         self.output_label.setStyleSheet(SECTION_HEADER_STYLE)
         card_layout.addWidget(self.output_label)
 
         output_row = QHBoxLayout()
         self.output_edit = QLineEdit()
         output_row.addWidget(self.output_edit)
-        self.browse_btn = QPushButton("찾아보기")
+        self.browse_btn = localized_widget(QPushButton, tr('찾아보기'))
         self.browse_btn.clicked.connect(self._browse_output)
         output_row.addWidget(self.browse_btn)
         card_layout.addLayout(output_row)
 
-        self.suffix_label = QLabel("파일명에 추가할 문구")
+        self.suffix_label = localized_widget(QLabel, tr('파일명에 추가할 문구'))
         self.suffix_label.setStyleSheet(SECTION_HEADER_STYLE)
         card_layout.addWidget(self.suffix_label)
 
         self.suffix_edit = QLineEdit(DEFAULT_SUFFIX)
         card_layout.addWidget(self.suffix_edit)
 
-        self.keep_original_note = QLabel(
-            "원본 파일은 항상 그대로 보존되며, 복구 결과는 별도 폴더에 새 파일로 저장됩니다."
-        )
+        self.keep_original_note = localized_widget(QLabel, tr('원본 파일은 항상 그대로 보존되며, 복구 결과는 별도 폴더에 새 파일로 저장됩니다.'))
         self.keep_original_note.setWordWrap(True)
         self.keep_original_note.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 11px;")
         card_layout.addWidget(self.keep_original_note)
@@ -304,15 +302,15 @@ class RecoveryScreen(QWidget):
         self.replace_original_radio.toggled.connect(self._on_output_mode_changed)
         self._on_output_mode_changed()
 
-        self.verify_check = QCheckBox("복구 후 파일 검증")
+        self.verify_check = localized_widget(QCheckBox, tr('복구 후 파일 검증'))
         self.verify_check.setChecked(True)
         card_layout.addWidget(self.verify_check)
 
-        self.status_label = QLabel("")
+        self.status_label = localized_widget(QLabel, "")
         self.status_label.setStyleSheet(f"color: {COLORS['text_secondary']};")
         card_layout.addWidget(self.status_label)
 
-        self.start_btn = QPushButton("Medic!")
+        self.start_btn = localized_widget(QPushButton, "Medic!")
         self.start_btn.setObjectName("Primary")
         self.start_btn.clicked.connect(self._start_recovery)
         card_layout.addWidget(self.start_btn)
@@ -339,8 +337,8 @@ class RecoveryScreen(QWidget):
 
         self.restore_radio.setVisible(can_restore)
         self.convert_radio.setVisible(can_restore)
-        self.mode_label.setText("복구 방식" if can_restore else "확장자 변환")
-        self.verify_check.setText("복구 후 파일 검증" if can_restore else "변환 후 파일 검증")
+        set_ui(self.mode_label, 'text', tr('복구 방식') if can_restore else tr('확장자 변환'))
+        set_ui(self.verify_check, 'text', tr('복구 후 파일 검증') if can_restore else tr('변환 후 파일 검증'))
 
         # 검사 결과 화면의 "Medic!"(일괄 복구)은 preselected_mode 없이 들어온다. 복원할 게
         # 있으면(can_restore) 기본값은 "확장자 복원"이어야 한다 — 안 그러면 안전한 옵션인
@@ -360,10 +358,10 @@ class RecoveryScreen(QWidget):
         default_dir = self.settings.value("last_output_dir", "")
         if not default_dir and files:
             default_dir = str(Path(files[0].path).parent / "Recovered")
-        self.output_edit.setText(default_dir)
-        self.suffix_edit.setText(DEFAULT_SUFFIX)
+        set_ui(self.output_edit, 'text', default_dir)
+        set_ui(self.suffix_edit, 'text', DEFAULT_SUFFIX)
 
-        self.status_label.setText("")
+        set_ui(self.status_label, 'text', "")
         self.start_btn.setEnabled(True)
 
         self._on_mode_changed()  # radio 상태가 이전과 같아 toggled가 안 울려도 제목/화질 표시는 갱신되게
@@ -384,19 +382,14 @@ class RecoveryScreen(QWidget):
         self.suffix_label.setVisible(not checked)
         self.suffix_edit.setVisible(not checked)
         if checked:
-            self.keep_original_note.setText(
-                "원본은 그 폴더의 \"임시휴지통\"으로 옮겨지고, 복구 결과가 원본이 있던 자리를 대신합니다. "
-                "필요하면 임시휴지통에서 원본을 다시 꺼내올 수 있어요."
-            )
+            set_ui(self.keep_original_note, 'text', tr('원본은 그 폴더의 "임시휴지통"으로 옮겨지고, 복구 결과가 원본이 있던 자리를 대신합니다. 필요하면 임시휴지통에서 원본을 다시 꺼내올 수 있어요.'))
         else:
-            self.keep_original_note.setText(
-                "원본 파일은 항상 그대로 보존되며, 복구 결과는 별도 폴더에 새 파일로 저장됩니다."
-            )
+            set_ui(self.keep_original_note, 'text', tr('원본 파일은 항상 그대로 보존되며, 복구 결과는 별도 폴더에 새 파일로 저장됩니다.'))
 
     def _on_mode_changed(self):
         is_convert = self.convert_radio.isChecked()
         self.format_combo.setEnabled(is_convert)
-        self.title_label.setText("사진 변환" if is_convert else "사진 복구")
+        set_ui(self.title_label, 'text', tr('사진 변환') if is_convert else tr('사진 복구'))
 
         # PNG/GIF/BMP는 quality를 쓰지 않으므로(core/converter.py 참고) 화질 선택 자체가
         # 의미 없다 — 비활성화가 아니라 아예 숨긴다.
@@ -405,9 +398,9 @@ class RecoveryScreen(QWidget):
         self.quality_combo.setVisible(quality_applicable)
 
     def _browse_output(self):
-        folder = QFileDialog.getExistingDirectory(self, "저장 위치 선택")
+        folder = file_dialog(QFileDialog.getExistingDirectory, self, tr('저장 위치 선택'))
         if folder:
-            self.output_edit.setText(folder)
+            set_ui(self.output_edit, 'text', folder)
 
     def _start_recovery(self):
         if not self.files:
@@ -418,7 +411,7 @@ class RecoveryScreen(QWidget):
         # "저장 위치"인 것처럼 잘못 보이지 않게 한다.
         output_dir = "" if replace_original else self.output_edit.text().strip()
         if not replace_original and not output_dir:
-            self.status_label.setText("저장 위치를 입력해주세요.")
+            set_ui(self.status_label, 'text', tr('저장 위치를 입력해주세요.'))
             return
         if not replace_original:
             self.settings.setValue("last_output_dir", output_dir)
@@ -426,7 +419,7 @@ class RecoveryScreen(QWidget):
         mode = RecoveryMode.RESTORE_EXTENSION if self.restore_radio.isChecked() else RecoveryMode.CONVERT
         suffix = self.suffix_edit.text().strip() or DEFAULT_SUFFIX
         target_format = self.format_combo.currentText()
-        quality = QUALITY_PRESETS[self.quality_combo.currentText()]
+        quality = QUALITY_PRESETS[self.quality_combo.currentData()]
 
         # 확장자 복원 모드는 이미 정상인 파일에는 복원할 내용이 없어 자동으로 건너뛴다
         # (core/converter.py::recover_file, PRD_MVP우선순위.md '갭 #11'). 시작 직전에 팝업으로
@@ -436,13 +429,13 @@ class RecoveryScreen(QWidget):
             if normal_count:
                 confirmed = _confirm_dialog(
                     self,
-                    f"선택한 파일 중 {normal_count}개는 이미 정상 파일이라 복원할 내용이 없어 건너뜁니다.\n계속 진행할까요?",
+                    tr('선택한 파일 중 {0}개는 이미 정상 파일이라 복원할 내용이 없어 건너뜁니다.\n계속 진행할까요?', normal_count),
                 )
                 if not confirmed:
                     return
 
         self.start_btn.setEnabled(False)
-        self.status_label.setText("")
+        set_ui(self.status_label, 'text', "")
         self._cancel_requested = False
 
         self.worker = RecoveryWorker(
@@ -462,7 +455,7 @@ class RecoveryScreen(QWidget):
         # 진행 중에는 모달 팝업만 응답하게 만들어, 배치 작업 중 설정을 바꾸거나 뒤로 가서
         # 화면이 바뀌는 문제(PRD_MVP우선순위.md 갭 #9)를 막는다. exec()는 중첩 이벤트
         # 루프라 워커 스레드의 progress/finished_batch 시그널은 계속 정상적으로 처리된다.
-        title = "사진 변환 진행 중" if mode == RecoveryMode.CONVERT else "사진 복구 진행 중"
+        title = tr('사진 변환 진행 중') if mode == RecoveryMode.CONVERT else tr('사진 복구 진행 중')
         self.progress_dialog.start(title)
         self.progress_dialog.exec()
 
@@ -480,7 +473,7 @@ class RecoveryScreen(QWidget):
         # 여기서는 설정 화면에 그대로 남아 다시 시도할 수 있게만 해준다.
         self.progress_dialog.accept()
         self.start_btn.setEnabled(True)
-        _info_dialog(self, f"복구 중 예상하지 못한 오류가 발생했습니다.\n\n{message}")
+        _info_dialog(self, tr('복구 중 예상하지 못한 오류가 발생했습니다.\n\n{0}', system_message(message)))
 
     def _on_finished(self, outcomes, output_dir: str):
         self.progress_dialog.accept()
@@ -489,9 +482,9 @@ class RecoveryScreen(QWidget):
         if self._cancel_requested:
             keep = _confirm_dialog(
                 self,
-                "복구된 파일을 유지하시겠습니까?",
-                confirm_text="유지",
-                cancel_text="삭제",
+                tr('복구된 파일을 유지하시겠습니까?'),
+                confirm_text=tr('유지'),
+                cancel_text=tr('삭제'),
             )
             if not keep:
                 self._delete_outputs(outcomes)

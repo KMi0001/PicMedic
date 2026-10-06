@@ -10,6 +10,8 @@ gui/trash_screen.py의 검수 화면처럼 썸네일이 한 번에 여러 개 �
 
 from __future__ import annotations
 
+from gui.i18n import localized_widget
+
 from pathlib import Path
 from typing import Optional
 
@@ -132,13 +134,13 @@ class ClickableThumbnail(QFrame):
         # 켠다 — 기본값 False라 gui/similar_screen.py 등 기존 사용처는 그대로.
         self.include_checkbox: Optional[QCheckBox] = None
         if checkable:
-            self.include_checkbox = QCheckBox()
+            self.include_checkbox = localized_widget(QCheckBox)
             self.include_checkbox.setChecked(True)
             self.include_checkbox.setStyleSheet("font-size: 10px;")
             self.include_checkbox.toggled.connect(self.inclusion_changed.emit)
             layout.addWidget(self.include_checkbox, alignment=Qt.AlignHCenter)
 
-        self.image_label = QLabel()
+        self.image_label = localized_widget(QLabel)
         self.image_label.setFixedSize(size, size)
         self.image_label.setAlignment(Qt.AlignCenter)
         self._has_pixmap = pixmap is not None
@@ -146,7 +148,7 @@ class ClickableThumbnail(QFrame):
             self.image_label.setPixmap(pixmap)
         layout.addWidget(self.image_label)
 
-        name_label = QLabel(filename)
+        name_label = localized_widget(QLabel, filename)
         name_label.setAlignment(Qt.AlignCenter)
         name_label.setWordWrap(True)
         name_label.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 10.5px;")

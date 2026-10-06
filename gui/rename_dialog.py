@@ -11,6 +11,8 @@ core/scanner.py::list_image_files로 폴더를 가볍게 펼친 뒤 이 팝업�
 
 from __future__ import annotations
 
+from gui.i18n import system_message, join_messages, message as tr, localized_widget, set_ui
+
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QThread, Signal
@@ -57,7 +59,7 @@ def _common_date_label(files: list[FileInfo]) -> str | None:
     if len(months) != 1:
         return None
     year, month = next(iter(months))
-    return f"{year}년 {month}월"
+    return tr('{0}년 {1}월', year, month)
 
 
 class RenameDialog(QDialog):
@@ -67,7 +69,7 @@ class RenameDialog(QDialog):
 
     def __init__(self, parent: QWidget, files: list[FileInfo]):
         super().__init__(parent)
-        self.setWindowTitle("PicMedic — 이름 일괄변경")
+        set_ui(self, 'windowTitle', tr('PicMedic — 이름 일괄변경'))
         self.setWindowModality(Qt.WindowModal)
         self.setMinimumWidth(440)
         self._files = files
@@ -77,42 +79,42 @@ class RenameDialog(QDialog):
         root.setContentsMargins(20, 20, 20, 20)
         root.setSpacing(14)
 
-        title = QLabel("이름 일괄변경")
+        title = localized_widget(QLabel, tr('이름 일괄변경'))
         title.setStyleSheet("font-size: 16px; font-weight: 700;")
         root.addWidget(title)
 
-        hint = QLabel(f"선택한 {len(files)}개 파일의 이름을 한 번에 바꿔요. 원본 파일 자체의 이름이 바뀝니다.")
+        hint = localized_widget(QLabel, tr('선택한 {0}개 파일의 이름을 한 번에 바꿔요. 원본 파일 자체의 이름이 바뀝니다.', len(files)))
         hint.setWordWrap(True)
         hint.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 11px;")
         root.addWidget(hint)
 
         mode_row = QHBoxLayout()
-        self.radio_manual = QRadioButton("이름 직접 입력")
-        self.radio_auto = QRadioButton("자동 입력 (촬영월 기준)")
+        self.radio_manual = localized_widget(QRadioButton, tr('이름 직접 입력'))
+        self.radio_auto = localized_widget(QRadioButton, tr('자동 입력 (촬영월 기준)'))
         self.radio_manual.setChecked(True)
         if self._common_group is None:
             self.radio_auto.setEnabled(False)
-            self.radio_auto.setToolTip("선택한 파일들이 같은 촬영월을 공유하지 않아 자동 입력을 쓸 수 없습니다")
+            set_ui(self.radio_auto, 'toolTip', tr('선택한 파일들이 같은 촬영월을 공유하지 않아 자동 입력을 쓸 수 없습니다'))
         mode_row.addWidget(self.radio_manual)
         mode_row.addWidget(self.radio_auto)
         mode_row.addStretch(1)
         root.addLayout(mode_row)
 
-        name_label = QLabel("이름")
+        name_label = localized_widget(QLabel, tr('이름'))
         name_label.setStyleSheet(SECTION_HEADER_STYLE)
         root.addWidget(name_label)
         self.name_edit = QLineEdit()
-        self.name_edit.setPlaceholderText("예: 여행")
+        set_ui(self.name_edit, 'placeholderText', tr('예: 여행'))
         root.addWidget(self.name_edit)
 
         opts_row = QHBoxLayout()
-        opts_row.addWidget(QLabel("시작 번호"))
+        opts_row.addWidget(localized_widget(QLabel, tr('시작 번호')))
         self.start_spin = QSpinBox()
         self.start_spin.setRange(0, 99999)
         self.start_spin.setValue(DEFAULT_START)
         opts_row.addWidget(self.start_spin)
         opts_row.addSpacing(16)
-        opts_row.addWidget(QLabel("자릿수"))
+        opts_row.addWidget(localized_widget(QLabel, tr('자릿수')))
         self.digits_spin = QSpinBox()
         self.digits_spin.setRange(1, 6)
         self.digits_spin.setValue(DEFAULT_DIGITS)
@@ -120,7 +122,7 @@ class RenameDialog(QDialog):
         opts_row.addStretch(1)
         root.addLayout(opts_row)
 
-        preview_label = QLabel(f"미리보기 ({len(files)}개)")
+        preview_label = localized_widget(QLabel, tr('미리보기 ({0}개)', len(files)))
         preview_label.setStyleSheet(SECTION_HEADER_STYLE)
         root.addWidget(preview_label)
 
@@ -130,9 +132,9 @@ class RenameDialog(QDialog):
 
         btn_row = QHBoxLayout()
         btn_row.addStretch(1)
-        cancel_btn = QPushButton("취소")
+        cancel_btn = localized_widget(QPushButton, tr('취소'))
         cancel_btn.clicked.connect(self.reject)
-        self.confirm_btn = QPushButton("변경 실행")
+        self.confirm_btn = localized_widget(QPushButton, tr('변경 실행'))
         self.confirm_btn.setObjectName("Primary")
         self.confirm_btn.setDefault(True)
         self.confirm_btn.clicked.connect(self.accept)
@@ -162,7 +164,7 @@ class RenameDialog(QDialog):
             # setText가 textChanged -> _update_preview를 이미 트리거하므로, 아래
             # 명시적 호출과 중복되지 않도록 잠깐 신호를 막는다.
             self.name_edit.blockSignals(True)
-            self.name_edit.setText(self._common_group)
+            set_ui(self.name_edit, 'text', self._common_group)
             self.name_edit.blockSignals(False)
         self._update_preview()
 
@@ -172,7 +174,7 @@ class RenameDialog(QDialog):
             if item.widget():
                 item.widget().deleteLater()
 
-        base = self.base_name() or "이름없음"
+        base = self.base_name() or tr('이름없음')
         start = self.start()
         digits = self.digits()
         self.confirm_btn.setEnabled(bool(self.base_name()))
@@ -182,11 +184,11 @@ class RenameDialog(QDialog):
             number = str(start + row).zfill(digits)
             new_name = f"{base}_{number}{ext}"
 
-            old_label = QLabel(info.filename)
+            old_label = localized_widget(QLabel, info.filename)
             old_label.setStyleSheet(f"color: {COLORS['text_secondary']};")
-            arrow_label = QLabel("→")
+            arrow_label = localized_widget(QLabel, "→")
             arrow_label.setStyleSheet(f"color: {COLORS['text_secondary']};")
-            new_label = QLabel(new_name)
+            new_label = localized_widget(QLabel, new_name)
             new_label.setStyleSheet("font-weight: 600;")
 
             self.preview_grid.addWidget(old_label, row, 0)
@@ -274,14 +276,14 @@ def open_rename_dialog(parent: QWidget, files: list[FileInfo]) -> None:
     def on_failed(message: str):
         progress_dialog.accept()
         worker.wait()
-        info_dialog(parent, f"이름을 바꾸는 중 예상하지 못한 오류가 발생했습니다.\n\n{message}")
+        info_dialog(parent, tr('이름을 바꾸는 중 예상하지 못한 오류가 발생했습니다.\n\n{0}', system_message(message)))
 
     progress_dialog.cancel_requested.connect(worker.cancel)
     worker.progress.connect(lambda cur, total, name: progress_dialog.update_progress(cur, total, name))
     worker.finished_batch.connect(on_finished)
     worker.failed.connect(on_failed)
 
-    progress_dialog.start("이름 바꾸는 중")
+    progress_dialog.start(tr('이름 바꾸는 중'))
     worker.start()
     progress_dialog.exec()
 
@@ -290,17 +292,17 @@ def _show_rename_result(parent: QWidget, outcomes) -> None:
     succeeded = [o for o in outcomes if o.success]
     failed = [o for o in outcomes if not o.success]
 
-    lines = [f"{len(succeeded)}개 이름을 바꿨습니다."]
+    lines = [tr('{0}개 이름을 바꿨습니다.', len(succeeded))]
     if failed:
-        lines.append(f"{len(failed)}개는 실패했습니다:")
-        lines.extend(f"{o.original.filename} ({o.error_message})" for o in failed[:5])
+        lines.append(tr('{0}개는 실패했습니다:', len(failed)))
+        lines.extend(tr("{0} ({1})", o.original.filename, system_message(o.error_message or "")) for o in failed[:5])
 
     for outcome in succeeded:
         new_path = Path(outcome.new_path)
         outcome.original.path = str(new_path)
         outcome.original.filename = new_path.name
 
-    info_dialog(parent, "\n".join(lines))
+    info_dialog(parent, join_messages("\n", lines))
 
 
 def run_rename(parent: QWidget, paths: list[str]) -> None:
@@ -314,15 +316,15 @@ def run_rename(parent: QWidget, paths: list[str]) -> None:
         worker.wait()
         files = list(result.files)
         if not files:
-            info_dialog(parent, "선택한 위치에서 사진 파일을 찾지 못했어요.")
+            info_dialog(parent, tr('선택한 위치에서 사진 파일을 찾지 못했어요.'))
             return
         open_rename_dialog(parent, files)
 
     progress_dialog.cancel_requested.connect(worker.cancel)
     worker.finished_listing.connect(on_finished)
 
-    progress_dialog.start("사진 목록을 모으는 중")
+    progress_dialog.start(tr('사진 목록을 모으는 중'))
     progress_dialog.bar.setRange(0, 0)
-    progress_dialog.status_label.setText("폴더를 훑어보는 중...")
+    set_ui(progress_dialog.status_label, 'text', tr('폴더를 훑어보는 중...'))
     worker.start()
     progress_dialog.exec()

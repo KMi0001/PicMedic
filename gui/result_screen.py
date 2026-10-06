@@ -6,6 +6,8 @@ PRD 18장 "Screen 03 — Scan Result" 구현.
 
 from __future__ import annotations
 
+from gui.i18n import message as tr, localized_widget, set_ui, add_action
+
 from datetime import datetime
 from os.path import commonpath
 from pathlib import Path
@@ -262,12 +264,12 @@ class SummaryChip(QFrame):
             self.setCursor(Qt.PointingHandCursor)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(14, 10, 14, 10)
-        self.value_label = QLabel("0")
+        self.value_label = localized_widget(QLabel, "0")
         self.value_label.setAlignment(Qt.AlignCenter)
         self.value_label.setWordWrap(True)
         self.value_label.setStyleSheet(f"font-size: 20px; font-weight: 700; color: {color};")
         self._value_color = color
-        name_label = QLabel(label)
+        name_label = localized_widget(QLabel, label)
         name_label.setWordWrap(True)
         name_label.setAlignment(Qt.AlignCenter)
         name_label.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 12px;")
@@ -280,7 +282,7 @@ class SummaryChip(QFrame):
         super().mouseReleaseEvent(event)
 
     def set_value(self, value: int):
-        self.value_label.setText(f"{value:,}")
+        set_ui(self.value_label, 'text', f"{value:,}")
 
     def set_selected(self, selected: bool) -> None:
         """이 칩이 지금 활성 필터임을 테두리 강조로 보여준다(카드형 필터 —
@@ -296,7 +298,7 @@ class SummaryChip(QFrame):
         자연스럽게 늘어남 — 카드 높이가 고정이 아니라 내용에 맞춰 늘어나므로
         레이아웃이 깨지지 않는다)."""
         self.value_label.setStyleSheet(f"font-size: 13px; font-weight: 700; color: {self._value_color};")
-        self.value_label.setText(text)
+        set_ui(self.value_label, 'text', text)
 
 
 def _set_primary_active(button: QPushButton, active: bool) -> None:
@@ -349,10 +351,10 @@ class ResultScreen(QWidget):
 
         header_row = QHBoxLayout()
         header_row.setSpacing(10)
-        title_icon = QLabel()
+        title_icon = localized_widget(QLabel)
         title_icon.setPixmap(_search_icon_pixmap(COLORS["primary"], 26))
         header_row.addWidget(title_icon)
-        title = QLabel("검사 결과")
+        title = localized_widget(QLabel, tr('검사 결과'))
         title.setObjectName("Title")
         header_row.addWidget(title)
         header_row.addStretch(1)
@@ -360,7 +362,7 @@ class ResultScreen(QWidget):
         # (gui/main_window.py의 rescan_requested 연결부 참고) 이름과 동작이 어긋났었다.
         # 실제 동작에 맞게 "홈" + 집 아이콘으로 바꾸고, 은은하게 강조되도록 글자/아이콘만
         # primary색을 준다(화면의 진짜 주요 동작인 "Medic!"과 겹치지 않게 배경은 그대로).
-        home_btn = QPushButton(" 홈")
+        home_btn = localized_widget(QPushButton, tr(' 홈'))
         home_btn.setIcon(QIcon(_home_icon_pixmap(COLORS["primary"])))
         home_btn.setStyleSheet(f"color: {COLORS['primary']}; font-weight: 600;")
         home_btn.clicked.connect(self.rescan_requested.emit)
@@ -375,12 +377,12 @@ class ResultScreen(QWidget):
         banner_layout = QHBoxLayout(self.cancelled_banner_frame)
         banner_layout.setContentsMargins(12, 8, 12, 8)
 
-        self.cancelled_banner = QLabel("")
+        self.cancelled_banner = localized_widget(QLabel, "")
         self.cancelled_banner.setWordWrap(True)
         self.cancelled_banner.setStyleSheet(f"color: {COLORS['warning']}; font-weight: 600; border: none;")
         banner_layout.addWidget(self.cancelled_banner, stretch=1)
 
-        self.resume_btn = QPushButton("이어서 검사")
+        self.resume_btn = localized_widget(QPushButton, tr('이어서 검사'))
         self.resume_btn.clicked.connect(self.resume_requested.emit)
         banner_layout.addWidget(self.resume_btn)
 
@@ -394,20 +396,20 @@ class ResultScreen(QWidget):
         # 복구 불가능은 매한가지라서). "복구 필요"는 기존 "복구 가능한 파일 보기"
         # 버튼을 같은 카드 형식으로 통합한 것.
         chips_row = QHBoxLayout()
-        self.chip_total = SummaryChip("총 파일", COLORS["text"], clickable=True)
-        self.chip_normal = SummaryChip("정상", STATUS_COLORS["정상"], clickable=True)
-        self.chip_mismatch = SummaryChip("형식 불일치", STATUS_COLORS["형식_불일치"], clickable=True)
-        self.chip_partial = SummaryChip("부분 손상", STATUS_COLORS["부분_손상"], clickable=True)
-        self.chip_corrupted = SummaryChip("손상", STATUS_COLORS["손상"], clickable=True)
-        self.chip_recovered = SummaryChip("복구 완료", STATUS_COLORS["복구_완료"], clickable=True)
-        self.chip_recovery_needed = SummaryChip("복구 필요", COLORS["warning"], clickable=True)
-        self.chip_total.clicked.connect(lambda: self._filter_by_chip("전체"))
-        self.chip_normal.clicked.connect(lambda: self._filter_by_chip("정상"))
-        self.chip_mismatch.clicked.connect(lambda: self._filter_by_chip("형식 불일치"))
-        self.chip_partial.clicked.connect(lambda: self._filter_by_chip("부분 손상"))
-        self.chip_corrupted.clicked.connect(lambda: self._filter_by_chip("손상"))
-        self.chip_recovered.clicked.connect(lambda: self._filter_by_chip("복구 완료"))
-        self.chip_recovery_needed.clicked.connect(lambda: self._filter_by_chip("복구 필요"))
+        self.chip_total = SummaryChip(tr('총 파일'), COLORS["text"], clickable=True)
+        self.chip_normal = SummaryChip(tr('정상'), STATUS_COLORS[tr('정상')], clickable=True)
+        self.chip_mismatch = SummaryChip(tr('형식 불일치'), STATUS_COLORS[tr('형식_불일치')], clickable=True)
+        self.chip_partial = SummaryChip(tr('부분 손상'), STATUS_COLORS[tr('부분_손상')], clickable=True)
+        self.chip_corrupted = SummaryChip(tr('손상'), STATUS_COLORS[tr('손상')], clickable=True)
+        self.chip_recovered = SummaryChip(tr('복구 완료'), STATUS_COLORS[tr('복구_완료')], clickable=True)
+        self.chip_recovery_needed = SummaryChip(tr('복구 필요'), COLORS["warning"], clickable=True)
+        self.chip_total.clicked.connect(lambda: self._filter_by_chip(tr('전체')))
+        self.chip_normal.clicked.connect(lambda: self._filter_by_chip(tr('정상')))
+        self.chip_mismatch.clicked.connect(lambda: self._filter_by_chip(tr('형식 불일치')))
+        self.chip_partial.clicked.connect(lambda: self._filter_by_chip(tr('부분 손상')))
+        self.chip_corrupted.clicked.connect(lambda: self._filter_by_chip(tr('손상')))
+        self.chip_recovered.clicked.connect(lambda: self._filter_by_chip(tr('복구 완료')))
+        self.chip_recovery_needed.clicked.connect(lambda: self._filter_by_chip(tr('복구 필요')))
         for chip in (
             self.chip_total,
             self.chip_normal,
@@ -423,7 +425,7 @@ class ResultScreen(QWidget):
         # 칩들이 왼쪽에 몰리고 나머지 절반이 텅 비어 보인다.
         chips_row.addStretch(1)
         outer.addLayout(chips_row)
-        self._active_filter = "전체"
+        self._active_filter = tr('전체')
         self._update_chip_selection()
 
         # 필터 드롭다운은 칩으로 대체돼 없어졌고, 이 줄엔 검사한 폴더 경로(좌)와
@@ -434,12 +436,12 @@ class ResultScreen(QWidget):
         # 가로 폭보다 좁게 잡혀서, 옆에 남는 공간이 있는데도 줄바꿈되며 잘려
         # 보이는 문제가 있었다(2026-09-08, 사용자 리포트) — 이 줄의 남는 폭을
         # 이 라벨이 먼저 차지하게 해서 한 줄로 다 보이게 한다.
-        self.scan_path_label = QLabel("")
+        self.scan_path_label = localized_widget(QLabel, "")
         self.scan_path_label.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 12px;")
         filter_row.addWidget(self.scan_path_label, stretch=1)
 
         self.search_box = QLineEdit()
-        self.search_box.setPlaceholderText("파일명·확장자·실제 형식 검색")
+        set_ui(self.search_box, 'placeholderText', tr('파일명·확장자·실제 형식 검색'))
         self.search_box.setFixedWidth(220)
         self.search_box.textChanged.connect(self._apply_filters)
         filter_row.addWidget(self.search_box)
@@ -454,9 +456,7 @@ class ResultScreen(QWidget):
         self._header = CheckAllHeaderView(self.table)
         self._header.toggled.connect(self._on_header_toggled)
         self.table.setHorizontalHeader(self._header)
-        self.table.setHorizontalHeaderLabels(
-            ["", "상태", "파일명", "확장자", "크기", "수정일", "카테고리", "촬영 기기"]
-        )
+        set_ui(self.table, 'horizontalHeaderLabels', ["", tr('상태'), tr('파일명'), tr('확장자'), tr('크기'), tr('수정일'), tr('카테고리'), tr('촬영 기기')])
         self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Fixed)
         self.table.setColumnWidth(0, 32)
         self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
@@ -500,7 +500,7 @@ class ResultScreen(QWidget):
         # (2026-09-18, 사용자 요청 — "안내 문구 추가"로 "파일을"을
         # "사진을"로 맞춤).
         self.inline_viewer = ImageViewer(
-            placeholder_text="사진을 선택하면 미리보기가 표시됩니다.", overlay_controls=True
+            placeholder_text=tr('사진을 선택하면 미리보기가 표시됩니다.'), overlay_controls=True
         )
         viewer_layout.addWidget(self.inline_viewer)
         # 기본으로 펼쳐둔다 — "검사결과 목록 미리보기 활성상태가 기본"
@@ -522,7 +522,7 @@ class ResultScreen(QWidget):
         self.viewer_handle_btn.setFixedWidth(22)
         self.viewer_handle_btn.setAutoRaise(True)
         self.viewer_handle_btn.setCursor(Qt.PointingHandCursor)
-        self.viewer_handle_btn.setToolTip("뷰어 닫기")
+        set_ui(self.viewer_handle_btn, 'toolTip', tr('뷰어 닫기'))
         self.viewer_handle_btn.setStyleSheet(
             f"QToolButton {{ background-color: {COLORS['surface']}; border: 1px solid {COLORS['border']}; "
             f"border-radius: 4px; padding: 2px; }} "
@@ -538,11 +538,11 @@ class ResultScreen(QWidget):
         outer.addLayout(content_row, stretch=1)
 
         selection_hint_row = QHBoxLayout()
-        self.selection_label = QLabel("선택된 파일 없음")
+        self.selection_label = localized_widget(QLabel, tr('선택된 파일 없음'))
         self.selection_label.setStyleSheet(f"color: {COLORS['text_secondary']};")
         selection_hint_row.addWidget(self.selection_label)
         selection_hint_row.addStretch(1)
-        context_menu_hint = QLabel("목록에서 우클릭을 해서 로컬폴더로 이동하거나 상세보기를 할 수 있습니다.")
+        context_menu_hint = localized_widget(QLabel, tr('목록에서 우클릭을 해서 로컬폴더로 이동하거나 상세보기를 할 수 있습니다.'))
         context_menu_hint.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 11px;")
         selection_hint_row.addWidget(context_menu_hint)
         outer.addLayout(selection_hint_row)
@@ -552,7 +552,7 @@ class ResultScreen(QWidget):
         # "Medic!"은 확장자 변환(빠른 파일 I/O)만 계속 배치로 묶는다. 화질
         # 개선/얼굴 복원/디블러/디노이즈/사진 진단은 전부 제거되어(2026-09-13)
         # 지금은 이 버튼 하나만 남았다.
-        self.recover_selected_btn = QPushButton("확장자 변환")
+        self.recover_selected_btn = localized_widget(QPushButton, tr('확장자 변환'))
         self.recover_selected_btn.setEnabled(False)
         self.recover_selected_btn.clicked.connect(self._on_recover_selected)
         bottom_row.addWidget(self.recover_selected_btn)
@@ -561,7 +561,7 @@ class ResultScreen(QWidget):
         _set_primary_active(self.recover_selected_btn, False)
         # "이름일괄변환"은 이 화면의 보조 동작 — 확장자 변환처럼 Primary(채워진
         # 버튼)로 만들면 둘 다 똑같이 진해서 뭐가 메인 동작인지 헷갈린다.
-        self.rename_selected_btn = QPushButton("이름일괄변환")
+        self.rename_selected_btn = localized_widget(QPushButton, tr('이름일괄변환'))
         self.rename_selected_btn.setEnabled(False)
         self.rename_selected_btn.clicked.connect(self._on_rename_selected)
         bottom_row.addWidget(self.rename_selected_btn)
@@ -569,7 +569,7 @@ class ResultScreen(QWidget):
 
         # --- 정리 카드 (2026-09-13, 옛 gui/organize_hub_screen.py를 이 화면에 합침) ---
         organize_header = QHBoxLayout()
-        organize_label = QLabel("정리")
+        organize_label = localized_widget(QLabel, tr('정리'))
         organize_label.setStyleSheet("font-weight: 700; font-size: 14px; margin-top: 4px;")
         organize_header.addWidget(organize_label)
         organize_header.addStretch(1)
@@ -579,7 +579,7 @@ class ResultScreen(QWidget):
         # 보여줘"). 모달 팝업이 아니라 이 줄에 붙는 인라인 바다 — 이 화면은
         # 계산 중에도 계속 조작 가능해야 하므로(위 _HubCategoryWorker
         # 독스트링 참고) 화면을 막는 ProgressDialog는 여기 원칙과 안 맞는다.
-        self.category_progress_label = QLabel("")
+        self.category_progress_label = localized_widget(QLabel, "")
         self.category_progress_label.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 11px;")
         organize_header.addWidget(self.category_progress_label)
         self.category_progress_bar = QProgressBar()
@@ -591,21 +591,21 @@ class ResultScreen(QWidget):
         outer.addLayout(organize_header)
 
         self.duplicates_card = self._build_card(
-            "중복 파일", "완전히 똑같은 사진을 찾아요.", self.duplicates_requested.emit
+            tr('중복 파일'), tr('완전히 똑같은 사진을 찾아요.'), self.duplicates_requested.emit
         )
         self.similar_card = self._build_card(
-            "유사 사진", "리사이즈·재저장으로 약간 다른, 비슷한 사진을 찾아요.", self.similar_requested.emit
+            tr('유사 사진'), tr('리사이즈·재저장으로 약간 다른, 비슷한 사진을 찾아요.'), self.similar_requested.emit
         )
         self.date_card = self._build_card(
-            "날짜별", "촬영일 기준으로 묶어서 폴더 정리 미리보기를 보여줘요.", self.date_organize_requested.emit
+            tr('날짜별'), tr('촬영일 기준으로 묶어서 폴더 정리 미리보기를 보여줘요.'), self.date_organize_requested.emit
         )
         self.city_card = self._build_card(
-            "도시별", "GPS 위치가 있는 사진을 지도에서 도시별로 훑어봐요.", self.city_organize_requested.emit
+            tr('도시별'), tr('GPS 위치가 있는 사진을 지도에서 도시별로 훑어봐요.'), self.city_organize_requested.emit
         )
         for category_id, category in CATEGORY_FINDER_DEFS.items():
             self.category_finder_cards[category_id] = self._build_card(
-                category.title,
-                category.card_description,
+                tr(category.title),
+                tr(category.card_description),
                 lambda cid=category_id: self.category_finder_requested.emit(cid),
             )
 
@@ -638,8 +638,8 @@ class ResultScreen(QWidget):
         하지 않고 그대로 쓴다."""
         self.result = result
         path_text = _format_scan_path(scan_paths or [])
-        self.scan_path_label.setText(path_text)
-        self.scan_path_label.setToolTip(path_text)
+        set_ui(self.scan_path_label, 'text', path_text)
+        set_ui(self.scan_path_label, 'toolTip', path_text)
         self.chip_total.set_value(result.total)
         self.chip_normal.set_value(result.normal)
         self.chip_mismatch.set_value(result.mismatch)
@@ -649,9 +649,9 @@ class ResultScreen(QWidget):
         self.chip_recovery_needed.set_value(len(result.recoverable_files()))
 
         dup_count = len(result.duplicate_groups())
-        self._set_card_count(self.duplicates_card, f"{dup_count}그룹" if dup_count else "없음")
+        self._set_card_count(self.duplicates_card, tr('{0}그룹', dup_count) if dup_count else tr('없음'))
         date_count = len(result.date_groups())
-        self._set_card_count(self.date_card, f"{date_count}개 묶음" if date_count else "-")
+        self._set_card_count(self.date_card, tr('{0}개 묶음', date_count) if date_count else "-")
         # 카테고리 찾기 백그라운드 계산도 여기서 같이 시작한다(옛 정리 허브의
         # set_result와 같은 타이밍) — _populate_table보다 먼저 시작해야 아직
         # 계산 전인 셀이 "-"가 아니라 "분석 중"으로 바로 보인다.
@@ -659,15 +659,13 @@ class ResultScreen(QWidget):
 
         if cancelled:
             planned = planned_total or result.total
-            self.cancelled_banner.setText(
-                f"⚠ 검사가 중단되어 {result.total:,} / {planned:,}개 파일까지만 검사되었습니다."
-            )
+            set_ui(self.cancelled_banner, 'text', tr('⚠ 검사가 중단되어 {0} / {1}개 파일까지만 검사되었습니다.', f'{result.total:,}', f'{planned:,}'))
             self.resume_btn.setVisible(bool(remaining_paths))
             self.cancelled_banner_frame.show()
         else:
             self.cancelled_banner_frame.hide()
 
-        self._active_filter = "전체"
+        self._active_filter = tr('전체')
         self.search_box.clear()
         self._apply_filters()
 
@@ -685,9 +683,9 @@ class ResultScreen(QWidget):
             self.chip_recovered.set_value(self.result.recovered)
             self.chip_recovery_needed.set_value(len(self.result.recoverable_files()))
             dup_count = len(self.result.duplicate_groups())
-            self._set_card_count(self.duplicates_card, f"{dup_count}그룹" if dup_count else "없음")
+            self._set_card_count(self.duplicates_card, tr('{0}그룹', dup_count) if dup_count else tr('없음'))
             date_count = len(self.result.date_groups())
-            self._set_card_count(self.date_card, f"{date_count}개 묶음" if date_count else "-")
+            self._set_card_count(self.date_card, tr('{0}개 묶음', date_count) if date_count else "-")
             self._apply_filters()
 
     # --- 내부 로직 -----------------------------------------------------
@@ -696,7 +694,7 @@ class ResultScreen(QWidget):
         """gui/scan_session_window.py 등 다른 곳에서 "복구 필요"만 보고 싶을 때
         부르는 이름 그대로 유지 — 실제로는 이제 그 이름의 카드형 칩을 누른 것과
         같다."""
-        self._filter_by_chip("복구 필요")
+        self._filter_by_chip(tr('복구 필요'))
 
     def _filter_by_chip(self, filter_choice: str):
         self._active_filter = filter_choice
@@ -729,11 +727,11 @@ class ResultScreen(QWidget):
             "복구 완료": FileStatus.RECOVERED,
         }
 
-        if filter_choice == "전체":
+        if filter_choice == tr('전체'):
             files = list(self.result.files)
-        elif filter_choice == "복구 필요":
+        elif filter_choice == tr('복구 필요'):
             files = self.result.recoverable_files()
-        elif filter_choice == "손상":
+        elif filter_choice == tr('손상'):
             files = [f for f in self.result.files if f.status in _CORRUPTED_LIKE_STATUSES]
         else:
             files = self.result.by_status(status_map[filter_choice])
@@ -778,12 +776,12 @@ class ResultScreen(QWidget):
                 self._row_by_path[info.path] = row
                 not_recoverable = info.recoverable == RecoveryPossibility.NOT_RECOVERABLE
 
-                check_item = QTableWidgetItem()
+                check_item = localized_widget(QTableWidgetItem)
                 if not_recoverable:
                     # PRD_MVP우선순위.md '남은 갭 #5': 복구 불가능한(완전 손상) 파일은 애초에
                     # 선택해서 복구를 시도할 수 없게 체크박스 자체를 비활성화한다.
                     check_item.setFlags(Qt.ItemIsUserCheckable)
-                    check_item.setToolTip("복구할 수 없는 파일입니다.")
+                    set_ui(check_item, 'toolTip', tr('복구할 수 없는 파일입니다.'))
                 else:
                     check_item.setFlags(Qt.ItemIsUserCheckable | Qt.ItemIsEnabled)
                 check_item.setCheckState(Qt.Unchecked)
@@ -793,11 +791,11 @@ class ResultScreen(QWidget):
                 dot = STATUS_DOT.get(status_value, "")
                 color = STATUS_COLORS.get(status_value, COLORS["text"])
 
-                status_item = QTableWidgetItem(f"{dot} {status_value.replace('_', ' ')}")
+                status_item = localized_widget(QTableWidgetItem, tr("{0} {1}", dot, tr(status_value.replace('_', ' '))))
                 status_item.setForeground(_qcolor(color))
 
-                name_item = QTableWidgetItem(info.filename)
-                ext_item = QTableWidgetItem(info.extension)
+                name_item = localized_widget(QTableWidgetItem, info.filename)
+                ext_item = localized_widget(QTableWidgetItem, info.extension)
 
                 size_item = _NumericSortItem(format_file_size(info.file_size))
                 size_item.setData(Qt.UserRole, info.file_size)
@@ -808,12 +806,12 @@ class ResultScreen(QWidget):
 
                 if not_recoverable:
                     for cell in (status_item, name_item, ext_item, size_item, date_item):
-                        cell.setToolTip("복구할 수 없는 파일입니다.")
+                        set_ui(cell, 'toolTip', tr('복구할 수 없는 파일입니다.'))
 
                 camera_text = " ".join(part for part in (info.camera_make, info.camera_model) if part)
-                camera_item = QTableWidgetItem(camera_text or "-")
+                camera_item = localized_widget(QTableWidgetItem, camera_text or "-")
                 if not_recoverable:
-                    camera_item.setToolTip("복구할 수 없는 파일입니다.")
+                    set_ui(camera_item, 'toolTip', tr('복구할 수 없는 파일입니다.'))
 
                 self.table.setItem(row, 0, check_item)
                 self.table.setItem(row, 1, status_item)
@@ -858,8 +856,8 @@ class ResultScreen(QWidget):
         info = self.table.item(row, 0).data(Qt.UserRole)
 
         menu = QMenu(self)
-        preview_action = menu.addAction("미리보기")
-        open_folder_action = menu.addAction("로컬 폴더 위치 열기")
+        preview_action = add_action(menu, tr('미리보기'))
+        open_folder_action = add_action(menu, tr('로컬 폴더 위치 열기'))
 
         chosen = menu.exec(self.table.viewport().mapToGlobal(pos))
         if chosen is preview_action:
@@ -952,9 +950,9 @@ class ResultScreen(QWidget):
         selected = self._selected_files()
         total_rows = self.table.rowCount()
         if selected:
-            self.selection_label.setText(f"{len(selected)}개 파일 선택됨")
+            set_ui(self.selection_label, 'text', tr('{0}개 파일 선택됨', len(selected)))
         else:
-            self.selection_label.setText("선택된 파일 없음")
+            set_ui(self.selection_label, 'text', tr('선택된 파일 없음'))
         can_recover = len(selected) > 0
         self.recover_selected_btn.setEnabled(can_recover)
         _set_primary_active(self.recover_selected_btn, can_recover)
@@ -979,7 +977,7 @@ class ResultScreen(QWidget):
         self.viewer_panel.setVisible(showing)
         direction = "left" if showing else "right"
         self.viewer_handle_btn.setIcon(QIcon(_chevron_icon_pixmap(COLORS["text_secondary"], direction)))
-        self.viewer_handle_btn.setToolTip("뷰어 닫기" if showing else "뷰어 열기")
+        set_ui(self.viewer_handle_btn, 'toolTip', tr('뷰어 닫기') if showing else tr('뷰어 열기'))
         if showing:
             self._refresh_inline_viewer()
 
@@ -1010,10 +1008,10 @@ class ResultScreen(QWidget):
 
         text_col = QVBoxLayout()
         text_col.setSpacing(4)
-        header = QLabel(title)
+        header = localized_widget(QLabel, title)
         header.setStyleSheet("font-weight: 700; font-size: 13px;")
         header.setAttribute(Qt.WA_TransparentForMouseEvents)
-        desc = QLabel(description)
+        desc = localized_widget(QLabel, description)
         desc.setWordWrap(True)
         desc.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 11px;")
         desc.setAttribute(Qt.WA_TransparentForMouseEvents)
@@ -1021,7 +1019,7 @@ class ResultScreen(QWidget):
         text_col.addWidget(desc)
         layout.addLayout(text_col, stretch=1)
 
-        count_label = QLabel("")
+        count_label = localized_widget(QLabel, "")
         count_label.setStyleSheet(f"color: {COLORS['primary']}; font-weight: 700; font-size: 12px;")
         count_label.setAttribute(Qt.WA_TransparentForMouseEvents)
         layout.addWidget(count_label)
@@ -1031,7 +1029,7 @@ class ResultScreen(QWidget):
 
     def _set_card_count(self, card, text: str | None) -> None:
         if card.count_label is not None:
-            card.count_label.setText(text or "")
+            set_ui(card.count_label, 'text', text or "")
 
     def _category_cell_text(self, path: str) -> str:
         # "아직 이 사진 차례가 안 왔다"(분석 중)와 "분석했는데 매칭 카테고리
@@ -1039,7 +1037,7 @@ class ResultScreen(QWidget):
         # 뱃지 위젯이 화면엔 보이지만, 이 텍스트는 정렬 기준(가나다순 등)과
         # 검색 대상으로 여전히 필요해서 item에 그대로 심어둔다.
         if path not in self._category_by_path:
-            return "분석 중" if self._hub_worker is not None else "-"
+            return tr('분석 중') if self._hub_worker is not None else "-"
         matched_ids = self._category_by_path[path]
         if not matched_ids:
             return "-"
@@ -1062,7 +1060,7 @@ class ResultScreen(QWidget):
         layout.setSpacing(4)
         for cat_id in matched_ids:
             category = CATEGORY_FINDER_DEFS[cat_id]
-            badge = QLabel(category.title)
+            badge = localized_widget(QLabel, tr(category.title))
             badge.setStyleSheet(
                 f"color: white; background-color: {category.color}; border-radius: 8px; "
                 f"padding: 1px 7px; font-size: 11px; font-weight: 600;"
@@ -1077,9 +1075,9 @@ class ResultScreen(QWidget):
         (_on_file_classified), 정렬 후 재동기화(_on_sort_changed) 세 군데가
         모두 이 함수 하나로 모인다 — 세 곳이 각자 따로 하다 어긋나기 쉬운
         코드라 하나로 합침."""
-        item = QTableWidgetItem(self._category_cell_text(path))
+        item = localized_widget(QTableWidgetItem, self._category_cell_text(path))
         if not_recoverable:
-            item.setToolTip("복구할 수 없는 파일입니다.")
+            set_ui(item, 'toolTip', tr('복구할 수 없는 파일입니다.'))
         self.table.setItem(row, _CATEGORY_COLUMN, item)
 
         matched_ids = self._category_by_path.get(path)
@@ -1127,7 +1125,7 @@ class ResultScreen(QWidget):
         self._category_overrides = {}
         self._info_by_path = {}
         self.category_progress_bar.hide()
-        self.category_progress_label.setText("")
+        set_ui(self.category_progress_label, 'text', "")
         self._header.set_sort_locked_column(None)  # 새로 시작하니 일단 풀고, 실제로 돌 때만 다시 잠금
 
         from core.category_finder import is_available
@@ -1175,7 +1173,7 @@ class ResultScreen(QWidget):
 
         for cat_id, card in self.category_finder_cards.items():
             count = len(self._category_matches[cat_id])
-            self._set_card_count(card, f"{count}장" if self._category_scan_done else "분석 중")
+            self._set_card_count(card, tr('{0}장', count) if self._category_scan_done else tr('분석 중'))
 
         # 분류가 진행되는 동안 이 컬럼으로 정렬하면 사진이 새로 분류될
         # 때마다 Qt가 자동 재정렬해서 행이 계속 튀고 배지가 어긋난다
@@ -1185,9 +1183,7 @@ class ResultScreen(QWidget):
         self.category_progress_bar.setRange(0, self._category_scan_total)
         self.category_progress_bar.setValue(self._category_scan_done)
         self.category_progress_bar.show()
-        self.category_progress_label.setText(
-            f"카테고리 분석 중 {self._category_scan_done}/{self._category_scan_total}"
-        )
+        set_ui(self.category_progress_label, 'text', tr('카테고리 분석 중 {0}/{1}', self._category_scan_done, self._category_scan_total))
 
         self._hub_worker = _HubCategoryWorker(to_classify, self)
         self._hub_worker.file_classified.connect(self._on_file_classified)
@@ -1215,9 +1211,7 @@ class ResultScreen(QWidget):
 
         self._category_scan_done += 1
         self.category_progress_bar.setValue(self._category_scan_done)
-        self.category_progress_label.setText(
-            f"카테고리 분석 중 {self._category_scan_done}/{self._category_scan_total}"
-        )
+        set_ui(self.category_progress_label, 'text', tr('카테고리 분석 중 {0}/{1}', self._category_scan_done, self._category_scan_total))
 
         self._ai_categories[path] = [(cat_id, confidence) for cat_id, confidence in matched]
         if path in self._category_by_path:
@@ -1234,7 +1228,7 @@ class ResultScreen(QWidget):
             if info is not None:
                 self._category_matches[cat_id].append((info, confidence))
             self._set_card_count(
-                self.category_finder_cards[cat_id], f"{len(self._category_matches[cat_id])}장"
+                self.category_finder_cards[cat_id], tr('{0}장', len(self._category_matches[cat_id]))
             )
 
         row = self._row_by_path.get(path)
@@ -1291,7 +1285,7 @@ class ResultScreen(QWidget):
             count = len(self._category_matches[cat_id])
             self._set_card_count(
                 self.category_finder_cards[cat_id],
-                f"{count}장" if (count or self._hub_worker is not None) else "없음",
+                tr('{0}장', count) if (count or self._hub_worker is not None) else tr('없음'),
             )
 
     def category_snapshot(self) -> tuple[dict, dict]:
@@ -1305,14 +1299,14 @@ class ResultScreen(QWidget):
     def _on_category_scan_finished(self) -> None:
         self._hub_worker = None
         self.category_progress_bar.hide()
-        self.category_progress_label.setText("")
+        set_ui(self.category_progress_label, 'text', "")
         self._header.set_sort_locked_column(None)  # 분류 다 끝났으니 카테고리 컬럼 정렬 다시 허용
         if self._category_matches is not None:
             for matches in self._category_matches.values():
                 matches.sort(key=lambda pair: pair[1], reverse=True)  # 확신도 높은 순 — CategoryFinderScreen과 동일
         for cat_id, card in self.category_finder_cards.items():
             count = len(self._category_matches.get(cat_id, [])) if self._category_matches else 0
-            self._set_card_count(card, f"{count}장" if count else "없음")
+            self._set_card_count(card, tr('{0}장', count) if count else tr('없음'))
 
     def category_matches(self, category_id: str) -> list | None:
         """category_id로 매칭된 (FileInfo, confidence) 목록. 백그라운드 계산이
@@ -1344,7 +1338,7 @@ def _format_scan_path(paths: list) -> str:
         common = commonpath(unique)
     except ValueError:
         common = unique[0]
-    return f"{common} 외 {len(unique) - 1}개 경로"
+    return tr('{0} 외 {1}개 경로', common, len(unique) - 1)
 
 
 def _qcolor(hex_str: str):

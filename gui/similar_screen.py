@@ -17,6 +17,8 @@ Phase 2 "사진 정리" — 유사 중복(퍼셉추얼 해시 + 파일명 패턴
 
 from __future__ import annotations
 
+from gui.i18n import message as tr, localized_widget, set_ui, add_action
+
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QThread, Signal, QPointF, QRectF, QUrl
@@ -118,8 +120,8 @@ def _group_similarity_note(files: list) -> str:
             if best is None or distance < best:
                 best = distance
     if best is None:
-        return "파일명 패턴이 비슷해서 묶였어요 (예: a.jpg / a_1.jpg)"
-    return f"이미지 유사도 거리 {best} (0에 가까울수록 거의 같은 사진)"
+        return tr('파일명 패턴이 비슷해서 묶였어요 (예: a.jpg / a_1.jpg)')
+    return tr('이미지 유사도 거리 {0} (0에 가까울수록 거의 같은 사진)', best)
 
 
 class _WrappingPhotoRow(QWidget):
@@ -254,36 +256,33 @@ class SimilarScreen(QWidget):
 
         title_row = QHBoxLayout()
         title_row.setSpacing(10)
-        title_icon = QLabel()
+        title_icon = localized_widget(QLabel)
         title_icon.setPixmap(_similar_icon_pixmap(COLORS["primary"]))
         title_row.addWidget(title_icon)
-        title = QLabel("유사 사진")
+        title = localized_widget(QLabel, tr('유사 사진'))
         title.setObjectName("Title")
         title_row.addWidget(title)
         title_row.addStretch(1)
-        back_btn = QPushButton("← 뒤로")
+        back_btn = localized_widget(QPushButton, tr('← 뒤로'))
         back_btn.clicked.connect(self.back_requested.emit)
         title_row.addWidget(back_btn)
         outer.addLayout(title_row)
 
         chips_row = QHBoxLayout()
         chips_row.setSpacing(10)
-        self.group_chip = SummaryChip("유사 그룹", COLORS["warning"])
-        self.file_chip = SummaryChip("사진", COLORS["warning"])
+        self.group_chip = SummaryChip(tr('유사 그룹'), COLORS["warning"])
+        self.file_chip = SummaryChip(tr('사진'), COLORS["warning"])
         chips_row.addWidget(self.group_chip)
         chips_row.addWidget(self.file_chip)
         chips_row.addStretch(1)
         outer.addLayout(chips_row)
 
-        hint = QLabel(
-            "완전히 같지는 않지만 비슷해 보이는 사진들이에요 — 오탐일 수 있으니 썸네일을 직접 보고 판단해주세요. "
-            "지우고 싶은 사진에 체크하세요(여러 장 가능) — 아무것도 체크하지 않으면 이 그룹은 그대로 둬요."
-        )
+        hint = localized_widget(QLabel, tr('완전히 같지는 않지만 비슷해 보이는 사진들이에요 — 오탐일 수 있으니 썸네일을 직접 보고 판단해주세요. 지우고 싶은 사진에 체크하세요(여러 장 가능) — 아무것도 체크하지 않으면 이 그룹은 그대로 둬요.'))
         hint.setWordWrap(True)
         hint.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 12px;")
         outer.addWidget(hint)
 
-        self.empty_label = QLabel("유사한 사진이 없습니다.")
+        self.empty_label = localized_widget(QLabel, tr('유사한 사진이 없습니다.'))
         self.empty_label.setStyleSheet(f"color: {COLORS['text_secondary']}; padding: 24px;")
         self.empty_label.setAlignment(Qt.AlignCenter)
 
@@ -312,7 +311,7 @@ class SimilarScreen(QWidget):
         # 지울 몇 장만 체크하면 되게 바꿨다. gui/duplicate_screen.py의 라디오
         # (남길 파일 하나 고르기)는 그룹 성격이 달라(정확 중복은 결국 하나만
         # 남기는 게 목적) 그대로 둔다.
-        self.cleanup_btn = QPushButton("체크한 파일 임시 휴지통으로 이동")
+        self.cleanup_btn = localized_widget(QPushButton, tr('체크한 파일 임시 휴지통으로 이동'))
         self.cleanup_btn.setObjectName("Danger")
         self.cleanup_btn.setEnabled(False)
         self.cleanup_btn.clicked.connect(self._on_cleanup_clicked)
@@ -342,7 +341,7 @@ class SimilarScreen(QWidget):
         self._worker.progress.connect(self._on_preload_progress)
         self._worker.finished_batch.connect(self._on_preload_finished)
 
-        self._progress_dialog.start("비슷한 사진 찾는 중")
+        self._progress_dialog.start(tr('비슷한 사진 찾는 중'))
         self._worker.start()
         self._progress_dialog.exec()
 
@@ -352,7 +351,7 @@ class SimilarScreen(QWidget):
         return bool(self._entries)
 
     def _on_preload_progress(self, current: int, total: int):
-        self._progress_dialog.update_progress(current, max(total, 1), "사진 비교 중")
+        self._progress_dialog.update_progress(current, max(total, 1), tr('사진 비교 중'))
 
     def _on_preload_cancel_requested(self):
         if self._worker is not None:
@@ -402,11 +401,11 @@ class SimilarScreen(QWidget):
         layout.setContentsMargins(18, 14, 18, 14)
         layout.setSpacing(8)
 
-        header = QLabel(f"유사 그룹 {idx} · {len(group)}개 파일")
+        header = localized_widget(QLabel, tr('유사 그룹 {0} · {1}개 파일', idx, len(group)))
         header.setStyleSheet("font-weight: 700;")
         layout.addWidget(header)
 
-        note = QLabel(_group_similarity_note(group))
+        note = localized_widget(QLabel, _group_similarity_note(group))
         note.setWordWrap(True)
         note.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 11px;")
         layout.addWidget(note)
@@ -459,8 +458,8 @@ class SimilarScreen(QWidget):
 
             check_row = QHBoxLayout()
             check_row.setAlignment(Qt.AlignHCenter)
-            checkbox = QCheckBox("이 파일 지우기")
-            checkbox.setToolTip("이 파일을 임시 휴지통으로 옮깁니다")
+            checkbox = localized_widget(QCheckBox, tr('이 파일 지우기'))
+            set_ui(checkbox, 'toolTip', tr('이 파일을 임시 휴지통으로 옮깁니다'))
             checkbox.setStyleSheet("font-size: 11px;")
             checkboxes.append(checkbox)
             check_row.addWidget(checkbox)
@@ -472,9 +471,9 @@ class SimilarScreen(QWidget):
             # 폴더(연도)까지 알아야 뜻이 통하는 경우 헷갈려서, 뒤에서 2단계까지
             # 보여준다("2016/08"). 전체 경로는 툴팁으로.
             short_folder = "/".join(folder.parts[-2:]) if len(folder.parts) >= 2 else folder.name
-            badge = QLabel(f"📁 {short_folder}")
+            badge = localized_widget(QLabel, f"📁 {short_folder}")
             badge.setAlignment(Qt.AlignCenter)
-            badge.setToolTip(str(folder))  # 뱃지엔 짧게, 전체 경로는 툴팁으로
+            set_ui(badge, 'toolTip', str(folder))  # 뱃지엔 짧게, 전체 경로는 툴팁으로
             badge.setStyleSheet(
                 f"background-color: {_hex_to_rgba(badge_color, 0.13)}; color: {badge_color}; "
                 f"border: 1px solid {_hex_to_rgba(badge_color, 0.4)}; border-radius: 9px; "
@@ -495,8 +494,8 @@ class SimilarScreen(QWidget):
 
     def _on_thumb_context_menu(self, widget: QWidget, pos, info, group: list) -> None:
         menu = QMenu(self)
-        preview_action = menu.addAction("미리보기")
-        open_folder_action = menu.addAction("로컬 폴더 위치 열기")
+        preview_action = add_action(menu, tr('미리보기'))
+        open_folder_action = add_action(menu, tr('로컬 폴더 위치 열기'))
         chosen = menu.exec(widget.mapToGlobal(pos))
         if chosen is preview_action:
             self.file_selected.emit(info, group)
@@ -520,25 +519,23 @@ class SimilarScreen(QWidget):
             if not keep_infos or not remove_infos:
                 continue
             keep_info = keep_infos[0]
-            extra = f" 외 {len(keep_infos) - 1}장 더" if len(keep_infos) > 1 else ""
+            extra = tr(' 외 {0}장 더', len(keep_infos) - 1) if len(keep_infos) > 1 else ""
             reason = (
-                f"유사 사진 정리 — '{Path(keep_info.path).name}'{extra} 파일을 남기고 이 파일들이 이동됨 "
-                f"({_group_similarity_note(entry.group)})"
+                tr("유사 사진 정리 — '{0}'{1} 파일을 남기고 이 파일들이 이동됨 ({2})", Path(keep_info.path).name, extra, _group_similarity_note(entry.group))
             )
             to_process.append((keep_info.path, remove_infos, reason))
             entry_refs.append(entry)
 
         total_to_remove = sum(len(infos) for _, infos, _ in to_process)
         if not total_to_remove:
-            info_dialog(self, "정리할 파일을 선택하지 않았어요.\n지울 파일을 먼저 체크해주세요.")
+            info_dialog(self, tr('정리할 파일을 선택하지 않았어요.\n지울 파일을 먼저 체크해주세요.'))
             return
 
         confirmed = confirm_dialog(
             self,
-            f"선택한 {total_to_remove}개 파일을 임시 휴지통으로 옮길게요.\n\n"
-            "완전히 삭제되는 게 아니라서 나중에 원래 위치로 복원할 수 있어요.",
-            confirm_text="이동",
-            cancel_text="취소",
+            tr('선택한 {0}개 파일을 임시 휴지통으로 옮길게요.\n\n완전히 삭제되는 게 아니라서 나중에 원래 위치로 복원할 수 있어요.', total_to_remove),
+            confirm_text=tr('이동'),
+            cancel_text=tr('취소'),
         )
         if not confirmed:
             return
@@ -547,7 +544,7 @@ class SimilarScreen(QWidget):
         self._cleanup_worker = TrashMoveWorker(to_process, self)
         self._cleanup_worker.progress.connect(self._on_cleanup_progress)
         self._cleanup_worker.finished_batch.connect(self._on_cleanup_finished)
-        self.cleanup_progress_dialog.start("임시 휴지통으로 옮기는 중")
+        self.cleanup_progress_dialog.start(tr('임시 휴지통으로 옮기는 중'))
         self._cleanup_worker.start()
         self.cleanup_progress_dialog.exec()
 
@@ -572,11 +569,10 @@ class SimilarScreen(QWidget):
         if failed:
             info_dialog(
                 self,
-                f"{moved}개 파일을 임시 휴지통으로 옮겼습니다.\n"
-                f"{len(failed)}개는 옮기지 못했습니다:\n" + "\n".join(failed),
+                tr('{0}개 파일을 임시 휴지통으로 옮겼습니다.\n{1}개는 옮기지 못했습니다:\n', moved, len(failed)) + "\n".join(failed),
             )
         else:
-            info_dialog(self, f"{moved}개 파일을 임시 휴지통으로 옮겼습니다.\n확인해주세요.")
+            info_dialog(self, tr('{0}개 파일을 임시 휴지통으로 옮겼습니다.\n확인해주세요.', moved))
 
         # 취소로 아예 시도조차 안 된 카드는 다음에 다시 볼 수 있게 남긴다.
         entry_refs = self._pending_entry_refs or []

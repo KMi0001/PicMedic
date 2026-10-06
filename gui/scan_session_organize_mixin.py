@@ -12,6 +12,8 @@ _organize_worker, result_screen 등)이다. 단독으로 인스턴스화하지 �
 
 from __future__ import annotations
 
+from gui.i18n import system_message, join_messages, message as tr
+
 from pathlib import Path
 
 from core.category_finder import CATEGORIES as CATEGORY_FINDER_DEFS
@@ -56,11 +58,9 @@ class OrganizeExecutionMixin:
             return True
         return _confirm_dialog(
             self,
-            "이동을 선택하셨어요.<br><br>"
-            "원본 파일이 새 폴더로 옮겨지고 원래 위치에는 남지 않아요.<br>"
-            "계속할까요?",
-            confirm_text="이동 시작",
-            cancel_text="취소",
+            tr('이동을 선택하셨어요.<br><br>원본 파일이 새 폴더로 옮겨지고 원래 위치에는 남지 않아요.<br>계속할까요?'),
+            confirm_text=tr('이동 시작'),
+            cancel_text=tr('취소'),
         )
 
     def _start_organize_worker(self, run_fn, mode: str, output_root: str):
@@ -69,7 +69,7 @@ class OrganizeExecutionMixin:
         self._organize_worker.finished_batch.connect(self._on_organize_finished)
         self._organize_worker.failed.connect(self._on_organize_failed)
 
-        title = "이동하는 중" if mode == "move" else "복사하는 중"
+        title = tr('이동하는 중') if mode == "move" else tr('복사하는 중')
         self.organize_progress_dialog.start(title)
         self._organize_worker.start()
         self.organize_progress_dialog.exec()
@@ -138,7 +138,7 @@ class OrganizeExecutionMixin:
         self._organize_worker = None
         if worker is not None:
             worker.wait()
-        _info_dialog(self, f"정리 중 예상하지 못한 오류가 발생했습니다.\n\n{message}")
+        _info_dialog(self, tr('정리 중 예상하지 못한 오류가 발생했습니다.\n\n{0}', system_message(message)))
         self.stack.setCurrentWidget(self.result_screen)
 
     def _on_organize_finished(self, outcomes):
@@ -164,13 +164,13 @@ class OrganizeExecutionMixin:
 
         output_root = worker.output_root if worker is not None else ""
 
-        lines = [f"{len(newly_done)}개 정리했습니다."]
+        lines = [tr('{0}개 정리했습니다.', len(newly_done))]
         if skipped:
-            lines.append(f"{len(skipped)}개는 이미 있어서 건너뛰었습니다.")
+            lines.append(tr('{0}개는 이미 있어서 건너뛰었습니다.', len(skipped)))
         if failed:
-            lines.append(f"{len(failed)}개는 실패했습니다:")
-            lines.extend(f"{o.original.filename} ({o.error_message})" for o in failed[:5])
+            lines.append(tr('{0}개는 실패했습니다:', len(failed)))
+            lines.extend(tr("{0} ({1})", o.original.filename, system_message(o.error_message or "")) for o in failed[:5])
 
-        _info_dialog_with_folder(self, "\n".join(lines), output_root)
+        _info_dialog_with_folder(self, join_messages("\n", lines), output_root)
 
         self.stack.setCurrentWidget(self.result_screen)

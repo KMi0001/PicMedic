@@ -11,6 +11,8 @@ gui/help_dialog.py
 
 from __future__ import annotations
 
+from gui.i18n import message as tr, localized_widget, set_ui
+
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QButtonGroup,
@@ -30,122 +32,92 @@ from gui.theme import COLORS
 # (제목, 설명)
 _USAGE_STEPS: list[tuple[str, str]] = [
     (
-        "사진 올리기",
-        "홈 화면의 '사진 · 폴더' 영역에 사진이나 폴더를 끌어다 놓거나, 영역을 클릭해서 "
-        "'파일 선택' 또는 '폴더 선택'을 고르세요. 폴더를 고르면 안에 들어있는 하위 폴더까지 "
-        "한꺼번에 검사해요.",
+        tr('사진 올리기'),
+        tr("홈 화면의 '사진 · 폴더' 영역에 사진이나 폴더를 끌어다 놓거나, 영역을 클릭해서 '파일 선택' 또는 '폴더 선택'을 고르세요. 폴더를 고르면 안에 들어있는 하위 폴더까지 한꺼번에 검사해요."),
     ),
     (
-        "검사 기다리기",
-        "진행률이 표시되고, 중간에 취소할 수도 있어요. 폴더를 하나 더 올리면 새 창이 열려서 "
-        "여러 폴더를 동시에 검사할 수 있어요. HEIC 사진이 많으면 시간이 더 걸릴 수 있어요.",
+        tr('검사 기다리기'),
+        tr('진행률이 표시되고, 중간에 취소할 수도 있어요. 폴더를 하나 더 올리면 새 창이 열려서 여러 폴더를 동시에 검사할 수 있어요. HEIC 사진이 많으면 시간이 더 걸릴 수 있어요.'),
     ),
     (
-        "검사 결과 확인",
-        "정상 · 형식 불일치 · 부분 손상 · 손상 개수를 한눈에 볼 수 있어요. 위쪽 요약 카드를 "
-        "누르면 그 상태의 사진만 골라 보여주고, 목록에서 사진을 더블클릭하면 미리보기와 "
-        "자세한 정보가 열려요.",
+        tr('검사 결과 확인'),
+        tr('정상 · 형식 불일치 · 부분 손상 · 손상 개수를 한눈에 볼 수 있어요. 위쪽 요약 카드를 누르면 그 상태의 사진만 골라 보여주고, 목록에서 사진을 더블클릭하면 미리보기와 자세한 정보가 열려요.'),
     ),
     (
-        "복구하기",
-        "복구할 사진을 목록에서 선택하고 '확장자 변환'을 누르세요. 확장자만 바로잡거나 다른 "
-        "형식으로 변환할 수 있고, 원본은 그대로 둔 채 'Recovered' 폴더에 새 파일이 만들어져요. "
-        "끝나면 결과를 자동으로 다시 검사해서 성공·건너뜀·실패를 알려줘요.",
+        tr('복구하기'),
+        tr("복구할 사진을 목록에서 선택하고 '확장자 변환'을 누르세요. 확장자만 바로잡거나 다른 형식으로 변환할 수 있고, 원본은 그대로 둔 채 'Recovered' 폴더에 새 파일이 만들어져요. 끝나면 결과를 자동으로 다시 검사해서 성공·건너뜀·실패를 알려줘요."),
     ),
     (
-        "정리하기",
-        "검사 결과 화면 아래쪽 '정리' 카드에서 중복 파일, 유사 사진, 날짜별, 도시별, "
-        "카테고리(동물·음식·스크린샷·야경·풍경) 정리를 시작할 수 있어요. 어떤 정리든 먼저 "
-        "미리보기를 보여주고, 직접 실행 버튼을 눌러야만 파일이 움직여요.",
+        tr('정리하기'),
+        tr("검사 결과 화면 아래쪽 '정리' 카드에서 중복 파일, 유사 사진, 날짜별, 도시별, 카테고리(동물·음식·스크린샷·야경·풍경) 정리를 시작할 수 있어요. 어떤 정리든 먼저 미리보기를 보여주고, 직접 실행 버튼을 눌러야만 파일이 움직여요."),
     ),
 ]
 
 # (제목, 설명) — 홈 화면의 다른 카드와 상황별 활용 팁
 _TIPS: list[tuple[str, str]] = [
     (
-        "저장 공간이 부족할 때",
-        "'중복 파일'은 완전히 똑같은 사진을, '유사 사진'은 크기를 줄였거나 다시 저장해서 "
-        "약간 달라진 사진을 찾아줘요. 그룹마다 남길 사진을 고르면 나머지는 삭제되지 않고 "
-        "'임시 휴지통'으로 옮겨져요. 유사 사진은 추정이라서 썸네일을 직접 보고 고르세요.",
+        tr('저장 공간이 부족할 때'),
+        tr("'중복 파일'은 완전히 똑같은 사진을, '유사 사진'은 크기를 줄였거나 다시 저장해서 약간 달라진 사진을 찾아줘요. 그룹마다 남길 사진을 고르면 나머지는 삭제되지 않고 '임시 휴지통'으로 옮겨져요. 유사 사진은 추정이라서 썸네일을 직접 보고 고르세요."),
     ),
     (
-        "여행·행사 사진을 폴더로 정리하고 싶을 때",
-        "'날짜별'은 촬영일 기준으로, '도시별'은 GPS 위치를 기준으로 사진을 묶어요. 지도에서 "
-        "훑어본 뒤 '정리하기'를 누르면 복사하거나 이동할 수 있어요. 위치 정보가 없는 사진은 "
-        "'위치없음' 폴더로 모여요.",
+        tr('여행·행사 사진을 폴더로 정리하고 싶을 때'),
+        tr("'날짜별'은 촬영일 기준으로, '도시별'은 GPS 위치를 기준으로 사진을 묶어요. 지도에서 훑어본 뒤 '정리하기'를 누르면 복사하거나 이동할 수 있어요. 위치 정보가 없는 사진은 '위치없음' 폴더로 모여요."),
     ),
     (
-        "특정한 사진만 모아보고 싶을 때",
-        "카테고리 카드(동물친구들, 음식 사진, 스크린샷/문서, 야경 사진, 풍경 사진)는 AI가 "
-        "사진 내용을 보고 찾아줘요. 처음엔 시간이 걸리지만, 작업 내용은 창을 닫을 때 자동 저장돼서 "
-        "같은 폴더를 다시 열면 바뀐 사진만 새로 분석해요. 잘못 분류된 사진은 우클릭 → "
-        "'다른 카테고리로 옮기기'로 고칠 수 있어요.",
+        tr('특정한 사진만 모아보고 싶을 때'),
+        tr("카테고리 카드(동물친구들, 음식 사진, 스크린샷/문서, 야경 사진, 풍경 사진)는 AI가 사진 내용을 보고 찾아줘요. 처음엔 시간이 걸리지만, 작업 내용은 창을 닫을 때 자동 저장돼서 같은 폴더를 다시 열면 바뀐 사진만 새로 분석해요. 잘못 분류된 사진은 우클릭 → '다른 카테고리로 옮기기'로 고칠 수 있어요."),
     ),
     (
-        "파일이 안 열리거나 확장자가 이상할 때",
-        "'형식 불일치'는 내용은 멀쩡한데 확장자만 틀린 사진이에요. 확장자 복원으로 대부분 바로 "
-        "고쳐져요. 사진 형식 자체를 바꾸고 싶다면(예: HEIC → JPG) 홈의 '변환' 카드를 쓰세요. "
-        "검사 없이 곧장 변환할 수 있고 여러 장도 한 번에 돼요.",
+        tr('파일이 안 열리거나 확장자가 이상할 때'),
+        tr("'형식 불일치'는 내용은 멀쩡한데 확장자만 틀린 사진이에요. 확장자 복원으로 대부분 바로 고쳐져요. 사진 형식 자체를 바꾸고 싶다면(예: HEIC → JPG) 홈의 '변환' 카드를 쓰세요. 검사 없이 곧장 변환할 수 있고 여러 장도 한 번에 돼요."),
     ),
     (
-        "파일 이름을 통일하고 싶을 때",
-        "홈의 '이름 일괄변환' 카드(또는 검사 결과에서 사진 선택 후 '이름일괄변환')로 여러 장의 "
-        "이름을 '기본이름_순번' 규칙으로 한 번에 바꿔요.",
+        tr('파일 이름을 통일하고 싶을 때'),
+        tr("홈의 '이름 일괄변환' 카드(또는 검사 결과에서 사진 선택 후 '이름일괄변환')로 여러 장의 이름을 '기본이름_순번' 규칙으로 한 번에 바꿔요."),
     ),
     (
-        "아이폰 라이브 포토를 모으고 싶을 때",
-        "홈의 '라이브 포토' 카드는 사진과 짝이 되는 MOV 동영상이 남아있는 라이브 포토를 찾아줘요. "
-        "동영상으로 내보내거나, 확인된 사진들만 새 폴더로 모을 수 있어요.",
+        tr('아이폰 라이브 포토를 모으고 싶을 때'),
+        tr("홈의 '라이브 포토' 카드는 사진과 짝이 되는 MOV 동영상이 남아있는 라이브 포토를 찾아줘요. 동영상으로 내보내거나, 확인된 사진들만 새 폴더로 모을 수 있어요."),
     ),
 ]
 
 # (질문, 답변)
 _FAQ: list[tuple[str, str]] = [
     (
-        "복구하면 원본 사진이 바뀌나요?",
-        "아니요. 원본은 그대로 두고 'Recovered' 폴더에 새 파일을 만들어요. 결과가 마음에 들지 "
-        "않으면 그 폴더만 지우면 돼요.",
+        tr('복구하면 원본 사진이 바뀌나요?'),
+        tr("아니요. 원본은 그대로 두고 'Recovered' 폴더에 새 파일을 만들어요. 결과가 마음에 들지 않으면 그 폴더만 지우면 돼요."),
     ),
     (
-        "정리에서 삭제한 사진은 어디로 가나요?",
-        "완전히 지워지지 않고, 사진이 있던 폴더 안의 '임시휴지통' 폴더로 옮겨져요. 홈 화면의 "
-        "'임시 휴지통' 버튼에서 언제든 원래 자리로 복원할 수 있어요.",
+        tr('정리에서 삭제한 사진은 어디로 가나요?'),
+        tr("완전히 지워지지 않고, 사진이 있던 폴더 안의 '임시휴지통' 폴더로 옮겨져요. 홈 화면의 '임시 휴지통' 버튼에서 언제든 원래 자리로 복원할 수 있어요."),
     ),
     (
-        "어떤 사진 형식을 지원하나요?",
-        "JPG(JPEG), PNG, HEIC/HEIF, WEBP, GIF, TIFF, BMP를 검사해요. 이 밖의 파일은 검사 대상에서 "
-        "제외돼요.",
+        tr('어떤 사진 형식을 지원하나요?'),
+        tr('JPG(JPEG), PNG, HEIC/HEIF, WEBP, GIF, TIFF, BMP를 검사해요. 이 밖의 파일은 검사 대상에서 제외돼요.'),
     ),
     (
-        "카테고리 찾기가 왜 오래 걸리나요?",
-        "AI가 사진을 한 장씩 보고 내용을 판단하기 때문이에요. 사진이 많을수록 오래 걸리지만, "
-        "한 번 분석한 결과는 저장돼서 다음에 같은 폴더를 열면 새로 추가되거나 바뀐 사진만 "
-        "분석해요.",
+        tr('카테고리 찾기가 왜 오래 걸리나요?'),
+        tr('AI가 사진을 한 장씩 보고 내용을 판단하기 때문이에요. 사진이 많을수록 오래 걸리지만, 한 번 분석한 결과는 저장돼서 다음에 같은 폴더를 열면 새로 추가되거나 바뀐 사진만 분석해요.'),
     ),
     (
-        "'형식 불일치'와 '손상'은 어떻게 다른가요?",
-        "'형식 불일치'는 파일 내용은 정상인데 확장자가 실제 형식과 다른 경우예요(예: PNG인데 "
-        "이름이 .jpg). '부분 손상'은 일부만 읽히는 경우, '손상'은 열 수 없는 경우예요. 손상이 "
-        "심하면 복구가 안 될 수 있어요.",
+        tr("'형식 불일치'와 '손상'은 어떻게 다른가요?"),
+        tr("'형식 불일치'는 파일 내용은 정상인데 확장자가 실제 형식과 다른 경우예요(예: PNG인데 이름이 .jpg). '부분 손상'은 일부만 읽히는 경우, '손상'은 열 수 없는 경우예요. 손상이 심하면 복구가 안 될 수 있어요."),
     ),
     (
-        "검사 결과 창을 닫으면 결과가 사라지나요?",
-        "창을 닫을 때 검사 결과와 카테고리 분류가 자동 저장돼요. 같은 폴더를 다시 올리면 "
-        "저장본을 불러오고 바뀐 사진만 새로 확인해요.",
+        tr('검사 결과 창을 닫으면 결과가 사라지나요?'),
+        tr('창을 닫을 때 검사 결과와 카테고리 분류가 자동 저장돼요. 같은 폴더를 다시 올리면 저장본을 불러오고 바뀐 사진만 새로 확인해요.'),
     ),
     (
-        "사진이 서버로 전송되나요?",
-        "사진 검사·복구·정리는 모두 내 컴퓨터 안에서 처리돼요. 자세한 내용은 홈 화면 아래의 "
-        "'개인정보처리방침'에서 볼 수 있어요.",
+        tr('사진이 서버로 전송되나요?'),
+        tr("사진 검사·복구·정리는 모두 내 컴퓨터 안에서 처리돼요. 자세한 내용은 홈 화면 아래의 '개인정보처리방침'에서 볼 수 있어요."),
     ),
     (
-        "검사 중에 프로그램을 닫아도 되나요?",
-        "진행 중인 검사나 복구가 있으면 홈 화면을 닫을 수 없어요. 끝날 때까지 기다리거나 "
-        "취소한 뒤 닫아주세요.",
+        tr('검사 중에 프로그램을 닫아도 되나요?'),
+        tr('진행 중인 검사나 복구가 있으면 홈 화면을 닫을 수 없어요. 끝날 때까지 기다리거나 취소한 뒤 닫아주세요.'),
     ),
 ]
 
-_TABS = ("사용방법", "활용법", "Q&A")
+_TABS = (tr('사용방법'), tr('활용법'), "Q&A")
 
 
 def _card() -> QFrame:
@@ -155,14 +127,14 @@ def _card() -> QFrame:
 
 
 def _wrapped_label(text: str, style: str) -> QLabel:
-    label = QLabel(text)
+    label = localized_widget(QLabel, text)
     label.setWordWrap(True)
     label.setStyleSheet(f"{style} background: transparent;")
     return label
 
 
 def _number_badge(number: int) -> QLabel:
-    badge = QLabel(str(number))
+    badge = localized_widget(QLabel, str(number))
     badge.setFixedSize(26, 26)
     badge.setAlignment(Qt.AlignCenter)
     badge.setStyleSheet(
@@ -210,7 +182,7 @@ def _faq_card(question: str, answer: str) -> QFrame:
 
     q_row = QHBoxLayout()
     q_row.setSpacing(8)
-    q_mark = QLabel("Q")
+    q_mark = localized_widget(QLabel, "Q")
     q_mark.setStyleSheet(
         f"color: {COLORS['primary']}; font-size: 15px; font-weight: 800; background: transparent;"
     )
@@ -220,7 +192,7 @@ def _faq_card(question: str, answer: str) -> QFrame:
 
     a_row = QHBoxLayout()
     a_row.setSpacing(8)
-    a_mark = QLabel("A")
+    a_mark = localized_widget(QLabel, "A")
     a_mark.setStyleSheet(
         f"color: {COLORS['muted']}; font-size: 15px; font-weight: 800; background: transparent;"
     )
@@ -252,7 +224,7 @@ def _scroll_page(cards: list[QFrame], intro: str = "") -> QScrollArea:
 class HelpDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("PicMedic 사용 안내")
+        set_ui(self, 'windowTitle', tr('PicMedic 사용 안내'))
         # 이 창(부모 체인)만 막는다 — DESIGN.md "모달 범위는 항상 WindowModal".
         self.setWindowModality(Qt.WindowModal)
         self.resize(560, 640)
@@ -261,7 +233,7 @@ class HelpDialog(QDialog):
         layout.setContentsMargins(24, 20, 24, 20)
         layout.setSpacing(12)
 
-        title = QLabel("사용 안내")
+        title = localized_widget(QLabel, tr('사용 안내'))
         title.setObjectName("Title")
         layout.addWidget(title)
 
@@ -271,7 +243,7 @@ class HelpDialog(QDialog):
         self._tab_group.setExclusive(True)
         self._tab_buttons: list[QPushButton] = []
         for index, name in enumerate(_TABS):
-            btn = QPushButton(name)
+            btn = localized_widget(QPushButton, name)
             btn.setCheckable(True)
             btn.setCursor(Qt.PointingHandCursor)
             self._tab_group.addButton(btn, index)
@@ -285,13 +257,13 @@ class HelpDialog(QDialog):
         self._stack.addWidget(
             _scroll_page(
                 [_step_card(i, t, d) for i, (t, d) in enumerate(_USAGE_STEPS, start=1)],
-                "사진을 올리면 검사 → 확인 → 복구·정리 순서로 진행돼요.",
+                tr('사진을 올리면 검사 → 확인 → 복구·정리 순서로 진행돼요.'),
             )
         )
         self._stack.addWidget(
             _scroll_page(
                 [_tip_card(t, d) for t, d in _TIPS],
-                "이럴 땐 이렇게 써보세요.",
+                tr('이럴 땐 이렇게 써보세요.'),
             )
         )
         self._stack.addWidget(_scroll_page([_faq_card(q, a) for q, a in _FAQ]))
@@ -302,7 +274,7 @@ class HelpDialog(QDialog):
 
         close_row = QHBoxLayout()
         close_row.addStretch(1)
-        close_btn = QPushButton("닫기")
+        close_btn = localized_widget(QPushButton, tr('닫기'))
         close_btn.setObjectName("Primary")
         close_btn.setDefault(True)
         close_btn.clicked.connect(self.accept)

@@ -15,6 +15,8 @@ gui/thumbnail.py::load_thumbnail_qimage는 화면 목록용으로 일부러 축�
 
 from __future__ import annotations
 
+from gui.i18n import message as tr, localized_widget, set_ui
+
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -68,8 +70,8 @@ def load_full_pixmap(path: str) -> Optional[QPixmap]:
 
 def _tool_button(text: str, tooltip: str) -> QToolButton:
     btn = QToolButton()
-    btn.setText(text)
-    btn.setToolTip(tooltip)
+    set_ui(btn, 'text', text)
+    set_ui(btn, 'toolTip', tooltip)
     btn.setAutoRaise(True)
     btn.setCursor(Qt.PointingHandCursor)
     btn.setFixedSize(26, 22)
@@ -197,9 +199,9 @@ class ImageViewer(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(2)
 
-        self._rotate_left_btn = _tool_button("⟲", "왼쪽으로 90도 회전")
-        self._rotate_right_btn = _tool_button("⟳", "오른쪽으로 90도 회전")
-        self._fit_btn = _tool_button("⤢", "화면에 맞추기")
+        self._rotate_left_btn = _tool_button("⟲", tr('왼쪽으로 90도 회전'))
+        self._rotate_right_btn = _tool_button("⟳", tr('오른쪽으로 90도 회전'))
+        self._fit_btn = _tool_button("⤢", tr('화면에 맞추기'))
         self._rotate_left_btn.clicked.connect(lambda: self._rotate(-90))
         self._rotate_right_btn.clicked.connect(lambda: self._rotate(90))
         self._fit_btn.clicked.connect(self.fit_to_view)
@@ -228,7 +230,7 @@ class ImageViewer(QWidget):
         self._view = _ZoomPanView(self._scene)
         self._view.zoomed.connect(self._on_user_zoomed)
 
-        self._placeholder = QLabel(placeholder_text)
+        self._placeholder = localized_widget(QLabel, placeholder_text)
         self._placeholder.setAlignment(Qt.AlignCenter)
         self._placeholder.setWordWrap(True)
         self._placeholder.setStyleSheet(f"color: {COLORS['text_secondary']};")
@@ -254,15 +256,15 @@ class ImageViewer(QWidget):
         self._on_prev: Optional[Callable[[], None]] = None
         self._on_next: Optional[Callable[[], None]] = None
         self._prev_btn = QToolButton(self)
-        self._prev_btn.setText("◀")
-        self._prev_btn.setToolTip("이전 사진")
+        set_ui(self._prev_btn, 'text', "◀")
+        set_ui(self._prev_btn, 'toolTip', tr('이전 사진'))
         self._prev_btn.setCursor(Qt.PointingHandCursor)
         self._prev_btn.setFixedSize(28, 56)
         self._prev_btn.setStyleSheet(_NAV_BUTTON_STYLESHEET)
         self._prev_btn.clicked.connect(lambda: self._on_prev() if self._on_prev else None)
         self._next_btn = QToolButton(self)
-        self._next_btn.setText("▶")
-        self._next_btn.setToolTip("다음 사진")
+        set_ui(self._next_btn, 'text', "▶")
+        set_ui(self._next_btn, 'toolTip', tr('다음 사진'))
         self._next_btn.setCursor(Qt.PointingHandCursor)
         self._next_btn.setFixedSize(28, 56)
         self._next_btn.setStyleSheet(_NAV_BUTTON_STYLESHEET)

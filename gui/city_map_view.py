@@ -21,6 +21,9 @@ utils/topojson.py로 디코딩해서 그린다. 나라 이름은 core/country_na
 
 from __future__ import annotations
 
+from gui.i18n import message as tr, set_ui, add_action
+
+
 import zlib
 
 from PySide6.QtCore import QPointF, QRectF, Qt, QTimer, Signal
@@ -29,6 +32,7 @@ from PySide6.QtWidgets import QGraphicsItem, QGraphicsScene, QGraphicsView, QHBo
 
 from core.country_names_ko import COUNTRY_NAMES_KO
 from core.geocoder import country_name_ko
+from gui.i18n import place_message, render, language_events
 from utils.assets import asset_path
 from utils.topojson import load_country_polygons, load_province_polygons
 
@@ -180,7 +184,7 @@ class _CityMarker(QGraphicsItem):
         return self._radius
 
     def label_text(self) -> str:
-        return self._label
+        return render(place_message(self._label))
 
     def set_label_dy(self, dy: float) -> None:
         if dy == self._label_dy:
@@ -226,7 +230,7 @@ class _CityMarker(QGraphicsItem):
             painter.drawLine(QPointF(0, 0), QPointF(0, label_pos.y() - 4))
             painter.drawLine(QPointF(0, label_pos.y() - 4), QPointF(self._radius + 2, label_pos.y() - 4))
         painter.setPen(QColor("#222"))
-        painter.drawText(label_pos, self._label)
+        painter.drawText(label_pos, self.label_text())
 
     def contextMenuEvent(self, event) -> None:
         if self.on_right_click is not None:
@@ -245,6 +249,7 @@ class _CountryLabel(QGraphicsItem):
     def __init__(self, name: str):
         super().__init__()
         self._name = name
+        self._display_name = render(place_message(name))
         self.setFlag(QGraphicsItem.ItemIgnoresTransformations)
         self.setZValue(1)
         font = QFont()
@@ -254,7 +259,7 @@ class _CountryLabel(QGraphicsItem):
 
     def boundingRect(self) -> QRectF:
         fm = QFontMetrics(self._font)
-        width = fm.horizontalAdvance(self._name) + 8
+        width = fm.horizontalAdvance(self._display_name) + 8
         height = fm.height() + 4
         return QRectF(-width / 2, -height / 2, width, height)
 
@@ -262,7 +267,7 @@ class _CountryLabel(QGraphicsItem):
         painter.setRenderHint(QPainter.Antialiasing)
         painter.setFont(self._font)
         painter.setPen(_COUNTRY_LABEL_COLOR)
-        painter.drawText(self.boundingRect(), Qt.AlignCenter, self._name)
+        painter.drawText(self.boundingRect(), Qt.AlignCenter, self._display_name)
 
 
 class CityMapView(QGraphicsView):
@@ -322,7 +327,7 @@ class CityMapView(QGraphicsView):
         try:
             countries = load_country_polygons(_COUNTRIES_PATH)
         except Exception as exc:
-            print("국가 경계 데이터 로드 실패:", exc)
+            print(tr('국가 경계 데이터 로드 실패:'), exc)
             countries = []
 
         land_path = QPainterPath()
@@ -369,7 +374,7 @@ class CityMapView(QGraphicsView):
         try:
             provinces = load_province_polygons(_KR_PROVINCES_PATH)
         except Exception as exc:
-            print("시/도 경계 데이터 로드 실패:", exc)
+            print(tr('시/도 경계 데이터 로드 실패:'), exc)
             provinces = []
 
         province_path = QPainterPath()
@@ -435,23 +440,32 @@ class CityMapView(QGraphicsView):
 
         def _btn(text: str, tooltip: str) -> QToolButton:
             b = QToolButton()
-            b.setText(text)
-            b.setToolTip(tooltip)
+            set_ui(b, 'text', text)
+            set_ui(b, 'toolTip', tooltip)
             b.setAutoRaise(True)
             b.setCursor(Qt.PointingHandCursor)
             b.setFixedSize(26, 22)
             layout.addWidget(b)
             return b
 
-        self._recenter_btn = _btn("⌂", "사진이 가장 많은 나라로 이동")
-        self._zoom_in_btn = _btn("+", "확대")
-        self._zoom_out_btn = _btn("－", "축소")
+        self._recenter_btn = _btn("⌂", tr('사진이 가장 많은 나라로 이동'))
+        self._zoom_in_btn = _btn("+", tr('확대'))
+        self._zoom_out_btn = _btn("－", tr('축소'))
         self._recenter_btn.clicked.connect(self._recenter_to_busiest_country)
         self._zoom_in_btn.clicked.connect(lambda: self._zoom_by(1.2))
         self._zoom_out_btn.clicked.connect(lambda: self._zoom_by(1 / 1.2))
 
         self._overlay_toolbar.adjustSize()
         self._position_overlay_toolbar()
+        language_events.changed.connect(self._refresh_language)
+
+    def _refresh_language(self, _language: str) -> None:
+        for label, _, _ in self._country_anchors:
+            label.prepareGeometryChange()
+            label._display_name = render(place_message(label._name))
+            label.update()
+        self._layout_labels()
+        self.viewport().update()
 
     def _position_overlay_toolbar(self) -> None:
         self._overlay_toolbar.adjustSize()
@@ -616,7 +630,7 @@ class CityMapView(QGraphicsView):
         from PySide6.QtWidgets import QMenu
 
         menu = QMenu(self)
-        zoom_out_action = menu.addAction("축소해서 전체 보기")
+        zoom_out_action = add_action(menu, tr('축소해서 전체 보기'))
         chosen = menu.exec(screen_pos.toPoint() if hasattr(screen_pos, "toPoint") else screen_pos)
         if chosen is zoom_out_action:
             self.zoom_out_to_all()

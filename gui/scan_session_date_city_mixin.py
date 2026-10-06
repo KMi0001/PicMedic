@@ -13,6 +13,9 @@ ScanSessionWindow.__init__이 준비한 속성이다. 단독으로 인스턴스�
 
 from __future__ import annotations
 
+from gui.i18n import message as tr
+
+
 from gui.common_dialogs import info_dialog as _info_dialog
 
 
@@ -20,10 +23,10 @@ class DateCityOrganizeMixin:
     def _open_date_organize(self):
         result = self.result_screen.result
         if not result or not result.files:
-            _info_dialog(self, "정리할 사진이 없습니다.")
+            _info_dialog(self, tr('정리할 사진이 없습니다.'))
             return
         self.date_organize_screen.set_result(result)
-        self.date_organize_screen.set_output_root(str(self._default_organize_output_dir() / "날짜별_정리"))
+        self.date_organize_screen.set_output_root(str(self._default_organize_output_dir() / tr('날짜별_정리')))
         self.stack.setCurrentWidget(self.date_organize_screen)
 
     def _back_from_date_organize(self):
@@ -38,10 +41,10 @@ class DateCityOrganizeMixin:
     def _open_city_organize(self):
         result = self.result_screen.result
         if not result or not result.files:
-            _info_dialog(self, "정리할 사진이 없습니다.")
+            _info_dialog(self, tr('정리할 사진이 없습니다.'))
             return
         self.city_organize_screen.set_result(result)
-        self.city_organize_screen.set_output_root(str(self._default_organize_output_dir() / "도시별_정리"))
+        self.city_organize_screen.set_output_root(str(self._default_organize_output_dir() / tr('도시별_정리')))
         self.stack.setCurrentWidget(self.city_organize_screen)
 
     def _back_from_city_organize(self):

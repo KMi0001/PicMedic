@@ -25,6 +25,9 @@ ScanSessionWindow의 land_on_organize), 허브의 카드(중복/유사/날짜별
 
 from __future__ import annotations
 
+from gui.i18n import file_dialog, message as tr, localized_widget, set_ui, add_action
+from gui.i18n import get_language, set_language, language_events
+
 from pathlib import Path
 
 from PySide6.QtCore import (
@@ -51,6 +54,7 @@ from PySide6.QtWidgets import (
     QDialog,
     QMenu,
     QAbstractButton,
+    QButtonGroup,
 )
 
 from core.scanner import SCANNABLE_EXTENSIONS
@@ -73,7 +77,7 @@ CONTENT_WIDTH = 520
 PRIVACY_POLICY_URL = "https://kmi0001.github.io/PicMedic-Web/privacy-policy.html"
 
 _IMAGE_FILTER_PATTERN = " ".join(f"*{ext}" for ext in sorted(SCANNABLE_EXTENSIONS))
-IMAGE_FILE_FILTER = f"이미지 파일 ({_IMAGE_FILTER_PATTERN});;모든 파일 (*)"
+IMAGE_FILE_FILTER = tr('이미지 파일 ({0});;모든 파일 (*)', _IMAGE_FILTER_PATTERN)
 
 
 def _outline_icon(color: str, size: int, draw) -> QPixmap:
@@ -322,7 +326,7 @@ class DropActionCard(QFrame):
         layout.setContentsMargins(20, 16, 20, 16)
         layout.setSpacing(16)
 
-        self.icon_label = QLabel()
+        self.icon_label = localized_widget(QLabel)
         self.icon_label.setFixedSize(52, 52)
         self.icon_label.setAlignment(Qt.AlignCenter)
         self.icon_label.setStyleSheet(f"background-color: {COLORS['selection']}; border-radius: 26px;")
@@ -331,10 +335,10 @@ class DropActionCard(QFrame):
 
         text_col = QVBoxLayout()
         text_col.setSpacing(3)
-        title_label = QLabel(title)
+        title_label = localized_widget(QLabel, title)
         title_label.setStyleSheet("font-size: 15px; font-weight: 700; background: transparent;")
         text_col.addWidget(title_label)
-        self.desc_label = QLabel(desc)
+        self.desc_label = localized_widget(QLabel, desc)
         self.desc_label.setWordWrap(True)
         self.desc_label.setStyleSheet(
             f"color: {COLORS['text_secondary']}; font-size: 11.5px; background: transparent;"
@@ -342,7 +346,7 @@ class DropActionCard(QFrame):
         text_col.addWidget(self.desc_label)
         layout.addLayout(text_col, 1)
 
-        self.hint_label = QLabel("여기로 끌어놓기\n또는 클릭")
+        self.hint_label = localized_widget(QLabel, tr('여기로 끌어놓기\n또는 클릭'))
         self.hint_label.setAlignment(Qt.AlignCenter)
         self.hint_label.setStyleSheet(f"color: {COLORS['muted']}; font-size: 10.5px; background: transparent;")
         layout.addWidget(self.hint_label)
@@ -417,18 +421,18 @@ class PhotoFolderDropZone(QFrame):
         layout.setAlignment(Qt.AlignCenter)
         layout.setSpacing(6)
 
-        self.icon_label = QLabel()
+        self.icon_label = localized_widget(QLabel)
         self.icon_label.setAlignment(Qt.AlignCenter)
         self.icon_label.setStyleSheet("background: transparent;")
         self.icon_label.setPixmap(_folder_photo_icon_pixmap(COLORS["primary"]))
         layout.addWidget(self.icon_label)
 
-        title = QLabel("사진 · 폴더")
+        title = localized_widget(QLabel, tr('사진 · 폴더'))
         title.setAlignment(Qt.AlignCenter)
         title.setStyleSheet("font-size: 17px; font-weight: 700; background: transparent;")
         layout.addWidget(title)
 
-        self.hint_label = QLabel("여기로 끌어놓거나 클릭해서 선택하세요")
+        self.hint_label = localized_widget(QLabel, tr('여기로 끌어놓거나 클릭해서 선택하세요'))
         self.hint_label.setAlignment(Qt.AlignCenter)
         self.hint_label.setStyleSheet(
             f"color: {COLORS['text_secondary']}; font-size: 12px; background: transparent;"
@@ -494,7 +498,7 @@ class HomeScreen(QWidget):
         header_row = QHBoxLayout()
         header_row.setSpacing(6)
 
-        brand_icon = QLabel()
+        brand_icon = localized_widget(QLabel)
         brand_icon.setFixedSize(44, 44)
         brand_icon.setPixmap(
             QPixmap(asset_path("icon.png")).scaled(
@@ -505,9 +509,9 @@ class HomeScreen(QWidget):
 
         brand_text = QVBoxLayout()
         brand_text.setSpacing(2)
-        title = QLabel("PicMedic")
+        title = localized_widget(QLabel, "PicMedic")
         title.setStyleSheet("font-size: 20px; font-weight: 700; margin: 0; padding: 0;")
-        self.subtitle_label = QLabel("사진을 치료해줄게요")
+        self.subtitle_label = localized_widget(QLabel, tr('사진을 치료해줄게요'))
         self.subtitle_label.setStyleSheet(
             f"color: {COLORS['text_secondary']}; font-size: 12.5px; margin: 0; padding: 0;"
         )
@@ -518,20 +522,20 @@ class HomeScreen(QWidget):
         header_row.addStretch(1)
 
         self.help_btn = HelpButton()
-        self.help_btn.setToolTip("사용 안내")
+        set_ui(self.help_btn, 'toolTip', tr('사용 안내'))
         self.help_btn.clicked.connect(lambda: show_help(self))
         header_row.addWidget(self.help_btn, alignment=Qt.AlignVCenter)
         header_row.addSpacing(8)
 
         self.theme_toggle = ThemeToggle()
         self.theme_toggle.setChecked(theme.is_dark_mode())
-        self.theme_toggle.setToolTip("다크 모드")
+        set_ui(self.theme_toggle, 'toolTip', tr('다크 모드'))
         self.theme_toggle.toggled.connect(self._on_theme_toggled)
         header_row.addWidget(self.theme_toggle, alignment=Qt.AlignVCenter)
 
         content_layout.addLayout(header_row)
 
-        self.hint_label = QLabel("사진이나 폴더를 끌어놓으면 검사하고 정리까지 도와드려요.")
+        self.hint_label = localized_widget(QLabel, tr('사진이나 폴더를 끌어놓으면 검사하고 정리까지 도와드려요.'))
         self.hint_label.setWordWrap(True)
         self.hint_label.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 12px;")
         content_layout.addWidget(self.hint_label)
@@ -543,8 +547,8 @@ class HomeScreen(QWidget):
 
         self.convert_card = DropActionCard(
             _convert_icon_pixmap(COLORS["primary"]),
-            "변환",
-            "사진 형식을 다른 형식으로 바꿔요 (여러 장도 가능)",
+            tr('변환'),
+            tr('사진 형식을 다른 형식으로 바꿔요 (여러 장도 가능)'),
         )
         self.convert_card.paths_dropped.connect(self._on_convert_paths_chosen)
         self.convert_card.clicked.connect(lambda: self._show_pick_menu(self._on_convert_paths_chosen))
@@ -552,8 +556,8 @@ class HomeScreen(QWidget):
 
         self.live_photo_card = DropActionCard(
             _live_photo_icon_pixmap(COLORS["primary"]),
-            "라이브 포토",
-            "짝 동영상이 남아있는 라이브 포토를 찾아서 내보내거나 모아줘요",
+            tr('라이브 포토'),
+            tr('짝 동영상이 남아있는 라이브 포토를 찾아서 내보내거나 모아줘요'),
         )
         self.live_photo_card.paths_dropped.connect(self._on_live_photo_paths_chosen)
         self.live_photo_card.clicked.connect(lambda: self._show_pick_menu(self._on_live_photo_paths_chosen))
@@ -561,8 +565,8 @@ class HomeScreen(QWidget):
 
         self.rename_card = DropActionCard(
             _rename_icon_pixmap(COLORS["primary"]),
-            "이름 일괄변환",
-            "사진 여러 장의 파일명을 한 번에 바꿔요 (순번 매기기 등)",
+            tr('이름 일괄변환'),
+            tr('사진 여러 장의 파일명을 한 번에 바꿔요 (순번 매기기 등)'),
         )
         self.rename_card.paths_dropped.connect(self._on_rename_paths_chosen)
         self.rename_card.clicked.connect(lambda: self._show_pick_menu(self._on_rename_paths_chosen))
@@ -570,11 +574,25 @@ class HomeScreen(QWidget):
 
         bottom_row = QHBoxLayout()
         bottom_row.setSpacing(10)
-        trash_btn = QPushButton("임시 휴지통")
+        trash_btn = localized_widget(QPushButton, tr('임시 휴지통'))
         trash_btn.clicked.connect(self._open_trash)
         bottom_row.addWidget(trash_btn)
         bottom_row.addStretch(1)
-        self.privacy_link = QLabel(f'<a href="{PRIVACY_POLICY_URL}" style="color:{COLORS["muted"]};">개인정보처리방침</a>')
+        self.language_group = QButtonGroup(self)
+        self.language_buttons = {}
+        for language, label in (("ko", "한국어"), ("en", "English")):
+            button = QPushButton(label)
+            button.setObjectName("LanguageButton")
+            button.setCheckable(True)
+            button.setCursor(Qt.PointingHandCursor)
+            button.setAccessibleName(label)
+            button.setChecked(get_language() == language)
+            button.clicked.connect(lambda _checked=False, code=language: set_language(code))
+            self.language_group.addButton(button)
+            self.language_buttons[language] = button
+            bottom_row.addWidget(button)
+        language_events.changed.connect(self._sync_language_buttons)
+        self.privacy_link = localized_widget(QLabel, tr('<a href="{0}" style="color:{1};">개인정보처리방침</a>', PRIVACY_POLICY_URL, COLORS["muted"]))
         self.privacy_link.setStyleSheet("font-size: 11px; background: transparent;")
         self.privacy_link.setTextInteractionFlags(Qt.TextBrowserInteraction)
         self.privacy_link.setOpenExternalLinks(False)
@@ -584,6 +602,10 @@ class HomeScreen(QWidget):
 
         outer.addWidget(content, alignment=Qt.AlignHCenter)
         outer.addStretch(1)
+
+    def _sync_language_buttons(self, language: str) -> None:
+        for code, button in self.language_buttons.items():
+            button.setChecked(code == language)
 
     def _on_theme_toggled(self, checked: bool) -> None:
         # 홈 화면은 MainWindow의 central widget이라 재생성(재진입) 없이 계속
@@ -600,9 +622,7 @@ class HomeScreen(QWidget):
         self.convert_card.refresh_theme(_convert_icon_pixmap(COLORS["primary"]))
         self.live_photo_card.refresh_theme(_live_photo_icon_pixmap(COLORS["primary"]))
         self.rename_card.refresh_theme(_rename_icon_pixmap(COLORS["primary"]))
-        self.privacy_link.setText(
-            f'<a href="{PRIVACY_POLICY_URL}" style="color:{COLORS["muted"]};">개인정보처리방침</a>'
-        )
+        set_ui(self.privacy_link, 'text', tr('<a href="{0}" style="color:{1};">개인정보처리방침</a>', PRIVACY_POLICY_URL, COLORS["muted"]))
 
     # --- 내부 로직 -----------------------------------------------------
 
@@ -625,8 +645,8 @@ class HomeScreen(QWidget):
         메뉴처럼 커서 위치에서 뜨게 한다(2026-09-10, 사용자 리포트 — "팝업이
         어색하다")."""
         menu = QMenu(self)
-        file_action = menu.addAction("파일 선택...")
-        folder_action = menu.addAction("폴더 선택...")
+        file_action = add_action(menu, tr('파일 선택...'))
+        folder_action = add_action(menu, tr('폴더 선택...'))
         chosen = menu.exec(QCursor.pos())
         if chosen is file_action:
             self._pick_files(on_chosen)
@@ -635,8 +655,8 @@ class HomeScreen(QWidget):
 
     def _pick_files(self, on_chosen) -> None:
         start_dir = self._default_browse_dir()
-        file_paths, _ = QFileDialog.getOpenFileNames(
-            self, "사진 파일 선택 (여러 개 선택 가능)", start_dir, IMAGE_FILE_FILTER
+        file_paths, _ = file_dialog(QFileDialog.getOpenFileNames,
+            self, tr('사진 파일 선택 (여러 개 선택 가능)'), start_dir, IMAGE_FILE_FILTER
         )
         if file_paths:
             self._remember_browse_dir(str(Path(file_paths[0]).parent))
@@ -644,7 +664,7 @@ class HomeScreen(QWidget):
 
     def _pick_folder(self, on_chosen) -> None:
         start_dir = self._default_browse_dir()
-        folder = QFileDialog.getExistingDirectory(self, "폴더 선택", start_dir)
+        folder = file_dialog(QFileDialog.getExistingDirectory, self, tr('폴더 선택'), start_dir)
         if folder:
             self._remember_browse_dir(folder)
             on_chosen([folder])
@@ -683,7 +703,7 @@ class HomeScreen(QWidget):
         "임시휴지통"), 그 폴더를 담고 있는 상위 폴더를 골라도 되게 둘 다
         받아준다."""
         start_dir = self._default_browse_dir()
-        chosen = QFileDialog.getExistingDirectory(self, "임시휴지통이 있는 폴더 선택", start_dir)
+        chosen = file_dialog(QFileDialog.getExistingDirectory, self, tr('임시휴지통이 있는 폴더 선택'), start_dir)
         if not chosen:
             return
         chosen_path = Path(chosen)
@@ -693,12 +713,12 @@ class HomeScreen(QWidget):
             else chosen_path / trash.TRASH_FOLDER_NAME
         )
         if not trash_path.is_dir():
-            info_dialog(self, f'이 폴더에는 아직 "{trash.TRASH_FOLDER_NAME}"이 없어요.\n({chosen})')
+            info_dialog(self, tr('이 폴더에는 아직 "{0}"이 없어요.\n({1})', trash.TRASH_FOLDER_NAME, chosen))
             return
         self._remember_browse_dir(chosen)
 
         dialog = QDialog(self)
-        dialog.setWindowTitle("임시 휴지통")
+        set_ui(dialog, 'windowTitle', tr('임시 휴지통'))
         dialog.setWindowModality(Qt.WindowModal)
         layout = QVBoxLayout(dialog)
         layout.setContentsMargins(0, 0, 0, 0)

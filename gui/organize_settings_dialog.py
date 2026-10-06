@@ -16,6 +16,8 @@ category_finder_screen.py 셋 다 쓰는 공용 컴포넌트.
 
 from __future__ import annotations
 
+from gui.i18n import file_dialog, message as tr, localized_widget, set_ui
+
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QResizeEvent
 from PySide6.QtWidgets import (
@@ -37,7 +39,7 @@ from gui.theme import COLORS
 class OrganizeSettingsDialog(QDialog):
     def __init__(self, parent: QWidget, title: str, auto_label: str, output_root: str = "", mode_note: str = ""):
         super().__init__(parent)
-        self.setWindowTitle(title)
+        set_ui(self, 'windowTitle', title)
         self.setWindowModality(Qt.WindowModal)
         self.setMinimumWidth(420)
         self._output_root = output_root
@@ -46,26 +48,26 @@ class OrganizeSettingsDialog(QDialog):
         layout.setContentsMargins(20, 20, 20, 20)
         layout.setSpacing(10)
 
-        mode_label = QLabel("정리 방식")
+        mode_label = localized_widget(QLabel, tr('정리 방식'))
         mode_label.setStyleSheet(SECTION_HEADER_STYLE)
         layout.addWidget(mode_label)
         if mode_note:
-            note_label = QLabel(mode_note)
+            note_label = localized_widget(QLabel, mode_note)
             note_label.setWordWrap(True)
             note_label.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 11px;")
             layout.addWidget(note_label)
         mode_group = QButtonGroup(self)
-        self.copy_radio = QRadioButton("복사 (원본은 그대로 두고 새 폴더에 사본 생성 — 기본값)")
+        self.copy_radio = localized_widget(QRadioButton, tr('복사 (원본은 그대로 두고 새 폴더에 사본 생성 — 기본값)'))
         self.copy_radio.setChecked(True)
         mode_group.addButton(self.copy_radio)
         layout.addWidget(self.copy_radio)
-        self.move_radio = QRadioButton("이동 (원본이 새 폴더로 옮겨지고 원래 위치엔 안 남음)")
+        self.move_radio = localized_widget(QRadioButton, tr('이동 (원본이 새 폴더로 옮겨지고 원래 위치엔 안 남음)'))
         self.move_radio.setStyleSheet(f"color: {COLORS['warning']};")
         mode_group.addButton(self.move_radio)
         layout.addWidget(self.move_radio)
 
         layout.addSpacing(8)
-        filename_label = QLabel("파일명")
+        filename_label = localized_widget(QLabel, tr('파일명'))
         filename_label.setStyleSheet(SECTION_HEADER_STYLE)
         layout.addWidget(filename_label)
         self.rename_widget = RenameSettingsWidget(auto_label=auto_label)
@@ -73,11 +75,11 @@ class OrganizeSettingsDialog(QDialog):
         layout.addWidget(self.rename_widget)
 
         layout.addSpacing(8)
-        output_label = QLabel("저장 위치")
+        output_label = localized_widget(QLabel, tr('저장 위치'))
         output_label.setStyleSheet(SECTION_HEADER_STYLE)
         layout.addWidget(output_label)
         output_row = QHBoxLayout()
-        change_btn = QPushButton("변경")
+        change_btn = localized_widget(QPushButton, tr('변경'))
         change_btn.clicked.connect(self._on_change_output_clicked)
         output_row.addWidget(change_btn)
         # 저장 위치는 길어져도 줄바꿈하지 않고 한 줄로 유지 + 말줄임표(가운데)로
@@ -85,7 +87,7 @@ class OrganizeSettingsDialog(QDialog):
         # 통하는 텍스트라 파일명 진행률 표시(gui/common_dialogs.py::
         # ProgressDialog.update_progress)와 같은 방식을 쓴다. 전체 경로는
         # 툴팁으로 항상 확인 가능(기본 정책, 2026-09-18).
-        self.output_path_label = QLabel()
+        self.output_path_label = localized_widget(QLabel)
         self.output_path_label.setWordWrap(False)
         self.output_path_label.setStyleSheet("font-size: 12px;")
         output_row.addWidget(self.output_path_label, stretch=1)
@@ -94,9 +96,9 @@ class OrganizeSettingsDialog(QDialog):
 
         btn_row = QHBoxLayout()
         btn_row.addStretch(1)
-        cancel_btn = QPushButton("취소")
+        cancel_btn = localized_widget(QPushButton, tr('취소'))
         cancel_btn.clicked.connect(self.reject)
-        self.confirm_btn = QPushButton("정리 실행")
+        self.confirm_btn = localized_widget(QPushButton, tr('정리 실행'))
         self.confirm_btn.setObjectName("Primary")
         self.confirm_btn.setDefault(True)
         self.confirm_btn.clicked.connect(self.accept)
@@ -107,7 +109,7 @@ class OrganizeSettingsDialog(QDialog):
         self._update_confirm_enabled()
 
     def _on_change_output_clicked(self) -> None:
-        chosen = QFileDialog.getExistingDirectory(self, "저장 위치 선택", self._output_root or "")
+        chosen = file_dialog(QFileDialog.getExistingDirectory, self, tr('저장 위치 선택'), self._output_root or "")
         if chosen:
             self.set_output_root(chosen)
 
@@ -125,8 +127,8 @@ class OrganizeSettingsDialog(QDialog):
         width = self.output_path_label.width() or (self.minimumWidth() - 120)
         metrics = self.output_path_label.fontMetrics()
         elided = metrics.elidedText(self._output_root, Qt.ElideMiddle, max(width, 0))
-        self.output_path_label.setText(elided)
-        self.output_path_label.setToolTip(self._output_root)
+        set_ui(self.output_path_label, 'text', elided)
+        set_ui(self.output_path_label, 'toolTip', self._output_root)
 
     def resizeEvent(self, event: QResizeEvent) -> None:
         super().resizeEvent(event)

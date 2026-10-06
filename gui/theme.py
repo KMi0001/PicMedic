@@ -175,6 +175,17 @@ QPushButton:hover {{
     border-color: {COLORS['primary']};
 }}
 
+QPushButton#LanguageButton {{
+    padding: 6px 10px;
+    font-size: 11px;
+}}
+
+QPushButton#LanguageButton:checked {{
+    background-color: {COLORS['selection']};
+    border-color: {COLORS['primary']};
+    font-weight: 600;
+}}
+
 QPushButton#Primary {{
     background-color: {COLORS['primary']};
     color: {COLORS['on_primary']};

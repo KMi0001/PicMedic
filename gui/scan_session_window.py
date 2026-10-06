@@ -24,6 +24,8 @@ ScanSessionWindow.__init__이 준비한 같은 속성(stack, result_screen, ...)
 
 from __future__ import annotations
 
+from gui.i18n import system_message, join_messages, message as tr, set_ui
+
 from pathlib import Path
 
 from PySide6.QtCore import Qt, Signal
@@ -108,7 +110,7 @@ class ScanSessionWindow(
         self.setWindowFlags(Qt.Window)
         self.setStyleSheet(get_stylesheet())
         apply_titlebar_theme(self, COLORS["bg"], COLORS["text"])
-        self.setWindowTitle("PicMedic — 사진 진단 · 복구 · 정리")
+        set_ui(self, 'windowTitle', tr('PicMedic — 사진 진단 · 복구 · 정리'))
         self.resize(*self._SCANNING_SIZE)
 
         self.stack = _CurrentOnlyStack()
@@ -313,7 +315,7 @@ class ScanSessionWindow(
         if worker is not None:
             worker.wait()
 
-        _info_dialog(self, f"검사 중 예상하지 못한 오류가 발생했습니다.\n\n{message}")
+        _info_dialog(self, tr('검사 중 예상하지 못한 오류가 발생했습니다.\n\n{0}', system_message(message)))
         self.close()
 
     def _center_on_screen(self) -> None:
@@ -351,7 +353,7 @@ class ScanSessionWindow(
 
         if result.total == 0:
             if not cancelled:
-                _info_dialog(self, "이미지 파일이 없습니다.")
+                _info_dialog(self, tr('이미지 파일이 없습니다.'))
             self.close()
             return
 
@@ -381,16 +383,16 @@ class ScanSessionWindow(
 
     def _show_restore_summary(self, stats) -> None:
         """저장된 작업을 불러왔을 때, 지금 폴더와 비교해 뭐가 달라졌는지 알려준다."""
-        lines = ["이전 작업을 불러왔어요.", "", f"• 그대로 사용한 사진: {stats.reused:,}장"]
+        lines = [tr('이전 작업을 불러왔어요.'), "", tr('• 그대로 사용한 사진: {0}장', f'{stats.reused:,}')]
         if stats.added:
-            lines.append(f"• 새로 생겨서 검사한 사진: {stats.added:,}장")
+            lines.append(tr('• 새로 생겨서 검사한 사진: {0}장', f'{stats.added:,}'))
         if stats.changed:
-            lines.append(f"• 내용이 바뀌어 다시 검사한 사진: {stats.changed:,}장")
+            lines.append(tr('• 내용이 바뀌어 다시 검사한 사진: {0}장', f'{stats.changed:,}'))
         if stats.moved:
-            lines.append(f"• 다른 폴더로 옮겨진 것으로 확인한 사진: {len(stats.moved):,}장")
+            lines.append(tr('• 다른 폴더로 옮겨진 것으로 확인한 사진: {0}장', f'{len(stats.moved):,}'))
         if stats.removed:
-            lines.append(f"• 삭제되어 목록에서 뺀 사진: {stats.removed:,}장")
-        _info_dialog(self, "\n".join(lines))
+            lines.append(tr('• 삭제되어 목록에서 뺀 사진: {0}장', f'{stats.removed:,}'))
+        _info_dialog(self, join_messages("\n", lines))
 
     # --- 창 종료 ---------------------------------------------------------
 

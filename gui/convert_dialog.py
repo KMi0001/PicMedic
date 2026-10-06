@@ -25,6 +25,8 @@ converter.py::convert_to_format)은 실제 변환 시점에 파일을 다시 직
 
 from __future__ import annotations
 
+from gui.i18n import message as tr, localized_widget, set_ui
+
 from collections import Counter
 
 from PySide6.QtCore import Qt, QThread, Signal
@@ -81,7 +83,7 @@ def run_convert(parent: QWidget, paths: list[str]) -> None:
         worker.wait()
         files = list(result.files)
         if not files:
-            info_dialog(parent, "선택한 위치에서 사진 파일을 찾지 못했어요.")
+            info_dialog(parent, tr('선택한 위치에서 사진 파일을 찾지 못했어요.'))
             return
         filtered = _filter_by_extension(parent, files)
         if filtered:
@@ -90,9 +92,9 @@ def run_convert(parent: QWidget, paths: list[str]) -> None:
     progress_dialog.cancel_requested.connect(worker.cancel)
     worker.finished_listing.connect(on_finished)
 
-    progress_dialog.start("사진 목록을 모으는 중")
+    progress_dialog.start(tr('사진 목록을 모으는 중'))
     progress_dialog.bar.setRange(0, 0)
-    progress_dialog.status_label.setText("폴더를 훑어보는 중...")
+    set_ui(progress_dialog.status_label, 'text', tr('폴더를 훑어보는 중...'))
     worker.start()
     progress_dialog.exec()
 
@@ -106,32 +108,32 @@ def _filter_by_extension(parent: QWidget, files: list[FileInfo]) -> list[FileInf
         return files
 
     dialog = QDialog(parent)
-    dialog.setWindowTitle("PicMedic")
+    set_ui(dialog, 'windowTitle', "PicMedic")
     dialog.setWindowModality(Qt.WindowModal)
     layout = QVBoxLayout(dialog)
     layout.setContentsMargins(20, 20, 20, 20)
     layout.setSpacing(12)
 
-    label = QLabel("어떤 확장자를 바꿀까요?")
+    label = localized_widget(QLabel, tr('어떤 확장자를 바꿀까요?'))
     label.setStyleSheet("font-weight: 700; font-size: 14px;")
     layout.addWidget(label)
 
-    hint = QLabel("고른 확장자의 사진만 변환 대상이 돼요.")
+    hint = localized_widget(QLabel, tr('고른 확장자의 사진만 변환 대상이 돼요.'))
     hint.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 11px;")
     layout.addWidget(hint)
 
     checks: dict[str, QCheckBox] = {}
     for ext, count in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0])):
-        label_text = ext if ext else "(확장자 없음)"
-        check = QCheckBox(f"{label_text}  —  {count}장")
+        label_text = ext if ext else tr('(확장자 없음)')
+        check = localized_widget(QCheckBox, tr('{0}  —  {1}장', label_text, count))
         check.setChecked(True)
         layout.addWidget(check)
         checks[ext] = check
 
     btn_row = QHBoxLayout()
     btn_row.addStretch(1)
-    cancel_btn = QPushButton("취소")
-    confirm_btn = QPushButton("변환하기")
+    cancel_btn = localized_widget(QPushButton, tr('취소'))
+    confirm_btn = localized_widget(QPushButton, tr('변환하기'))
     confirm_btn.setObjectName("Primary")
     confirm_btn.setDefault(True)
     btn_row.addWidget(cancel_btn)
@@ -147,7 +149,7 @@ def _filter_by_extension(parent: QWidget, files: list[FileInfo]) -> list[FileInf
     selected_exts = {ext for ext, check in checks.items() if check.isChecked()}
     filtered = [f for f in files if f.extension.lower() in selected_exts]
     if not filtered:
-        info_dialog(parent, "선택한 확장자가 없어서 변환할 사진이 없어요.")
+        info_dialog(parent, tr('선택한 확장자가 없어서 변환할 사진이 없어요.'))
         return None
     return filtered
 
@@ -157,7 +159,7 @@ def _open_convert_screen(parent: QWidget, files: list[FileInfo]) -> None:
     scan_session_window.py) 없이 화면 두 개(복구/변환 설정 -> 결과)만 담은
     작은 창을 띄운다."""
     dialog = QDialog(parent)
-    dialog.setWindowTitle("PicMedic — 변환")
+    set_ui(dialog, 'windowTitle', tr('PicMedic — 변환'))
     dialog.setWindowModality(Qt.WindowModal)
     layout = QVBoxLayout(dialog)
     layout.setContentsMargins(0, 0, 0, 0)
@@ -170,7 +172,7 @@ def _open_convert_screen(parent: QWidget, files: list[FileInfo]) -> None:
     layout.addWidget(stack)
 
     def on_recovery_finished(outcomes, output_dir):
-        result_screen.set_outcomes(outcomes, output_dir, title="변환")
+        result_screen.set_outcomes(outcomes, output_dir, title=tr('변환'))
         stack.setCurrentWidget(result_screen)
 
     recovery_screen.set_files(files, preselected_mode=RecoveryMode.CONVERT)

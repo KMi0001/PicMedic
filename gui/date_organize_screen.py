@@ -14,6 +14,8 @@ Phase 2-2 "날짜별 분류" — PHASE2_사진정리_기획.md "2026-09-01 논�
 
 from __future__ import annotations
 
+from gui.i18n import message as tr, localized_widget, set_ui
+
 from PySide6.QtCore import Qt, QPointF, QRectF, QThread, Signal
 from PySide6.QtGui import QColor, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
@@ -38,7 +40,7 @@ from gui.thumbnail import load_thumbnail_qimage
 
 THUMB_SIZE = 64
 MAX_THUMBS_PER_CARD = 5
-NO_DATE_LABEL = "날짜 정보 없음"
+NO_DATE_LABEL = tr('날짜 정보 없음')
 
 
 def _calendar_icon_pixmap(color: str, size: int = 26) -> QPixmap:
@@ -163,46 +165,43 @@ class DateOrganizeScreen(QWidget):
 
         title_row = QHBoxLayout()
         title_row.setSpacing(10)
-        title_icon = QLabel()
+        title_icon = localized_widget(QLabel)
         title_icon.setPixmap(_calendar_icon_pixmap(COLORS["primary"]))
         title_row.addWidget(title_icon)
-        title = QLabel("날짜별 정리")
+        title = localized_widget(QLabel, tr('날짜별 정리'))
         title.setObjectName("Title")
         title_row.addWidget(title)
         title_row.addStretch(1)
-        back_btn = QPushButton("← 뒤로")
+        back_btn = localized_widget(QPushButton, tr('← 뒤로'))
         back_btn.clicked.connect(self.back_requested.emit)
         title_row.addWidget(back_btn)
         outer.addLayout(title_row)
 
         chips_row = QHBoxLayout()
         chips_row.setSpacing(10)
-        self.range_chip = SummaryChip("촬영 기간", COLORS["primary"])
-        self.file_chip = SummaryChip("사진", COLORS["primary"])
-        self.no_date_chip = SummaryChip("날짜없음", COLORS["muted"])
+        self.range_chip = SummaryChip(tr('촬영 기간'), COLORS["primary"])
+        self.file_chip = SummaryChip(tr('사진'), COLORS["primary"])
+        self.no_date_chip = SummaryChip(tr('날짜없음'), COLORS["muted"])
         chips_row.addWidget(self.range_chip)
         chips_row.addWidget(self.file_chip)
         chips_row.addWidget(self.no_date_chip)
         chips_row.addStretch(1)
         outer.addLayout(chips_row)
 
-        hint = QLabel(
-            "미리보기예요 — 아직 아무 파일도 옮기지 않았어요. 촬영일(EXIF) 기준으로 이렇게 묶여요. "
-            "아래에서 방식을 고르고 \"정리하기\"를 눌러야 실제로 복사/이동돼요."
-        )
+        hint = localized_widget(QLabel, tr('미리보기예요 — 아직 아무 파일도 옮기지 않았어요. 촬영일(EXIF) 기준으로 이렇게 묶여요. 아래에서 방식을 고르고 "정리하기"를 눌러야 실제로 복사/이동돼요.'))
         hint.setWordWrap(True)
         hint.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 12px;")
         outer.addWidget(hint)
 
         granularity_row = QHBoxLayout()
         granularity_row.setSpacing(10)
-        granularity_label = QLabel("묶는 단위")
+        granularity_label = localized_widget(QLabel, tr('묶는 단위'))
         granularity_label.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 12px;")
         granularity_row.addWidget(granularity_label)
         granularity_buttons = QButtonGroup(self)
-        self.month_radio = QRadioButton("월별")
+        self.month_radio = localized_widget(QRadioButton, tr('월별'))
         self.month_radio.setChecked(True)
-        self.year_radio = QRadioButton("연도별")
+        self.year_radio = localized_widget(QRadioButton, tr('연도별'))
         granularity_buttons.addButton(self.month_radio)
         granularity_buttons.addButton(self.year_radio)
         self.month_radio.toggled.connect(self._on_granularity_toggled)
@@ -212,7 +211,7 @@ class DateOrganizeScreen(QWidget):
         granularity_row.addStretch(1)
         outer.addLayout(granularity_row)
 
-        self.empty_label = QLabel("정리할 사진이 없습니다.")
+        self.empty_label = localized_widget(QLabel, tr('정리할 사진이 없습니다.'))
         self.empty_label.setStyleSheet(f"color: {COLORS['text_secondary']}; padding: 24px;")
         self.empty_label.setAlignment(Qt.AlignCenter)
         outer.addWidget(self.empty_label)
@@ -237,12 +236,12 @@ class DateOrganizeScreen(QWidget):
         # 길어져 위 그룹 목록 영역이 좁아진다는 피드백(2026-09-18)으로 옮김.
         self._organize_dialog = OrganizeSettingsDialog(
             self,
-            title="날짜별 정리 — 정리하기",
-            auto_label="자동 입력 (정리 기준 — 날짜별)",
-            mode_note=f"\"{NO_DATE_LABEL}\" 사진들은 따로 \"{NO_DATE_LABEL}\" 폴더에 모아요.",
+            title=tr('날짜별 정리 — 정리하기'),
+            auto_label=tr('자동 입력 (정리 기준 — 날짜별)'),
+            mode_note=tr('"{0}" 사진들은 따로 "{1}" 폴더에 모아요.', NO_DATE_LABEL, NO_DATE_LABEL),
         )
 
-        self.organize_btn = QPushButton("정리하기")
+        self.organize_btn = localized_widget(QPushButton, tr('정리하기'))
         self.organize_btn.setObjectName("Primary")
         self.organize_btn.setEnabled(False)
         self.organize_btn.clicked.connect(self._on_organize_clicked)
@@ -344,12 +343,12 @@ class DateOrganizeScreen(QWidget):
         self._thumb_worker.progress.connect(self._on_preload_progress)
         self._thumb_worker.finished_batch.connect(self._on_preload_finished)
 
-        self._preload_progress.start("사진 불러오는 중")
+        self._preload_progress.start(tr('사진 불러오는 중'))
         self._thumb_worker.start()
         self._preload_progress.exec()
 
     def _on_preload_progress(self, current: int, total: int):
-        self._preload_progress.update_progress(current, total, "사진")
+        self._preload_progress.update_progress(current, total, tr('사진'))
 
     def _on_preload_cancel_requested(self):
         if self._thumb_worker is not None:
@@ -412,7 +411,7 @@ class DateOrganizeScreen(QWidget):
     def _build_group_card(self, label: str, files: list) -> QFrame:
         card = _ClickableCard()
         card.setObjectName("Card")
-        card.setToolTip("눌러서 이 그룹의 사진을 확인합니다")
+        set_ui(card, 'toolTip', tr('눌러서 이 그룹의 사진을 확인합니다'))
         card.clicked.connect(lambda label=label, files=files: self.group_opened.emit(label, files))
         layout = QVBoxLayout(card)
         layout.setContentsMargins(18, 14, 18, 14)
@@ -421,10 +420,10 @@ class DateOrganizeScreen(QWidget):
         is_no_date = label == NO_DATE_LABEL
         excluded = self._group_exclusions.get(label)
         if excluded:
-            count_text = f"{len(files) - len(excluded)}장/{len(files)}장 (제외 {len(excluded)}장)"
+            count_text = tr('{0}장/{1}장 (제외 {2}장)', len(files) - len(excluded), len(files), len(excluded))
         else:
-            count_text = f"{len(files)}장"
-        header = QLabel(f"{label} · {count_text}")
+            count_text = tr('{0}장', len(files))
+        header = localized_widget(QLabel, tr("{0} · {1}", tr(label), count_text))
         header.setStyleSheet(
             f"font-weight: 700; color: {COLORS['text_secondary']};" if is_no_date else "font-weight: 700;"
         )
@@ -436,7 +435,7 @@ class DateOrganizeScreen(QWidget):
         strip = QHBoxLayout()
         strip.setSpacing(6)
         for info in files[:MAX_THUMBS_PER_CARD]:
-            thumb = QLabel()
+            thumb = localized_widget(QLabel)
             thumb.setFixedSize(THUMB_SIZE, THUMB_SIZE)
             thumb.setAlignment(Qt.AlignCenter)
             thumb.setAttribute(Qt.WA_TransparentForMouseEvents)
@@ -449,7 +448,7 @@ class DateOrganizeScreen(QWidget):
 
         remaining = len(files) - MAX_THUMBS_PER_CARD
         if remaining > 0:
-            more = QLabel(f"+{remaining}")
+            more = localized_widget(QLabel, f"+{remaining}")
             more.setFixedSize(THUMB_SIZE, THUMB_SIZE)
             more.setAlignment(Qt.AlignCenter)
             more.setAttribute(Qt.WA_TransparentForMouseEvents)

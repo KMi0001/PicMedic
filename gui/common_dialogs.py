@@ -10,6 +10,8 @@ gui/scan_session_window.py의 _info_dialog)을, 세 번째 화면(gui/duplicate_
 
 from __future__ import annotations
 
+from gui.i18n import system_message, message as tr, localized_widget, set_ui
+
 from PySide6.QtCore import Qt, QRectF, QTimer, QUrl, Signal
 from PySide6.QtGui import QColor, QDesktopServices, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
@@ -49,7 +51,7 @@ def confirm_dialog(
     확인 쪽을 누르면 True. 버튼 문구는 상황에 맞게 바꿔 쓴다 — 예:
     "유지"/"삭제" (gui/recovery_screen.py::_on_finished, 복구된 파일 유지 여부)."""
     dialog = QDialog(parent)
-    dialog.setWindowTitle("PicMedic")
+    set_ui(dialog, 'windowTitle', "PicMedic")
     # ApplicationModal(기본값)이 아니라 이 창(부모 체인)만 막는다 — 여러 검사 세션
     # 창이 동시에 떠 있을 때 팝업 하나 때문에 다른 세션까지 멈추지 않게 한다.
     dialog.setWindowModality(Qt.WindowModal)
@@ -58,12 +60,12 @@ def confirm_dialog(
     layout.setContentsMargins(20, 20, 20, 20)
     layout.setSpacing(16)
 
-    icon_label = QLabel()
+    icon_label = localized_widget(QLabel)
     icon_label.setPixmap(question_icon_pixmap(COLORS["primary"]))
     layout.addWidget(icon_label, alignment=Qt.AlignTop)
 
     text_col = QVBoxLayout()
-    msg_label = QLabel(message)
+    msg_label = localized_widget(QLabel, system_message(message))
     msg_label.setWordWrap(True)
     msg_label.setFixedWidth(280)
     text_col.addWidget(msg_label)
@@ -71,8 +73,8 @@ def confirm_dialog(
     text_col.addSpacing(12)
     btn_row = QHBoxLayout()
     btn_row.addStretch(1)
-    cancel_btn = QPushButton(cancel_text)
-    confirm_btn = QPushButton(confirm_text)
+    cancel_btn = localized_widget(QPushButton, cancel_text)
+    confirm_btn = localized_widget(QPushButton, confirm_text)
     confirm_btn.setObjectName("Primary")
     confirm_btn.setDefault(True)
     btn_row.addWidget(cancel_btn)
@@ -91,19 +93,19 @@ def info_dialog(parent: QWidget, message: str) -> None:
     """확인 버튼 하나뿐인 안내 팝업 — 네이티브 QMessageBox.information 대신 앱 테마에
     맞춘 카드형 다이얼로그."""
     dialog = QDialog(parent)
-    dialog.setWindowTitle("PicMedic")
+    set_ui(dialog, 'windowTitle', "PicMedic")
     dialog.setWindowModality(Qt.WindowModal)  # 이 세션 창만 막고 다른 세션은 그대로 둔다
 
     layout = QHBoxLayout(dialog)
     layout.setContentsMargins(20, 20, 20, 20)
     layout.setSpacing(16)
 
-    icon_label = QLabel()
+    icon_label = localized_widget(QLabel)
     icon_label.setPixmap(info_icon_pixmap(COLORS["primary"]))
     layout.addWidget(icon_label, alignment=Qt.AlignTop)
 
     text_col = QVBoxLayout()
-    msg_label = QLabel(message)
+    msg_label = localized_widget(QLabel, system_message(message))
     msg_label.setWordWrap(True)
     msg_label.setFixedWidth(240)
     text_col.addWidget(msg_label)
@@ -111,7 +113,7 @@ def info_dialog(parent: QWidget, message: str) -> None:
     text_col.addSpacing(12)
     btn_row = QHBoxLayout()
     btn_row.addStretch(1)
-    ok_btn = QPushButton("확인")
+    ok_btn = localized_widget(QPushButton, tr('확인'))
     ok_btn.setObjectName("Primary")
     ok_btn.setDefault(True)
     btn_row.addWidget(ok_btn)
@@ -127,19 +129,19 @@ def info_dialog_with_folder(parent: QWidget, message: str, folder_path: str) -> 
     """info_dialog()에 "폴더 열기" 버튼을 하나 더 붙인 버전 — 결과가 파일로
     저장됐을 때(날짜별 정리, 복구 등) 그 폴더를 바로 열어볼 수 있게 한다."""
     dialog = QDialog(parent)
-    dialog.setWindowTitle("PicMedic")
+    set_ui(dialog, 'windowTitle', "PicMedic")
     dialog.setWindowModality(Qt.WindowModal)
 
     layout = QHBoxLayout(dialog)
     layout.setContentsMargins(20, 20, 20, 20)
     layout.setSpacing(16)
 
-    icon_label = QLabel()
+    icon_label = localized_widget(QLabel)
     icon_label.setPixmap(info_icon_pixmap(COLORS["primary"]))
     layout.addWidget(icon_label, alignment=Qt.AlignTop)
 
     text_col = QVBoxLayout()
-    msg_label = QLabel(message)
+    msg_label = localized_widget(QLabel, system_message(message))
     msg_label.setWordWrap(True)
     msg_label.setFixedWidth(260)
     text_col.addWidget(msg_label)
@@ -147,9 +149,9 @@ def info_dialog_with_folder(parent: QWidget, message: str, folder_path: str) -> 
     text_col.addSpacing(12)
     btn_row = QHBoxLayout()
     btn_row.addStretch(1)
-    open_folder_btn = QPushButton("폴더 열기")
+    open_folder_btn = localized_widget(QPushButton, tr('폴더 열기'))
     btn_row.addWidget(open_folder_btn)
-    ok_btn = QPushButton("확인")
+    ok_btn = localized_widget(QPushButton, tr('확인'))
     ok_btn.setObjectName("Primary")
     ok_btn.setDefault(True)
     btn_row.addWidget(ok_btn)
@@ -216,7 +218,7 @@ class ProgressDialog(QDialog):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("PicMedic")
+        set_ui(self, 'windowTitle', "PicMedic")
         # ApplicationModal이 아니라 이 창(세션)만 막는다 — 다른 검사 세션 창은
         # 계속 조작 가능해야 "다중 검사" 취지에 맞는다.
         self.setWindowModality(Qt.WindowModal)
@@ -229,10 +231,10 @@ class ProgressDialog(QDialog):
 
         header_row = QHBoxLayout()
         header_row.setSpacing(8)
-        icon_label = QLabel()
+        icon_label = localized_widget(QLabel)
         icon_label.setPixmap(progress_icon_pixmap(COLORS["primary"]))
         header_row.addWidget(icon_label)
-        self.title_label = QLabel("")
+        self.title_label = localized_widget(QLabel, "")
         self.title_label.setStyleSheet("font-weight: 700; font-size: 14px;")
         header_row.addWidget(self.title_label)
         header_row.addStretch(1)
@@ -254,22 +256,22 @@ class ProgressDialog(QDialog):
         self.bar = QProgressBar()
         layout.addWidget(self.bar)
 
-        self.status_label = QLabel("")
+        self.status_label = localized_widget(QLabel, "")
         self.status_label.setWordWrap(True)
         self.status_label.setStyleSheet(f"color: {COLORS['text_secondary']};")
         layout.addWidget(self.status_label)
 
-        self.cancel_btn = QPushButton("취소")
+        self.cancel_btn = localized_widget(QPushButton, tr('취소'))
         self.cancel_btn.setObjectName("Danger")
         self.cancel_btn.clicked.connect(self._on_cancel_clicked)
         layout.addWidget(self.cancel_btn, alignment=Qt.AlignRight)
 
     def start(self, title: str):
-        self.title_label.setText(title)
+        set_ui(self.title_label, 'text', title)
         self.bar.setValue(0)
-        self.status_label.setText("준비 중...")
+        set_ui(self.status_label, 'text', tr('준비 중...'))
         self.cancel_btn.setEnabled(True)
-        self.cancel_btn.setText("취소")
+        set_ui(self.cancel_btn, 'text', tr('취소'))
         self._spinner_angle = 0
         self._spinner.set_angle(0)
         self._spinner_timer.start()
@@ -286,16 +288,16 @@ class ProgressDialog(QDialog):
         # 줄과 "처리 중..." 줄을 아예 나눠서(원래도 공백 때문에 사실상 이렇게 두 줄로
         # 보였다), 파일명 줄만 그 폭에 맞게 가운데를 말줄임표로 줄인다. 전체 문구는
         # 툴팁으로 남겨 필요하면 볼 수 있게 한다.
-        suffix = f"처리 중... ({current}/{total})"
+        suffix = tr('처리 중... ({0}/{1})', current, total)
         metrics = self.status_label.fontMetrics()
         elided_filename = metrics.elidedText(filename, Qt.ElideMiddle, max(self.status_label.width(), 0))
-        self.status_label.setText(f"{elided_filename}\n{suffix}")
-        self.status_label.setToolTip(f"{filename} {suffix}")
+        set_ui(self.status_label, 'text', tr('{0}\n{1}', elided_filename, suffix))
+        set_ui(self.status_label, 'toolTip', tr('{0} {1}', filename, suffix))
 
     def _on_cancel_clicked(self):
         # 이미 처리 중인 작업은 끝까지 끝내야 하니 버튼을 바로 잠그고 진행 중임을 알린다
         # — 워커가 다음 단계로 넘어가기 전에 취소 여부를 체크해서 멈춘다.
         self.cancel_btn.setEnabled(False)
-        self.cancel_btn.setText("취소하는 중...")
-        self.status_label.setText("현재 작업까지 마치고 중단합니다...")
+        set_ui(self.cancel_btn, 'text', tr('취소하는 중...'))
+        set_ui(self.status_label, 'text', tr('현재 작업까지 마치고 중단합니다...'))
         self.cancel_requested.emit()

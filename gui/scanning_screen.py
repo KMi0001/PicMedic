@@ -7,6 +7,9 @@ PRD 17장 "Screen 02 — Scanning" 구현.
 
 from __future__ import annotations
 
+from gui.i18n import message as tr, localized_widget, set_ui
+
+
 import time
 
 from PySide6.QtCore import Qt, Signal, QThread, QTimer
@@ -98,7 +101,7 @@ class ScanningScreen(QWidget):
         card_layout.setContentsMargins(32, 32, 32, 32)
         card_layout.setSpacing(14)
 
-        self.title_label = QLabel("사진 검사 중...")
+        self.title_label = localized_widget(QLabel, tr('사진 검사 중...'))
         self.title_label.setObjectName("Title")
         self.title_label.setStyleSheet("font-size: 18px; font-weight: 600;")
         card_layout.addWidget(self.title_label)
@@ -108,33 +111,31 @@ class ScanningScreen(QWidget):
         self.progress_bar.setValue(0)
         card_layout.addWidget(self.progress_bar)
 
-        self.count_label = QLabel("0 / 0")
+        self.count_label = localized_widget(QLabel, "0 / 0")
         self.count_label.setStyleSheet(f"color: {COLORS['text_secondary']};")
         card_layout.addWidget(self.count_label)
 
-        self.current_file_label = QLabel("현재 검사: -")
+        self.current_file_label = localized_widget(QLabel, tr('현재 검사: -'))
         self.current_file_label.setStyleSheet(f"color: {COLORS['text_secondary']};")
         card_layout.addWidget(self.current_file_label)
 
         # HEIC/HEIF는 디코딩이 훨씬 무거워서(PRD_MVP우선순위.md 갭 #8 실측: JPEG
         # 대비 10배 이상) 검사 중 처음 발견되면 왜 오래 걸리는지 안내한다.
-        self.heavy_format_label = QLabel(
-            "HEIC 사진이 포함되어 있어 검사가 더 오래 걸릴 수 있어요."
-        )
+        self.heavy_format_label = localized_widget(QLabel, tr('HEIC 사진이 포함되어 있어 검사가 더 오래 걸릴 수 있어요.'))
         self.heavy_format_label.setWordWrap(True)
         self.heavy_format_label.setStyleSheet(f"color: {COLORS['warning']}; font-weight: 600;")
         self.heavy_format_label.setVisible(False)
         card_layout.addWidget(self.heavy_format_label)
 
         time_row = QVBoxLayout()
-        self.elapsed_label = QLabel("경과 시간: 0초")
-        self.eta_label = QLabel("예상 남은 시간: 계산 중...")
+        self.elapsed_label = localized_widget(QLabel, tr('경과 시간: 0초'))
+        self.eta_label = localized_widget(QLabel, tr('예상 남은 시간: 계산 중...'))
         for lbl in (self.elapsed_label, self.eta_label):
             lbl.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 12px;")
             time_row.addWidget(lbl)
         card_layout.addLayout(time_row)
 
-        self.cancel_btn = QPushButton("취소")
+        self.cancel_btn = localized_widget(QPushButton, tr('취소'))
         self.cancel_btn.setObjectName("Danger")
         self.cancel_btn.clicked.connect(self._on_cancel)
         card_layout.addWidget(self.cancel_btn, alignment=Qt.AlignCenter)
@@ -149,16 +150,14 @@ class ScanningScreen(QWidget):
         # use_saved_session: 같은 폴더의 저장된 작업이 있으면 불러와서 바뀐
         # 사진만 검사한다(core/session_store.py). 진행률은 "새로 분석할 사진"
         # 기준이라 저장본이 있으면 전체 사진 수보다 훨씬 작은 수로 보인다.
-        self.title_label.setText(
-            "이전 작업을 확인하고 바뀐 사진만 검사 중..." if use_saved_session else "사진 검사 중..."
-        )
+        set_ui(self.title_label, 'text', tr('이전 작업을 확인하고 바뀐 사진만 검사 중...') if use_saved_session else tr('사진 검사 중...'))
         self.progress_bar.setValue(0)
-        self.count_label.setText("0 / 0")
-        self.current_file_label.setText("현재 검사: -")
-        self.eta_label.setText("예상 남은 시간: 계산 중...")
+        set_ui(self.count_label, 'text', "0 / 0")
+        set_ui(self.current_file_label, 'text', tr('현재 검사: -'))
+        set_ui(self.eta_label, 'text', tr('예상 남은 시간: 계산 중...'))
         self.heavy_format_label.setVisible(False)
         self.cancel_btn.setEnabled(True)
-        self.cancel_btn.setText("취소")
+        set_ui(self.cancel_btn, 'text', tr('취소'))
         self._planned_total = 0
 
         self._start_time = time.time()
@@ -178,18 +177,18 @@ class ScanningScreen(QWidget):
         self._planned_total = total
         pct = int((current / total) * 100) if total else 0
         self.progress_bar.setValue(pct)
-        self.count_label.setText(f"{current:,} / {total:,}")
-        self.current_file_label.setText(f"현재 검사: {filename}")
+        set_ui(self.count_label, 'text', f"{current:,} / {total:,}")
+        set_ui(self.current_file_label, 'text', tr('현재 검사: {0}', filename))
 
         elapsed = time.time() - self._start_time
         if current > 0 and total:
             rate = elapsed / current
             remaining = max(0, (total - current) * rate)
-            self.eta_label.setText(f"예상 남은 시간: 약 {int(remaining)}초")
+            set_ui(self.eta_label, 'text', tr('예상 남은 시간: 약 {0}초', int(remaining)))
 
     def _update_elapsed(self):
         elapsed = int(time.time() - self._start_time)
-        self.elapsed_label.setText(f"경과 시간: {elapsed}초")
+        set_ui(self.elapsed_label, 'text', tr('경과 시간: {0}초', elapsed))
 
     def _on_finished(self, result, cancelled: bool, remaining_paths: list):
         self._timer.stop()
@@ -210,6 +209,6 @@ class ScanningScreen(QWidget):
             self.worker.cancel()
         # 화면 전환은 워커가 실제로 멈추고 finished_scan을 보내온 뒤에만 한다
         # (즉시 전환하면 뒤늦게 도착하는 finished_scan이 화면을 다시 덮어써버리는 문제가 있었음)
-        self.title_label.setText("취소하는 중...")
-        self.current_file_label.setText("현재까지 검사한 내용을 정리하고 있습니다...")
+        set_ui(self.title_label, 'text', tr('취소하는 중...'))
+        set_ui(self.current_file_label, 'text', tr('현재까지 검사한 내용을 정리하고 있습니다...'))
         self.cancel_btn.setEnabled(False)

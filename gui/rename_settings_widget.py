@@ -14,6 +14,9 @@ DESIGN.md 원칙대로 바로 공용 위젯으로 만들었다.
 
 from __future__ import annotations
 
+from gui.i18n import message as tr, localized_widget, set_ui
+
+
 from dataclasses import dataclass
 from typing import Optional
 
@@ -63,14 +66,14 @@ class RenameSettingsWidget(QWidget):
         root.setSpacing(8)
 
         root.addSpacing(6)
-        filename_label = QLabel("파일명")
+        filename_label = localized_widget(QLabel, tr('파일명'))
         filename_label.setStyleSheet(SECTION_HEADER_STYLE)
         root.addWidget(filename_label)
 
         keep_mode_group = QButtonGroup(self)
-        self.keep_radio = QRadioButton("원래 이름 유지 (기본값)")
+        self.keep_radio = localized_widget(QRadioButton, tr('원래 이름 유지 (기본값)'))
         self.keep_radio.setChecked(True)
-        self.rename_radio = QRadioButton("새 이름으로 변경")
+        self.rename_radio = localized_widget(QRadioButton, tr('새 이름으로 변경'))
         keep_mode_group.addButton(self.keep_radio)
         keep_mode_group.addButton(self.rename_radio)
         root.addWidget(self.keep_radio)
@@ -83,9 +86,9 @@ class RenameSettingsWidget(QWidget):
 
         input_mode_row = QHBoxLayout()
         input_mode_group = QButtonGroup(self._detail)
-        self.manual_radio = QRadioButton("직접 입력")
+        self.manual_radio = localized_widget(QRadioButton, tr('직접 입력'))
         self.manual_radio.setChecked(True)
-        self.auto_radio = QRadioButton(auto_label)
+        self.auto_radio = localized_widget(QRadioButton, auto_label)
         input_mode_group.addButton(self.manual_radio)
         input_mode_group.addButton(self.auto_radio)
         input_mode_row.addWidget(self.manual_radio)
@@ -94,17 +97,17 @@ class RenameSettingsWidget(QWidget):
         detail_layout.addLayout(input_mode_row)
 
         self.name_edit = QLineEdit()
-        self.name_edit.setPlaceholderText("예: 여행")
+        set_ui(self.name_edit, 'placeholderText', tr('예: 여행'))
         detail_layout.addWidget(self.name_edit)
 
         opts_row = QHBoxLayout()
-        opts_row.addWidget(QLabel("시작 번호"))
+        opts_row.addWidget(localized_widget(QLabel, tr('시작 번호')))
         self.start_spin = QSpinBox()
         self.start_spin.setRange(0, 99999)
         self.start_spin.setValue(DEFAULT_START)
         opts_row.addWidget(self.start_spin)
         opts_row.addSpacing(12)
-        opts_row.addWidget(QLabel("자릿수"))
+        opts_row.addWidget(localized_widget(QLabel, tr('자릿수')))
         self.digits_spin = QSpinBox()
         self.digits_spin.setRange(1, 6)
         self.digits_spin.setValue(DEFAULT_DIGITS)
@@ -112,7 +115,7 @@ class RenameSettingsWidget(QWidget):
         opts_row.addStretch(1)
         detail_layout.addLayout(opts_row)
 
-        self.preview_label = QLabel("")
+        self.preview_label = localized_widget(QLabel, "")
         self.preview_label.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 11px;")
         detail_layout.addWidget(self.preview_label)
 
@@ -133,14 +136,14 @@ class RenameSettingsWidget(QWidget):
     def _update_preview(self, *_args) -> None:
         if self.auto_radio.isChecked():
             self.name_edit.setEnabled(False)
-            base = "(그룹 이름)"
+            base = tr('(그룹 이름)')
         else:
             self.name_edit.setEnabled(True)
-            base = self.name_edit.text().strip() or "이름없음"
+            base = self.name_edit.text().strip() or tr('이름없음')
         start = self.start_spin.value()
         digits = self.digits_spin.value()
         samples = ", ".join(f"{base}_{str(start + i).zfill(digits)}.jpg" for i in range(2))
-        self.preview_label.setText(f"미리보기: {samples}, ...")
+        set_ui(self.preview_label, 'text', tr('미리보기: {0}, ...', samples))
         self.changed.emit()
 
     def is_valid(self) -> bool:

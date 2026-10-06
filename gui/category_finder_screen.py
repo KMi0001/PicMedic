@@ -32,6 +32,8 @@ gui/date_organize_screen.py·city_organize_screen.py와 같은 위젯 구성/문
 
 from __future__ import annotations
 
+from gui.i18n import message as tr, localized_widget, set_ui, add_action
+
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QThread, Signal, QPointF, QRectF, QUrl
@@ -162,39 +164,39 @@ class CategoryFinderScreen(QWidget):
 
         title_row = QHBoxLayout()
         title_row.setSpacing(10)
-        title_icon = QLabel()
+        title_icon = localized_widget(QLabel)
         title_icon.setPixmap(_finder_icon_pixmap(COLORS["primary"]))
         title_row.addWidget(title_icon)
-        title = QLabel(self._category.title)
+        title = localized_widget(QLabel, tr(self._category.title))
         title.setObjectName("Title")
         title_row.addWidget(title)
         title_row.addStretch(1)
-        back_btn = QPushButton("← 뒤로")
+        back_btn = localized_widget(QPushButton, tr('← 뒤로'))
         back_btn.clicked.connect(self.back_requested.emit)
         title_row.addWidget(back_btn)
         outer.addLayout(title_row)
 
         chips_row = QHBoxLayout()
         chips_row.setSpacing(10)
-        self.found_chip = SummaryChip("찾은 사진", COLORS["primary"])
+        self.found_chip = SummaryChip(tr('찾은 사진'), COLORS["primary"])
         chips_row.addWidget(self.found_chip)
         chips_row.addStretch(1)
         outer.addLayout(chips_row)
 
-        hint = QLabel(self._category.hint_text)
+        hint = localized_widget(QLabel, tr(self._category.hint_text))
         hint.setWordWrap(True)
         hint.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 12px;")
         outer.addWidget(hint)
 
         # 옮기기 직후 "어디로 갔는지" 알려주는 한 줄 — 옮긴 사진은 이 목록에서
         # 바로 사라지므로 아무 표시도 없으면 사진이 없어진 것처럼 보인다.
-        self.move_notice = QLabel("")
+        self.move_notice = localized_widget(QLabel, "")
         self.move_notice.setWordWrap(True)
         self.move_notice.setStyleSheet(f"color: {COLORS['primary']}; font-size: 12px;")
         self.move_notice.setVisible(False)
         outer.addWidget(self.move_notice)
 
-        self.empty_label = QLabel(self._category.empty_text)
+        self.empty_label = localized_widget(QLabel, tr(self._category.empty_text))
         self.empty_label.setStyleSheet(f"color: {COLORS['text_secondary']}; padding: 24px;")
         self.empty_label.setAlignment(Qt.AlignCenter)
         outer.addWidget(self.empty_label)
@@ -216,13 +218,13 @@ class CategoryFinderScreen(QWidget):
         viewer_layout = QVBoxLayout(viewer_panel)
         viewer_layout.setContentsMargins(4, 4, 4, 4)
         self.inline_viewer = ImageViewer(
-            placeholder_text="사진을 선택하면 미리보기가 표시됩니다.", overlay_controls=True
+            placeholder_text=tr('사진을 선택하면 미리보기가 표시됩니다.'), overlay_controls=True
         )
         viewer_layout.addWidget(self.inline_viewer)
         content_row.addWidget(viewer_panel)
 
         self.table = QTableWidget(0, 3)
-        self.table.setHorizontalHeaderLabels(["파일명 (로컬주소)", "폴더", "확신도"])
+        set_ui(self.table, 'horizontalHeaderLabels', [tr('파일명 (로컬주소)'), tr('폴더'), tr('확신도')])
         self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
         self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
         self.table.setColumnWidth(2, CONFIDENCE_COLUMN_WIDTH)
@@ -252,11 +254,11 @@ class CategoryFinderScreen(QWidget):
         # 으로 옮겼다(2026-09-18).
         self._organize_dialog = OrganizeSettingsDialog(
             self,
-            title="카테고리 찾기 — 정리하기",
-            auto_label="자동 입력 (정리 기준 — 카테고리)",
+            title=tr('카테고리 찾기 — 정리하기'),
+            auto_label=tr('자동 입력 (정리 기준 — 카테고리)'),
         )
 
-        self.organize_btn = QPushButton("정리하기")
+        self.organize_btn = localized_widget(QPushButton, tr('정리하기'))
         self.organize_btn.setObjectName("Primary")
         self.organize_btn.setEnabled(False)
         self.organize_btn.clicked.connect(self._on_organize_clicked)
@@ -284,7 +286,7 @@ class CategoryFinderScreen(QWidget):
             self._render_matches([])
             info_dialog(
                 self,
-                f"{self._category.title}에 필요한 AI 모델 파일이 아직 준비되지 않았어요.",
+                tr('{0}에 필요한 AI 모델 파일이 아직 준비되지 않았어요.', tr(self._category.title)),
             )
             return
 
@@ -293,12 +295,12 @@ class CategoryFinderScreen(QWidget):
         self._worker.progress.connect(self._on_progress)
         self._worker.finished_batch.connect(self._on_finished)
 
-        self._progress_dialog.start(self._category.searching_label)
+        self._progress_dialog.start(tr(self._category.searching_label))
         self._worker.start()
         self._progress_dialog.exec()
 
     def _on_progress(self, current: int, total: int):
-        self._progress_dialog.update_progress(current, max(total, 1), "사진 분석 중")
+        self._progress_dialog.update_progress(current, max(total, 1), tr('사진 분석 중'))
 
     def _on_cancel_requested(self):
         if self._worker is not None:
@@ -341,17 +343,17 @@ class CategoryFinderScreen(QWidget):
             # 2026-09-19, 사용자 요청 — 카테고리 사진이 없을 때 화면 안내문구
             # (empty_label)만으로는 눈에 잘 안 띄어서, 결과가 없다는 걸 바로
             # 알 수 있게 팝업도 함께 띄운다.
-            info_dialog(self, f"{self._category.title} 파일이 없습니다.")
+            info_dialog(self, tr('{0} 파일이 없습니다.', tr(self._category.title)))
 
         self.table.setRowCount(0)
         self.table.setRowCount(len(matches))
         for row, (info, confidence) in enumerate(matches):
-            name_item = QTableWidgetItem(info.filename)
+            name_item = localized_widget(QTableWidgetItem, info.filename)
             self.table.setItem(row, 0, name_item)
-            folder_item = QTableWidgetItem(str(Path(info.path).parent))
+            folder_item = localized_widget(QTableWidgetItem, str(Path(info.path).parent))
             self.table.setItem(row, 1, folder_item)
-            confidence_text = "수동" if confidence >= MANUAL_CONFIDENCE else f"{confidence * 100:.0f}%"
-            confidence_item = QTableWidgetItem(confidence_text)
+            confidence_text = tr('수동') if confidence >= MANUAL_CONFIDENCE else f"{confidence * 100:.0f}%"
+            confidence_item = localized_widget(QTableWidgetItem, confidence_text)
             confidence_item.setTextAlignment(Qt.AlignCenter)
             self.table.setItem(row, 2, confidence_item)
         # setRowCount(0)이 기존 선택을 지우므로, 인라인 미리보기도 같이
@@ -382,20 +384,20 @@ class CategoryFinderScreen(QWidget):
         target_rows = [r for r in target_rows if r < len(self._matches)]
 
         menu = QMenu(self)
-        preview_action = menu.addAction("미리보기")
-        open_folder_action = menu.addAction("로컬 폴더 위치 열기")
+        preview_action = add_action(menu, tr('미리보기'))
+        open_folder_action = add_action(menu, tr('로컬 폴더 위치 열기'))
         menu.addSeparator()
         move_title = (
-            f"다른 카테고리로 옮기기 ({len(target_rows)}장)" if len(target_rows) > 1 else "다른 카테고리로 옮기기"
+            tr('다른 카테고리로 옮기기 ({0}장)', len(target_rows)) if len(target_rows) > 1 else tr('다른 카테고리로 옮기기')
         )
         move_menu = menu.addMenu(move_title)
         move_actions = {
-            move_menu.addAction(category.title): cat_id
+            add_action(move_menu, tr(category.title)): cat_id
             for cat_id, category in CATEGORIES.items()
             if cat_id != self.category_id
         }
         move_menu.addSeparator()
-        none_action = move_menu.addAction("카테고리 없음 (이 카테고리에서 제외)")
+        none_action = add_action(move_menu, tr('카테고리 없음 (이 카테고리에서 제외)'))
 
         chosen = menu.exec(self.table.viewport().mapToGlobal(pos))
         if chosen is preview_action:
@@ -421,8 +423,8 @@ class CategoryFinderScreen(QWidget):
         if remaining:
             self.table.selectRow(min(first_row, len(remaining) - 1))
 
-        destination = CATEGORIES[to_category_id].title if to_category_id else "카테고리 없음"
-        self.move_notice.setText(f"{len(moved_infos)}장을 '{destination}'(으)로 옮겼어요.")
+        destination = tr(CATEGORIES[to_category_id].title) if to_category_id else tr('카테고리 없음')
+        set_ui(self.move_notice, 'text', tr("{0}장을 '{1}'(으)로 옮겼어요.", len(moved_infos), destination))
         self.move_notice.setVisible(True)
         self.category_moved.emit([info.path for info in moved_infos], self.category_id, to_category_id)
 

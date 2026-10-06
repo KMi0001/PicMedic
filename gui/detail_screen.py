@@ -6,6 +6,8 @@ PRD 19장 "Screen 04 — File Detail" 구현.
 
 from __future__ import annotations
 
+from gui.i18n import message as tr, localized_widget, set_ui
+
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QWidget,
@@ -47,7 +49,7 @@ class DetailScreen(QWidget):
         outer.setContentsMargins(32, 24, 32, 24)
         outer.setSpacing(16)
 
-        back_btn = QPushButton("\u2190 목록으로")
+        back_btn = localized_widget(QPushButton, tr('← 목록으로'))
         back_btn.clicked.connect(self.back_requested.emit)
         outer.addWidget(back_btn, alignment=Qt.AlignLeft)
 
@@ -65,7 +67,7 @@ class DetailScreen(QWidget):
         # 통일 — 회전/맞추기 버튼을 별도 줄 대신 사진 위에 반투명하게 얹는다
         # (2026-09-08, 사용자 요청 — "미리보기/뷰어는 다 검사결과 목록 미리보기처럼").
         self.preview_viewer = ImageViewer(
-            placeholder_text="미리보기를 생성할 수 없습니다.", overlay_controls=True
+            placeholder_text=tr('미리보기를 생성할 수 없습니다.'), overlay_controls=True
         )
         self.preview_viewer.setMinimumSize(320, 320)
         self.preview_viewer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
@@ -81,7 +83,7 @@ class DetailScreen(QWidget):
         info_layout.setContentsMargins(24, 24, 24, 24)
         info_layout.setSpacing(12)
 
-        self.filename_label = QLabel()
+        self.filename_label = localized_widget(QLabel)
         self.filename_label.setStyleSheet("font-size: 18px; font-weight: 700;")
         info_layout.addWidget(self.filename_label)
 
@@ -92,12 +94,12 @@ class DetailScreen(QWidget):
         self._grid_row = 0
         info_layout.addLayout(grid)
 
-        self.warning_label = QLabel()
+        self.warning_label = localized_widget(QLabel)
         self.warning_label.setWordWrap(True)
         self.warning_label.setStyleSheet(f"color: {COLORS['warning']}; font-weight: 600;")
         info_layout.addWidget(self.warning_label)
 
-        self.recovery_note_label = QLabel()
+        self.recovery_note_label = localized_widget(QLabel)
         self.recovery_note_label.setWordWrap(True)
         info_layout.addWidget(self.recovery_note_label)
 
@@ -107,10 +109,10 @@ class DetailScreen(QWidget):
         # 줄바꿈이 들쭉날쭉해진다 — 세로로 쌓아서 패널 폭에 상관없이 안정적으로 맞춘다.
         btn_col = QVBoxLayout()
         btn_col.setSpacing(8)
-        self.restore_btn = QPushButton("실제 형식으로 복구")
+        self.restore_btn = localized_widget(QPushButton, tr('실제 형식으로 복구'))
         self.restore_btn.clicked.connect(self._on_restore_clicked)
         btn_col.addWidget(self.restore_btn)
-        self.convert_btn = QPushButton("확장자 변환")
+        self.convert_btn = localized_widget(QPushButton, tr('확장자 변환'))
         self.convert_btn.setObjectName("Primary")
         self.convert_btn.clicked.connect(self._on_convert_clicked)
         btn_col.addWidget(self.convert_btn)
@@ -140,34 +142,34 @@ class DetailScreen(QWidget):
 
         if len(self._group) > 1 and info in self._group:
             position = self._group.index(info) + 1
-            self.filename_label.setText(f"{info.filename}  ({position}/{len(self._group)})")
+            set_ui(self.filename_label, 'text', f"{info.filename}  ({position}/{len(self._group)})")
         else:
-            self.filename_label.setText(info.filename)
+            set_ui(self.filename_label, 'text', info.filename)
 
         self._clear_grid()
-        self._add_row("파일 확장자", info.extension or "-")
-        self._add_row("실제 형식", info.detected_format or "알 수 없음")
-        self._add_row("파일 크기", format_file_size(info.file_size))
+        self._add_row(tr('파일 확장자'), info.extension or "-")
+        self._add_row(tr('실제 형식'), info.detected_format or tr('알 수 없음'))
+        self._add_row(tr('파일 크기'), format_file_size(info.file_size))
         if info.width and info.height:
-            self._add_row("해상도", f"{info.width} × {info.height}")
+            self._add_row(tr('해상도'), f"{info.width} × {info.height}")
         else:
-            self._add_row("해상도", "-")
+            self._add_row(tr('해상도'), "-")
         # 스크린샷/편집 후 재저장/다운로드한 사진은 이 태그가 원래 없는 경우가
         # 많음(PHASE2_사진정리_기획.md "기기 정보" 참고) — 필수 정보처럼 보이지
         # 않게 "알 수 없음"으로만 표시.
         camera_text = " ".join(part for part in (info.camera_make, info.camera_model) if part)
-        self._add_row("촬영 기기", camera_text or "알 수 없음")
+        self._add_row(tr('촬영 기기'), camera_text or tr('알 수 없음'))
         status_color = STATUS_COLORS.get(info.status.value, COLORS["text"])
-        self._add_row("상태", info.status.value.replace("_", " "), color=status_color)
+        self._add_row(tr('상태'), tr(info.status.value.replace("_", " ")), color=status_color)
 
         if info.is_mismatched:
-            self.warning_label.setText("\u26a0 파일 확장자와 실제 이미지 형식이 일치하지 않습니다.")
+            set_ui(self.warning_label, 'text', tr('⚠ 파일 확장자와 실제 이미지 형식이 일치하지 않습니다.'))
             self.warning_label.show()
         elif info.status == FileStatus.CORRUPTED:
-            self.warning_label.setText("\u26a0 이미지를 정상적으로 읽을 수 없습니다. 복구가 어려울 수 있습니다.")
+            set_ui(self.warning_label, 'text', tr('⚠ 이미지를 정상적으로 읽을 수 없습니다. 복구가 어려울 수 있습니다.'))
             self.warning_label.show()
         elif info.status == FileStatus.PARTIAL_CORRUPTION:
-            self.warning_label.setText("\u26a0 파일 일부가 손상되었습니다. 일부만 복구될 수 있습니다.")
+            set_ui(self.warning_label, 'text', tr('⚠ 파일 일부가 손상되었습니다. 일부만 복구될 수 있습니다.'))
             self.warning_label.show()
         else:
             self.warning_label.hide()
@@ -182,21 +184,17 @@ class DetailScreen(QWidget):
         self.convert_btn.setVisible(not self._review_only)
         self.convert_btn.setEnabled(info.readable)
         if self._review_only:
-            self.recovery_note_label.setText("")
+            set_ui(self.recovery_note_label, 'text', "")
         elif recoverable:
-            self.recovery_note_label.setText(
-                "높은 확률로 복구할 수 있습니다."
+            set_ui(self.recovery_note_label, 'text', tr('높은 확률로 복구할 수 있습니다.')
                 if info.status == FileStatus.MISMATCH
-                else "일부 데이터가 손상되어 결과가 완전하지 않을 수 있습니다."
-            )
+                else tr('일부 데이터가 손상되어 결과가 완전하지 않을 수 있습니다.'))
         elif info.status == FileStatus.NORMAL:
-            self.recovery_note_label.setText("다른 파일 형식으로 변환할 수 있습니다.")
+            set_ui(self.recovery_note_label, 'text', tr('다른 파일 형식으로 변환할 수 있습니다.'))
         else:
-            self.recovery_note_label.setText("")
+            set_ui(self.recovery_note_label, 'text', "")
 
-        self.restore_btn.setText(
-            f"{info.detected_format or '원본'} 형식으로 복구" if info.detected_format else "확장자 복구"
-        )
+        set_ui(self.restore_btn, 'text', tr('{0} 형식으로 복구', info.detected_format or tr('원본')) if info.detected_format else tr('확장자 복구'))
 
         self._load_preview(info)
         self._update_nav_buttons()
@@ -248,9 +246,9 @@ class DetailScreen(QWidget):
         self._grid_row = 0
 
     def _add_row(self, label: str, value: str, color: str | None = None):
-        label_widget = QLabel(label)
+        label_widget = localized_widget(QLabel, label)
         label_widget.setStyleSheet(f"color: {COLORS['text_secondary']};")
-        value_widget = QLabel(value)
+        value_widget = localized_widget(QLabel, value)
         if color:
             value_widget.setStyleSheet(f"color: {color}; font-weight: 600;")
         self.grid.addWidget(label_widget, self._grid_row, 0)
